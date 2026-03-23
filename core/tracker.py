@@ -77,67 +77,54 @@ class SmartTracker:
         all_seen_today (set): Ensemble des noms uniques vus depuis le lancement
     """
 
-    def __init__(self):
-        """Initialise tous les composants du pipeline d'IA."""
+    class SmartTracker:
+        """
+        Moteur d'IA combinant reconnaissance faciale, détection corporelle
+        et suivi persistant des personnes connues uniquement.
+        """
 
-        print("[TRACKER] ══════════════════════════════════════")
-        print("[TRACKER]   Initialisation du moteur d'IA...")
-        print("[TRACKER] ══════════════════════════════════════")
+        def __init__(self):
+            """Initialise tous les composants du moteur d'IA."""
 
-        # --- 1. Base de données faciale (InsightFace inclus) ---
-        self.face_db = FaceDatabase()
+            print("[TRACKER] ══════════════════════════════════════")
+            print("[TRACKER]   Initialisation du moteur d'IA...")
+            print("[TRACKER] ══════════════════════════════════════")
 
-        # --- 2. Référence au modèle InsightFace (réutilisé depuis la DB) ---
-        self.face_analyzer = self.face_db.analyzer
+            # --- Pré-initialisation de TOUS les attributs (sécurité pour __del__) ---
+            self.face_db = None
+            self.deepsort = None
+            self.mp_pose = None
+            self.track_identity = {}
+            self.present_users = {}
+            self.all_seen_names = set()
+            self._frame_count = 0
 
-        # --- 3. DeepSort — Tracker multi-objets sur GPU ---
-        print("[TRACKER] Chargement de DeepSort...")
-        self.deepsort = DeepSort(
-            max_age=config.DEEPSORT_MAX_AGE,
-            n_init=config.DEEPSORT_N_INIT,
-            embedder=config.DEEPSORT_EMBEDDER,
-            half=True,          # Demi-précision pour GPU Nvidia
-            bgr=True,           # OpenCV fournit du BGR
-            embedder_gpu=True   # Embedder sur GPU
-        )
-        print("[TRACKER] DeepSort chargé (GPU, half precision).")
+            # --- 1. Base de données faciale ---
+            self.face_db = FaceDatabase()
 
-        # --- 4. Mediapipe Pose — Détection du torse ---
-        print("[TRACKER] Chargement de Mediapipe Pose...")
-        self.mp_pose = mp.solutions.pose.Pose(
-            static_image_mode=False,
-            model_complexity=1,        # 0=light, 1=full, 2=heavy
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
-        print("[TRACKER] Mediapipe Pose chargé.")
+            # --- 2. DeepSort (tracking corporel) ---
+            print("[TRACKER] Chargement de DeepSort...")
+            self.deepsort = DeepSort(
+                max_age=config.DEEPSORT_MAX_AGE,
+                n_init=config.DEEPSORT_N_INIT,
+                embedder=config.DEEPSORT_EMBEDDER,
+                half=True,
+                embedder_gpu=True
+            )
+            print("[TRACKER] DeepSort chargé (GPU, half precision).")
 
-        # --- 5. Dictionnaires de suivi ---
+            # --- 3. Mediapipe Pose (détection du corps) ---
+            self.mp_pose = mp.solutions.pose.Pose(
+                static_image_mode=False,
+                model_complexity=1,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            print("[TRACKER] Mediapipe Pose chargé.")
 
-        # Mapping persistant : {track_id (int) : nom_personne (str)}
-        # Maintient l'identité même quand le visage disparaît
-        self.track_identity: Dict[int, str] = {}
-
-        # Dernière fois qu'une personne a été vue : {nom: timestamp}
-        self.present_users: Dict[str, float] = {}
-
-        # Ensemble de tous les noms uniques détectés depuis le lancement
-        self.all_seen_today: set = set()
-
-        # --- 6. Paramètres internes ---
-
-        # Distance max (pixels) pour associer un visage à un corps
-        self._max_association_distance = 200.0
-
-        # Compteur de frames pour le scheduling de la détection faciale
-        self._frame_count = 0
-
-        # Fréquence de détection faciale (1 frame sur N) pour économiser le GPU
-        self._face_detection_interval = 3
-
-        print("[TRACKER] ══════════════════════════════════════")
-        print("[TRACKER]   Moteur d'IA prêt.")
-        print("[TRACKER] ══════════════════════════════════════\n")
+            print("[TRACKER] ══════════════════════════════════════")
+            print("[TRACKER]   Moteur d'IA prêt.")
+            print("[TRACKER] ══════════════════════════════════════\n")
 
     # =========================================================================
     # PIPELINE PRINCIPAL

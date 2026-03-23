@@ -28,7 +28,9 @@ EMBEDDINGS_CACHE_PATH = os.path.join(DATA_DIR, "embeddings.pkl")
 # =============================================================================
 
 # Index entier (0, 1, ...) pour une webcam locale, ou URL string pour un flux RTSP/HTTP
-CAMERA_SOURCE = 0
+CAMERA_SOURCE = "http://192.168.27.55:5000/video"
+FLASK_PORT = 8080
+
 
 
 # =============================================================================

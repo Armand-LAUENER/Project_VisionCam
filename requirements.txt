@@ -5,6 +5,7 @@ numpy
 opencv-python
 scikit-learn
 scipy
+setuptools
 
 # --- Tracking ---
 deep-sort-realtime
