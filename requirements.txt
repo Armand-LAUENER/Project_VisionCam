@@ -6,6 +6,7 @@ opencv-python
 scikit-learn
 scipy
 setuptools
+torchvision
 
 # --- Tracking ---
 deep-sort-realtime
