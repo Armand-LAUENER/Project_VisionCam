@@ -89,7 +89,12 @@ class CameraManager:
 
         # --- Ouverture de la caméra ---
         print(f"[SERVEUR] Ouverture de la caméra (source: {config.CAMERA_SOURCE})...")
-        self.cap = cv2.VideoCapture(config.CAMERA_SOURCE)
+        source = config.CAMERA_SOURCE
+        if isinstance(source, str) and source.startswith("http"):
+            # Flux MJPEG via URL
+            self.cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        else:
+            self.cap = cv2.VideoCapture(source)
 
         if not self.cap.isOpened():
             raise RuntimeError(
