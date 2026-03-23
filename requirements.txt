@@ -1,0 +1,17 @@
+# --- GPU / IA ---
+insightface
+onnxruntime-gpu
+numpy
+opencv-python
+scikit-learn
+scipy
+
+# --- Tracking ---
+deep-sort-realtime
+mediapipe
+
+# --- Web ---
+flask
+
+# --- Utilitaires ---
+colorama
