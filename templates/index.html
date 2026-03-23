@@ -1,10 +1,257 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr" class="dark">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎯 Reconnaissance Faciale - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: { 800: '#1a1a2e', 900: '#0f0f23', 950: '#0a0a1a' },
+                        accent: { 400: '#00d4ff', 500: '#00b4d8', 600: '#0096c7' },
+                        success: { 400: '#00f5a0', 500: '#00d68f' },
+                        danger: { 400: '#ff6b6b', 500: '#ee5a24' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: linear-gradient(135deg, #0a0a1a 0%, #1a1a2e 50%, #0f0f23 100%); }
+        .glass {
+            background: rgba(255,255,255,0.04);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .pulse-online { animation: pulse-green 2s infinite; }
+        @keyframes pulse-green {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(0,245,160,0.5); }
+            50% { box-shadow: 0 0 12px 4px rgba(0,245,160,0.25); }
+        }
+        .card-hover { transition: transform 0.2s, box-shadow 0.2s; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(0,212,255,0.1); }
+        #videoFeed { border: 2px solid rgba(0,212,255,0.3); }
+        .person-card { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.3); border-radius: 3px; }
+    </style>
 </head>
-<body>
+<body class="min-h-screen text-white font-sans">
 
+    <!-- ========== HEADER ========== -->
+    <header class="glass sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span class="text-3xl">🎯</span>
+            <div>
+                <h1 class="text-xl font-bold bg-gradient-to-r from-accent-400 to-success-400 bg-clip-text text-transparent">
+                    Système de Reconnaissance Faciale
+                </h1>
+                <p class="text-xs text-gray-400">Dashboard temps réel</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-4">
+            <div id="statusBadge" class="flex items-center gap-2 px-3 py-1 rounded-full glass">
+                <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                <span id="statusText" class="text-xs">Connexion...</span>
+            </div>
+            <span id="clock" class="text-sm text-gray-400 font-mono"></span>
+        </div>
+    </header>
+
+    <!-- ========== MAIN GRID ========== -->
+    <main class="p-4 grid grid-cols-12 gap-4" style="height: calc(100vh - 64px);">
+
+        <!-- ===== COLONNE GAUCHE : Vidéo + Stats ===== -->
+        <section class="col-span-8 flex flex-col gap-4">
+
+            <!-- Flux vidéo -->
+            <div class="glass rounded-2xl p-3 flex-1 flex flex-col">
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-sm font-semibold text-accent-400">📹 Flux Caméra</h2>
+                    <span id="fpsCounter" class="text-xs text-gray-500 font-mono">-- FPS</span>
+                </div>
+                <div class="relative flex-1 rounded-xl overflow-hidden bg-black flex items-center justify-center">
+                    <img id="videoFeed" src="/video" alt="Flux caméra"
+                         class="w-full h-full object-contain rounded-xl" />
+                    <div id="videoOverlay"
+                         class="absolute inset-0 flex items-center justify-center bg-black/60 hidden">
+                        <p class="text-gray-400 animate-pulse">⏳ Chargement du flux...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Barre de stats -->
+            <div class="grid grid-cols-4 gap-3">
+                <div class="glass rounded-xl p-4 card-hover text-center">
+                    <p class="text-xs text-gray-400 mb-1">👥 À l'écran</p>
+                    <p id="statOnScreen" class="text-3xl font-bold text-accent-400">0</p>
+                </div>
+                <div class="glass rounded-xl p-4 card-hover text-center">
+                    <p class="text-xs text-gray-400 mb-1">✅ Identifiés</p>
+                    <p id="statIdentified" class="text-3xl font-bold text-success-400">0</p>
+                </div>
+                <div class="glass rounded-xl p-4 card-hover text-center">
+                    <p class="text-xs text-gray-400 mb-1">❓ Inconnus</p>
+                    <p id="statUnknown" class="text-3xl font-bold text-danger-400">0</p>
+                </div>
+                <div class="glass rounded-xl p-4 card-hover text-center">
+                    <p class="text-xs text-gray-400 mb-1">📊 Total DB</p>
+                    <p id="statTotalDB" class="text-3xl font-bold text-purple-400">0</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== COLONNE DROITE : Personnes détectées ===== -->
+        <aside class="col-span-4 flex flex-col gap-4">
+
+            <!-- Personnes actuellement présentes -->
+            <div class="glass rounded-2xl p-4 flex-1 flex flex-col">
+                <h2 class="text-sm font-semibold text-success-400 mb-3">
+                    🟢 Présents maintenant
+                </h2>
+                <div id="presentList" class="flex-1 overflow-y-auto space-y-2 pr-1">
+                    <p class="text-xs text-gray-500 italic">Aucune détection...</p>
+                </div>
+            </div>
+
+            <!-- Journal des événements -->
+            <div class="glass rounded-2xl p-4 h-64 flex flex-col">
+                <h2 class="text-sm font-semibold text-accent-400 mb-3">
+                    📋 Journal
+                </h2>
+                <div id="eventLog" class="flex-1 overflow-y-auto space-y-1 pr-1 font-mono text-xs">
+                    <p class="text-gray-500">En attente d'événements...</p>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <!-- ========== JAVASCRIPT ========== -->
+    <script>
+        // ── Horloge ──
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').textContent =
+                now.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // ── Statut connexion vidéo ──
+        const videoFeed = document.getElementById('videoFeed');
+        const overlay = document.getElementById('videoOverlay');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        videoFeed.onload = () => {
+            overlay.classList.add('hidden');
+            statusDot.className = 'w-2.5 h-2.5 rounded-full bg-green-400 pulse-online';
+            statusText.textContent = 'En ligne';
+            statusText.className = 'text-xs text-green-400';
+        };
+        videoFeed.onerror = () => {
+            overlay.classList.remove('hidden');
+            statusDot.className = 'w-2.5 h-2.5 rounded-full bg-red-500';
+            statusText.textContent = 'Déconnecté';
+            statusText.className = 'text-xs text-red-400';
+            setTimeout(() => { videoFeed.src = '/video?' + Date.now(); }, 3000);
+        };
+
+        // ── Polling des données ──
+        let previousPresent = new Set();
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/status');
+                const data = await res.json();
+                updateStats(data);
+                updatePresentList(data.currently_present || []);
+                updateFPS(data.fps || 0);
+            } catch(e) {
+                console.warn('Erreur fetch /status', e);
+            }
+        }
+
+        function updateStats(data) {
+            const present = data.currently_present || [];
+            const identified = present.filter(p => p.name !== 'Inconnu');
+            const unknown = present.filter(p => p.name === 'Inconnu');
+
+            document.getElementById('statOnScreen').textContent = present.length;
+            document.getElementById('statIdentified').textContent = identified.length;
+            document.getElementById('statUnknown').textContent = unknown.length;
+            document.getElementById('statTotalDB').textContent = data.total_known || 0;
+        }
+
+        function updatePresentList(persons) {
+            const container = document.getElementById('presentList');
+            const currentSet = new Set(persons.map(p => p.name + '_' + p.track_id));
+
+            // Détection nouveaux arrivants
+            currentSet.forEach(key => {
+                if (!previousPresent.has(key)) {
+                    const name = key.split('_')[0];
+                    addLogEntry(`➡️ ${name} détecté(e)`, name === 'Inconnu' ? 'danger' : 'success');
+                }
+            });
+            // Détection départs
+            previousPresent.forEach(key => {
+                if (!currentSet.has(key)) {
+                    const name = key.split('_')[0];
+                    addLogEntry(`⬅️ ${name} sorti(e)`, 'gray');
+                }
+            });
+            previousPresent = currentSet;
+
+            if (persons.length === 0) {
+                container.innerHTML = '<p class="text-xs text-gray-500 italic">Aucune détection...</p>';
+                return;
+            }
+
+            container.innerHTML = persons.map(p => {
+                const isKnown = p.name !== 'Inconnu';
+                const color = isKnown ? 'success' : 'danger';
+                const conf = p.confidence ? (p.confidence * 100).toFixed(0) + '%' : '--';
+                return `
+                    <div class="person-card glass rounded-lg p-3 flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full flex items-center justify-center text-lg
+                                    ${isKnown ? 'bg-green-500/20' : 'bg-red-500/20'}">
+                            ${isKnown ? '😊' : '❓'}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-semibold text-${color}-400 truncate">${p.name}</p>
+                            <p class="text-xs text-gray-500">ID #${p.track_id || '--'} · ${conf}</p>
+                        </div>
+                        <span class="w-2 h-2 rounded-full bg-${color}-400 pulse-online"></span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateFPS(fps) {
+            document.getElementById('fpsCounter').textContent = fps.toFixed(1) + ' FPS';
+        }
+
+        function addLogEntry(message, type = 'gray') {
+            const log = document.getElementById('eventLog');
+            const colors = { success:'text-green-400', danger:'text-red-400', gray:'text-gray-400' };
+            const time = new Date().toLocaleTimeString('fr-FR');
+            const entry = document.createElement('p');
+            entry.className = colors[type] || colors.gray;
+            entry.textContent = `[${time}] ${message}`;
+            log.prepend(entry);
+            // Garder max 50 entrées
+            while (log.children.length > 50) log.removeChild(log.lastChild);
+        }
+
+        // Polling toutes les 500ms
+        setInterval(fetchStatus, 500);
+        fetchStatus();
+    </script>
 </body>
 </html>
