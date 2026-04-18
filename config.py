@@ -1,6 +1,8 @@
 """
-config.py — Configuration centralisée du projet de reconnaissance faciale.
-Toutes les variables globales sont définies ici pour faciliter la maintenance.
+config.py — Configuration centralisée du projet.
+
+Source de vérité unique pour TOUS les paramètres. Aucune constante
+ne doit être hardcodée ailleurs (ni dans app.py, ni dans core/).
 """
 
 import os
@@ -9,17 +11,11 @@ import os
 # CHEMINS DU PROJET
 # =============================================================================
 
-# Répertoire racine du projet (là où se trouve ce fichier)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Dossier principal des données
 DATA_DIR = os.path.join(BASE_DIR, "data")
-
-# Dossier contenant les sous-dossiers de visages capturés (1 sous-dossier = 1 personne)
-# Structure attendue : data/captured_faces/Prenom_Nom/01.jpg, 02.jpg, ...
+KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
 CAPTURED_FACES_DIR = os.path.join(DATA_DIR, "captured_faces")
-
-# Chemin du fichier cache des embeddings (dictionnaire sérialisé avec pickle)
 EMBEDDINGS_CACHE_PATH = os.path.join(DATA_DIR, "embeddings.pkl")
 
 
@@ -27,108 +23,104 @@ EMBEDDINGS_CACHE_PATH = os.path.join(DATA_DIR, "embeddings.pkl")
 # SOURCE VIDÉO
 # =============================================================================
 
-# Index entier (0, 1, ...) pour une webcam locale, ou URL string pour un flux RTSP/HTTP
-CAMERA_SOURCE = "http://192.168.27.65:5000/video"
-FLASK_PORT = 8080
+# True = webcam locale, False = caméra IP
+USE_LOCAL_CAM = False
 
+LOCAL_SOURCE = 0
+REMOTE_SOURCE = "http://192.168.27.65:5000/video"
+CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 
 
 # =============================================================================
-# PARAMÈTRES INSIGHTFACE
+# SERVEUR FLASK
 # =============================================================================
 
-# Modèle de reconnaissance faciale InsightFace
+FLASK_HOST = "0.0.0.0"
+FLASK_PORT = 5000
+DEBUG_MODE = False
+
+
+# =============================================================================
+# INSIGHTFACE (reconnaissance faciale)
+# =============================================================================
+
 INSIGHTFACE_MODEL = "buffalo_l"
-
-# Fournisseur d'exécution ONNX — GPU Nvidia en priorité, CPU en fallback
 ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-
-# Taille de détection (plus grand = plus précis mais plus lent)
 INSIGHTFACE_DET_SIZE = (640, 640)
 
-
-# =============================================================================
-# SEUILS DE RECONNAISSANCE
-# =============================================================================
-
-# Seuil de distance cosinus pour valider une correspondance faciale.
-# Plus la valeur est BASSE, plus le match doit être similaire.
-# Valeurs typiques : 0.5 (strict) — 0.7 (permissif)
+# Seuil cosinus minimum pour valider un match (plus bas = plus strict).
+# Typique : 0.45 (strict) — 0.65 (permissif).
 RECOGNITION_THRESHOLD = 0.65
 
 
 # =============================================================================
-# PARAMÈTRES DE SUIVI (DeepSort)
+# TRACKER & PERFORMANCE
 # =============================================================================
 
-# Durée max (en secondes) avant qu'un track sans détection soit supprimé
-DEEPSORT_MAX_AGE = 30
+# Traiter 1 frame sur N pour la pipeline IA (reco + pose).
+# Les frames intermédiaires réutilisent le cache.
+FRAME_SKIP = 2
 
-# Nombre de détections consécutives avant de confirmer un track
-DEEPSORT_N_INIT = 3
+# DeepSORT — tracker de corps pour le pipeline Body-First.
+DEEPSORT_MAX_AGE = 70           # Frames avant suppression d'un track perdu.
+DEEPSORT_N_INIT = 3             # Confirmations minimales avant qu'un track soit actif.
+DEEPSORT_EMBEDDER = "mobilenet" # Embedder d'apparence pour la ReID (vêtements).
+DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 
-# Embedder utilisé par DeepSort pour la ré-identification corporelle
-DEEPSORT_EMBEDDER = "mobilenet"
+# =============================================================================
+# PIPELINE BODY-FIRST (YOLOv8 + DeepSORT + InsightFace)
+# =============================================================================
+
+# Modèle YOLO à utiliser. "yolov8n.pt" = Nano (~3ms/frame GPU), auto-téléchargé.
+YOLO_MODEL = "yolov8n.pt"
+
+# Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
+YOLO_CONF_THRESHOLD = 0.5
+
+# Lancer InsightFace toutes les N frames seulement.
+# 5 = bon compromis (15ms × 1/5 = 3ms amortis/frame) ; baisser si réseau lent.
+FACE_RECOGNITION_SKIP = 5
+
+# Nombre d'échecs consécutifs de cap.read() avant de tenter une reconnexion.
+# 10 frames ≈ 0.5s à 20 FPS — distingue un drop réseau bref d'une vraie déconnexion.
+CAM_MAX_FAILURES = 10
+
+# Timeouts OpenCV pour la caméra distante (ms).
+# Sans timeout explicite, VideoCapture sur HTTP bloque ~30s sans aucun log.
+CAM_OPEN_TIMEOUT_MS  = 5_000   # Abandon de la connexion si pas de réponse en 5s.
+CAM_READ_TIMEOUT_MS  = 3_000   # Abandon d'une lecture de frame si pas de données en 3s.
+
+# Nombre de frames au-delà duquel on considère qu'on "ne voit plus le visage".
+# Passé ce délai, le nom est affiché avec l'indicateur "body-tracking" (orange).
+# Exemple : 30 frames à 30 FPS = 1 seconde avant le basculement visuel.
+FACE_FRESHNESS_FRAMES = 30
 
 
 # =============================================================================
-# PARAMÈTRES DU DASHBOARD / SERVEUR FLASK
+# STREAMING & AFFICHAGE
 # =============================================================================
 
-# Port du serveur web local
-FLASK_PORT = 5000
-
-# Intervalle (en secondes) au-delà duquel une personne est considérée absente
-PRESENCE_TIMEOUT = 5.0
-
-# Résolution d'affichage du flux vidéo envoyé au navigateur
 DISPLAY_WIDTH = 1280
 DISPLAY_HEIGHT = 720
 
-
-# =============================================================================
-# CRÉATION AUTOMATIQUE DES DOSSIERS NÉCESSAIRES
-# =============================================================================
-
-for _dir in [DATA_DIR, CAPTURED_FACES_DIR]:
-    os.makedirs(_dir, exist_ok=True)
-# =============================================================================
-# PARAMÈTRES DU SERVEUR FLASK
-# =============================================================================
-
-# Qualité d'encodage JPEG pour le flux MJPEG (0-100)
-# Plus élevé = meilleure qualité mais plus de bande passante
+# Qualité JPEG du flux MJPEG (0-100). Plus haut = plus net, plus de bande passante.
 MJPEG_QUALITY = 75
 
-# Limite de FPS pour le flux MJPEG envoyé au navigateur
-# Évite de surcharger le réseau local
+# FPS max du flux envoyé au navigateur.
 MJPEG_FPS_LIMIT = 30
 
-# =============================================================================
-# PARAMÈTRES D'AFFICHAGE
-# =============================================================================
-
-# Résolution demandée à la caméra
-DISPLAY_WIDTH = 1280
-DISPLAY_HEIGHT = 720
 
 # =============================================================================
-# PARAMÈTRES DE PRÉSENCE
+# PRÉSENCE
 # =============================================================================
 
-# Durée (secondes) avant qu'une personne soit considérée comme "partie"
-# Si non vue depuis ce délai, elle disparaît de "currently_present"
+# Délai (s) au-delà duquel une personne non détectée est retirée de "currently_present".
 PRESENCE_TIMEOUT = 5.0
 
+
 # =============================================================================
-# PARAMÈTRES DEEPSORT
+# CRÉATION AUTOMATIQUE DES DOSSIERS
 # =============================================================================
 
-# Nombre de frames sans détection avant suppression d'un track
-DEEPSORT_MAX_AGE = 70
-
-# Nombre de détections consécutives pour confirmer un track
-DEEPSORT_N_INIT = 3
-
-# Modèle d'embedding pour DeepSort (mobilenet léger)
-DEEPSORT_EMBEDDER = "mobilenet"
+for _dir in (DATA_DIR, KNOWN_FACES_DIR, CAPTURED_FACES_DIR):
+    os.makedirs(_dir, exist_ok=True)
