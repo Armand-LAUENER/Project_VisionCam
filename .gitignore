@@ -1,0 +1,113 @@
+# ============================================================
+# .gitignore — Project_VisionCam (repo PUBLIC)
+# ============================================================
+# Objectif : garder ce repo propre pour un portfolio public.
+# La config Claude Code vit dans un repo PRIVÉ séparé
+# (voir .claude-workspace/ localement, non pushé ici).
+# ============================================================
+
+# --- Config Claude Code (repo privé séparé) ---
+.claude-workspace/
+.claude/
+CLAUDE.md
+SETUP.md
+.claudeignore
+docs_ai/
+
+# --- Secrets & config locale ---
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- Python : venv & bytecode ---
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# --- Python : build & packaging ---
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+
+# --- Python : outils qualité ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# --- Données sensibles & biométriques ---
+# RGPD : aucune donnée personnelle ne doit atterrir sur GitHub
+data/
+known_faces/
+!known_faces/.gitkeep
+*.pkl
+*.pickle
+embeddings.*
+
+# --- Modèles IA téléchargés (lourds, reproductibles) ---
+*.onnx
+*.pt
+*.pth
+*.h5
+*.tflite
+*.caffemodel
+*.prototxt
+models/
+
+# --- Logs & temporaires ---
+*.log
+logs/
+*.tmp
+*.cache
+*.bak
+*.swp
+*.swo
+*~
+
+# --- IDE / éditeurs ---
+.idea/
+.vscode/
+*.iml
+*.sublime-*
+.project
+.pydevproject
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Outils locaux ---
+.ollamassist/
+
+# --- Flask / Dev server ---
+instance/
+.webassets-cache
+
+# --- Fichiers de test ad-hoc (racine uniquement) ---
+/test.py
+/scratch.py
+/playground.py
+
+# --- Archives & binaires ---
+*.zip
+*.tar.gz
+*.7z
+*.rar

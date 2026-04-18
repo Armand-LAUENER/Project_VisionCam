@@ -1,6 +1,9 @@
 import cv2
+import logging
 import mediapipe as mp
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class PoseEstimator:
@@ -9,14 +12,14 @@ class PoseEstimator:
     """
 
     def __init__(self):
-        print("[POSE] Chargement Mediapipe Pose...")
+        logger.info("Chargement Mediapipe Pose...")
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
             static_image_mode=True,
             model_complexity=0,  # 0 = léger et rapide
             min_detection_confidence=0.5
         )
-        print("[POSE] Mediapipe Pose chargé ✅")
+        logger.info("Mediapipe Pose chargé")
 
     def estimate(self, person_crop):
         """
@@ -100,4 +103,4 @@ class PoseEstimator:
         """Libère les ressources."""
         if self.pose:
             self.pose.close()
-        print("[POSE] Ressources libérées")
+        logger.info("Ressources libérées")

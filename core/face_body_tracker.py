@@ -11,6 +11,7 @@ Architecture :
 
 from __future__ import annotations
 
+import logging
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional
@@ -20,6 +21,8 @@ from deep_sort_realtime.deepsort_tracker import DeepSort
 
 import config
 from core.face_recognition import FaceRecognizer
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,9 +67,9 @@ class FaceBodyTracker:
 
     def __init__(self, face_recognizer: FaceRecognizer) -> None:
         # ── Détecteur de corps ──────────────────────────────────────────────
-        print(f"[BODY] Chargement YOLO ({config.YOLO_MODEL})...")
+        logger.info("Chargement YOLO (%s)...", config.YOLO_MODEL)
         self.yolo = YOLO(config.YOLO_MODEL)
-        print("[BODY] YOLO chargé ✅")
+        logger.info("YOLO chargé")
 
         # ── Tracker de corps avec ReID apparence ────────────────────────────
         self.body_tracker = DeepSort(
@@ -285,8 +288,10 @@ class FaceBodyTracker:
                             'confidence': 0.0,
                             'last_face_frame': -1
                         }
-                        print(
-                            f"[TRACKER] 🔄 Correction d'usurpation : '{new_name}' passe du corps #{old_tid} au corps #{best_track_id}")
+                        logger.warning(
+                            "Correction usurpation : '%s' passe du corps #%d au corps #%d",
+                            new_name, old_tid, best_track_id,
+                        )
 
                 # Mise à jour du nouveau corps
                 self._identity_map[best_track_id] = {
@@ -359,4 +364,4 @@ class FaceBodyTracker:
     def release(self) -> None:
         """Libère les ressources (appeler à l'arrêt de l'application)."""
         self._identity_map.clear()
-        print("[BODY] Ressources libérées")
+        logger.info("Ressources libérées")
