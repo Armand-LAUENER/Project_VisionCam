@@ -1,36 +1,33 @@
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 import cv2
+import numpy as np
 import threading
 import time
-import numpy as np
-import os
 
-# ── Imports de tes modules ──
+import config
 from core.face_recognition import FaceRecognizer
-from core.tracker import PersonTracker
+from core.face_body_tracker import FaceBodyTracker
 from core.pose_estimation import PoseEstimator
 
 app = Flask(__name__)
 
 # ══════════════════════════════════════════
-# CONFIGURATION
-# ══════════════════════════════════════════
-CAMERA_SOURCE = "http://192.168.27.65:5000/video"         # 0 = webcam intégrée, ou URL IP "http://IP:5000/video"
-KNOWN_FACES_DIR = "known_faces"
-CONFIDENCE_THRESHOLD = 0.45
-FRAME_SKIP = 2             # Traiter 1 frame sur 2 pour la perf
-
-# ══════════════════════════════════════════
 # INITIALISATION DES MODULES
 # ══════════════════════════════════════════
 print("[INIT] Chargement des modules...")
+print(f"[INIT] Source vidéo : {'WEBCAM' if config.USE_LOCAL_CAM else config.REMOTE_SOURCE}")
 
-face_recognizer = FaceRecognizer(KNOWN_FACES_DIR, threshold=CONFIDENCE_THRESHOLD)
-tracker = PersonTracker()
+face_recognizer = FaceRecognizer(
+    config.KNOWN_FACES_DIR,
+    threshold=config.RECOGNITION_THRESHOLD,
+    cache_path=config.EMBEDDINGS_CACHE_PATH,
+)
+tracker = FaceBodyTracker(face_recognizer)
 pose_estimator = PoseEstimator()
 
 print(f"[INIT] Visages connus : {list(face_recognizer.known_names)}")
 print("[INIT] Modules chargés ✅")
+
 
 # ══════════════════════════════════════════
 # ÉTAT GLOBAL (thread-safe)
@@ -46,101 +43,181 @@ class AppState:
 
 state = AppState()
 
+
 # ══════════════════════════════════════════
-# BOUCLE DE TRAITEMENT (Thread séparé)
+# BOUCLE DE TRAITEMENT (thread séparé)
 # ══════════════════════════════════════════
-def processing_loop():
-    cap = cv2.VideoCapture(CAMERA_SOURCE)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+def _estimate_pose_safe(frame, bbox, track_id):
+    """Calcule la pose depuis le crop du corps, avec log explicite en cas d'échec."""
+    x1, y1, x2, y2 = bbox
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+    try:
+        return pose_estimator.estimate(crop)
+    except Exception as e:
+        print(f"[POSE] Échec sur track #{track_id} : {type(e).__name__}: {e}")
+        return None
+
+
+def _draw_person(display_frame, person, pose, frame_count):
+    """
+    Dessine bbox + label + pose pour une TrackedPerson.
+
+    Modes d'affichage selon l'état d'identification :
+      - Vert  (0, 245, 160) : visage reconnu récemment (< FACE_FRESHNESS_FRAMES)
+      - Orange(0, 165, 255) : identité connue mais visage perdu — tracking par corps
+      - Bleu  (100, 100, 255): personne inconnue
+    """
+    x1, y1, x2, y2 = person.body_bbox
+
+    frames_since_face = frame_count - person.last_face_frame
+
+    if person.name == 'Inconnu':
+        color = (100, 100, 255)     # Bleu — inconnu
+        mode_tag = None
+    elif frames_since_face <= config.FACE_FRESHNESS_FRAMES:
+        color = (0, 245, 160)       # Vert — visage vu récemment
+        mode_tag = None
+    else:
+        color = (0, 165, 255)       # Orange — tracking corps uniquement
+        mode_tag = "BODY"
+
+    cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
+
+    label = f"{person.name} #{person.track_id}"
+    if person.confidence > 0:
+        label += f" ({person.confidence * 100:.0f}%)"
+    if mode_tag:
+        label += f" [{mode_tag}]"
+
+    label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+    cv2.rectangle(display_frame, (x1, y1 - 30), (x1 + label_size[0] + 10, y1), color, -1)
+    cv2.putText(display_frame, label, (x1 + 5, y1 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+
+    if pose:
+        cv2.putText(display_frame, f"Pose: {pose}",
+                    (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+
+def _open_camera():
+    """
+    Ouvre la caméra avec un timeout court pour ne pas bloquer le thread.
+    Retourne un objet VideoCapture ouvert, ou None si l'ouverture échoue.
+    """
+    cap = cv2.VideoCapture(config.CAMERA_SOURCE)
+
+    # Timeout de connexion et de lecture (ms). Sans ça, VideoCapture sur HTTP
+    # peut bloquer jusqu'à 30s sans aucun log — invisible pour l'utilisateur.
+    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, config.CAM_OPEN_TIMEOUT_MS)
+    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, config.CAM_READ_TIMEOUT_MS)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.DISPLAY_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.DISPLAY_HEIGHT)
 
     if not cap.isOpened():
-        print("[ERREUR] Impossible d'ouvrir la caméra !")
-        return
-
+        cap.release()
+        return None
     print(f"[CAM] Caméra ouverte : {int(cap.get(3))}x{int(cap.get(4))}")
+    return cap
+
+
+def _reconnect_camera(cap):
+    """
+    Tente de rouvrir la caméra avec exponential backoff (1s → 30s max).
+    Bloque jusqu'à la reconnexion ou l'arrêt de l'application.
+    Retourne un nouveau VideoCapture ouvert, ou None si state.running devient False.
+    """
+    if cap is not None:
+        cap.release()
+
+    delay = 1.0
+    attempt = 0
+    while state.running:
+        attempt += 1
+        print(f"[CAM] Reconnexion tentative #{attempt} dans {delay:.0f}s...")
+        time.sleep(delay)
+
+        new_cap = _open_camera()
+        if new_cap is not None:
+            print(f"[CAM] Reconnexion réussie après {attempt} tentative(s) ✅")
+            return new_cap
+
+        # Exponential backoff plafonné à 30s
+        delay = min(delay * 2, 30.0)
+
+    return None
+
+
+def processing_loop():
+    print("[CAM] Thread de traitement démarré.")
+    cap = _open_camera()
+    if cap is None:
+        print(f"[ERREUR] Impossible d'ouvrir la caméra au démarrage : {config.CAMERA_SOURCE}")
+        # Attendre une reconnexion plutôt que de mourir silencieusement
+        cap = _reconnect_camera(None)
+        if cap is None:
+            return
 
     frame_count = 0
     fps_time = time.time()
     fps_counter = 0
-    detections_cache = []
+    consecutive_failures = 0
+    persons_cache = []
+    pose_cache = {}
 
     while state.running:
         ret, frame = cap.read()
         if not ret:
-            print("[CAM] Frame perdue, retry...")
-            time.sleep(0.1)
+            consecutive_failures += 1
+            if consecutive_failures == 1:
+                print("[CAM] Frame perdue...")
+            elif consecutive_failures >= config.CAM_MAX_FAILURES:
+                # Trop d'échecs consécutifs → vraie déconnexion, tenter une reconnexion
+                print(f"[CAM] {consecutive_failures} échecs consécutifs — déconnexion détectée.")
+                cap = _reconnect_camera(cap)
+                if cap is None:
+                    break
+                consecutive_failures = 0
+            else:
+                time.sleep(0.05)
             continue
+
+        consecutive_failures = 0
 
         frame_count += 1
         fps_counter += 1
         display_frame = frame.copy()
 
-        # ── Traitement lourd uniquement toutes les N frames ──
-        if frame_count % FRAME_SKIP == 0:
-            try:
-                # 1) Détection + reconnaissance faciale
-                faces = face_recognizer.detect_and_recognize(frame)
+        # ── Pipeline Body-First (YOLO + DeepSORT + InsightFace) ──────────────
+        # FaceBodyTracker gère en interne sa propre cadence pour InsightFace
+        # (toutes les FACE_RECOGNITION_SKIP frames). YOLO tourne à chaque appel.
+        try:
+            persons_cache = tracker.update(frame, frame_count)
+        except Exception as e:
+            print(f"[ERREUR TRAITEMENT] {type(e).__name__}: {e}")
 
-                # 2) Tracking
-                detections_for_tracker = []
-                for f in faces:
-                    x1, y1, x2, y2 = f['bbox']
-                    detections_for_tracker.append({
-                        'bbox': [x1, y1, x2, y2],
-                        'confidence': f.get('confidence', 0),
-                        'name': f.get('name', 'Inconnu')
-                    })
+        # ── Pose estimation (toutes les FRAME_SKIP frames, sur le crop corps) ─
+        if frame_count % config.FRAME_SKIP == 0:
+            pose_cache = {
+                p.track_id: _estimate_pose_safe(frame, p.body_bbox, p.track_id)
+                for p in persons_cache
+            }
 
-                tracked = tracker.update(detections_for_tracker, frame)
-                detections_cache = tracked
-
-            except Exception as e:
-                print(f"[ERREUR TRAITEMENT] {e}")
-
-        # ── Dessiner les résultats sur chaque frame ──
+        # ── Dessin + construction de la liste de présence ────────────────────
         present_list = []
-
-        for det in detections_cache:
-            x1, y1, x2, y2 = det['bbox']
-            name = det.get('name', 'Inconnu')
-            track_id = det.get('track_id', -1)
-            conf = det.get('confidence', 0)
-
-            is_known = name != 'Inconnu'
-            color = (0, 245, 160) if is_known else (100, 100, 255)
-
-            # Rectangle
-            cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-
-            # Label
-            label = f"{name} #{track_id}"
-            if conf > 0:
-                label += f" ({conf*100:.0f}%)"
-
-            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-            cv2.rectangle(display_frame, (x1, y1 - 30), (x1 + label_size[0] + 10, y1), color, -1)
-            cv2.putText(display_frame, label, (x1 + 5, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-
-            # Estimation de pose (optionnel)
-            try:
-                person_crop = frame[y1:y2, x1:x2]
-                if person_crop.size > 0:
-                    pose = pose_estimator.estimate(person_crop)
-                    if pose:
-                        cv2.putText(display_frame, f"Pose: {pose}",
-                                    (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-            except:
-                pass
-
+        for person in persons_cache:
+            pose = pose_cache.get(person.track_id)
+            _draw_person(display_frame, person, pose, frame_count)
             present_list.append({
-                'name': name,
-                'track_id': track_id,
-                'confidence': conf
+                'name': person.name,
+                'track_id': person.track_id,
+                'confidence': person.confidence,
+                'pose': pose,
+                'last_face_frame': person.last_face_frame,
             })
 
-        # ── FPS ──
+        # ── FPS ──────────────────────────────────────────────────────────────
         elapsed = time.time() - fps_time
         if elapsed >= 1.0:
             current_fps = fps_counter / elapsed
@@ -149,21 +226,21 @@ def processing_loop():
         else:
             current_fps = state.fps
 
-        # Afficher FPS sur la frame
         cv2.putText(display_frame, f"FPS: {current_fps:.1f}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 212, 255), 2)
-
-        # Compteur de personnes
         cv2.putText(display_frame, f"Personnes: {len(present_list)}",
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 245, 160), 2)
 
-        # ── Mise à jour de l'état global ──
+        # ── Mise à jour de l'état global ─────────────────────────────────────
         with state.lock:
-            _, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            _, buffer = cv2.imencode(
+                '.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, config.MJPEG_QUALITY]
+            )
             state.current_frame = buffer.tobytes()
             state.currently_present = present_list
             state.fps = current_fps
 
+    tracker.release()
     cap.release()
     print("[CAM] Caméra fermée")
 
@@ -172,13 +249,15 @@ def processing_loop():
 # ROUTES FLASK
 # ══════════════════════════════════════════
 def generate_frames():
+    # Cadence navigateur — bornée par config.MJPEG_FPS_LIMIT
+    interval = 1.0 / max(1, config.MJPEG_FPS_LIMIT)
     while True:
         with state.lock:
             frame = state.current_frame
         if frame:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        time.sleep(0.03)  # ~30 FPS max
+        time.sleep(interval)
 
 
 @app.route('/')
@@ -192,13 +271,55 @@ def video_feed():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+@app.route('/enroll', methods=['POST'])
+def enroll():
+    """
+    Enrôle une personne à chaud sans redémarrer l'application.
+
+    Entrée (multipart/form-data) :
+        name  : str — identifiant de la personne (ex: "Armand_Lauener")
+        images: fichier(s) image JPG/PNG — au moins 1, idéalement 3-5
+
+    Réponse :
+        200 { success: true,  message: str, total_known: int }
+        400 { success: false, message: str }
+    """
+    name = request.form.get('name', '').strip()
+    if not name:
+        return jsonify({'success': False, 'message': 'Champ "name" manquant ou vide.'}), 400
+
+    files = request.files.getlist('images')
+    if not files:
+        return jsonify({'success': False, 'message': 'Aucune image fournie (champ "images").'}), 400
+
+    images = []
+    for f in files:
+        buf = np.frombuffer(f.read(), dtype=np.uint8)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if img is not None:
+            images.append(img)
+
+    if not images:
+        return jsonify({'success': False, 'message': 'Impossible de décoder les images reçues.'}), 400
+
+    success, message = face_recognizer.enroll(name, images)
+
+    if success:
+        with state.lock:
+            state.total_known = len(face_recognizer.known_names)
+        return jsonify({'success': True, 'message': message,
+                        'total_known': state.total_known}), 200
+
+    return jsonify({'success': False, 'message': message}), 422
+
+
 @app.route('/status')
 def status():
     with state.lock:
         return jsonify({
             'currently_present': state.currently_present,
             'fps': state.fps,
-            'total_known': state.total_known
+            'total_known': state.total_known,
         })
 
 
@@ -206,12 +327,9 @@ def status():
 # LANCEMENT
 # ══════════════════════════════════════════
 if __name__ == '__main__':
-    # Créer le dossier known_faces si absent
-    os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
-
-    # Lancer le traitement dans un thread
     process_thread = threading.Thread(target=processing_loop, daemon=True)
     process_thread.start()
-    print("[SERVER] Démarrage sur http://0.0.0.0:8080")
+    print(f"[SERVER] Démarrage sur http://{config.FLASK_HOST}:{config.FLASK_PORT}")
 
-    app.run(host='0.0.0.0', port=8080, debug=False, threaded=True)
+    app.run(host=config.FLASK_HOST, port=config.FLASK_PORT,
+            debug=config.DEBUG_MODE, threaded=True)

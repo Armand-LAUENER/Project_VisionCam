@@ -1,4 +1,5 @@
 import os
+import threading
 import cv2
 import numpy as np
 import pickle
@@ -11,6 +12,7 @@ class FaceRecognizer:
         self.cache_path = cache_path
         self.known_embeddings = []
         self.known_names = []
+        self._lock = threading.Lock()   # Protège known_embeddings/known_names (accès multi-thread)
 
         # ── Charger InsightFace ──
         print("[FACE] Chargement InsightFace (buffalo_l)...")
@@ -101,22 +103,68 @@ class FaceRecognizer:
 
     def _identify(self, embedding):
         """Compare un embedding avec la base. Retourne (nom, score)."""
-        if not self.known_embeddings:
-            return "Inconnu", 0.0
+        with self._lock:
+            if not self.known_embeddings:
+                return "Inconnu", 0.0
+            names = list(self.known_names)
+            embeddings = list(self.known_embeddings)
 
         embedding_norm = embedding / np.linalg.norm(embedding)
         best_name = "Inconnu"
         best_score = 0.0
 
-        for i, known_emb in enumerate(self.known_embeddings):
-            # Similarité cosinus
+        for i, known_emb in enumerate(embeddings):
             score = np.dot(embedding_norm, known_emb)
             if score > best_score:
                 best_score = score
                 if score >= self.threshold:
-                    best_name = self.known_names[i]
+                    best_name = names[i]
 
         return best_name, float(best_score)
+
+    def enroll(self, name: str, images: list) -> tuple[bool, str]:
+        """
+        Enrôle une nouvelle personne (ou met à jour une existante) à chaud.
+
+        Args:
+            name   : Identifiant de la personne (ex: "Armand_Lauener")
+            images : Liste d'images BGR (numpy arrays) contenant le visage
+
+        Returns:
+            (success: bool, message: str)
+        """
+        embeddings = []
+        for img in images:
+            faces = self.app.get(img)
+            if not faces:
+                continue
+            best = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
+            embeddings.append(best.embedding)
+
+        if not embeddings:
+            return False, "Aucun visage détecté dans les images fournies."
+
+        avg = np.mean(embeddings, axis=0)
+        avg = avg / np.linalg.norm(avg)
+
+        # Sauvegarde image sur disque (source pour rebuild_database futur)
+        person_dir = os.path.join(self.known_faces_dir, name)
+        os.makedirs(person_dir, exist_ok=True)
+        for idx, img in enumerate(images):
+            cv2.imwrite(os.path.join(person_dir, f"enroll_{idx:03d}.jpg"), img)
+
+        # Mise à jour atomique de la base en mémoire
+        with self._lock:
+            if name in self.known_names:
+                idx = self.known_names.index(name)
+                self.known_embeddings[idx] = avg
+            else:
+                self.known_embeddings.append(avg)
+                self.known_names.append(name)
+
+        self._save_cache()
+        print(f"[FACE] Enrôlement '{name}' : {len(embeddings)} image(s) → embedding mis à jour.")
+        return True, f"'{name}' enrôlé avec {len(embeddings)} image(s)."
 
     def detect_and_recognize(self, frame):
         """
