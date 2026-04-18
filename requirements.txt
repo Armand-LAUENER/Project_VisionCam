@@ -18,7 +18,7 @@ ultralytics          # YOLOv8 — détection corps (pipeline Body-First)
 
 # --- Tracking ---
 deep-sort-realtime   # DeepSORT + ReID apparence (pipeline Body-First)
-mediapipe==0.10.30
+mediapipe==0.10.21
 
 # --- Web ---
 flask
