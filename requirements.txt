@@ -1,3 +1,11 @@
+# --- Dépôts personnalisés (VITAL POUR WINDOWS GPU) ---
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# --- PyTorch (CUDA) ---
+torch
+torchvision
+torchaudio
+
 # --- GPU / IA ---
 insightface
 onnxruntime-gpu
@@ -6,12 +14,11 @@ opencv-python
 scikit-learn
 scipy
 setuptools
-torchvision
 ultralytics          # YOLOv8 — détection corps (pipeline Body-First)
 
 # --- Tracking ---
 deep-sort-realtime   # DeepSORT + ReID apparence (pipeline Body-First)
-mediapipe
+mediapipe==0.10.30
 
 # --- Web ---
 flask

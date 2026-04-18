@@ -24,7 +24,7 @@ EMBEDDINGS_CACHE_PATH = os.path.join(DATA_DIR, "embeddings.pkl")
 # =============================================================================
 
 # True = webcam locale, False = caméra IP
-USE_LOCAL_CAM = False
+USE_LOCAL_CAM = True
 
 LOCAL_SOURCE = 0
 REMOTE_SOURCE = "http://192.168.27.65:5000/video"
@@ -46,7 +46,7 @@ DEBUG_MODE = False
 
 INSIGHTFACE_MODEL = "buffalo_l"
 ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-INSIGHTFACE_DET_SIZE = (640, 640)
+INSIGHTFACE_DET_SIZE = (1280,1280)
 
 # Seuil cosinus minimum pour valider un match (plus bas = plus strict).
 # Typique : 0.45 (strict) — 0.65 (permissif).
@@ -72,7 +72,7 @@ DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 # =============================================================================
 
 # Modèle YOLO à utiliser. "yolov8n.pt" = Nano (~3ms/frame GPU), auto-téléchargé.
-YOLO_MODEL = "yolov8n.pt"
+YOLO_MODEL = "yolov8m.pt"
 
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
 YOLO_CONF_THRESHOLD = 0.5
@@ -100,8 +100,8 @@ FACE_FRESHNESS_FRAMES = 30
 # STREAMING & AFFICHAGE
 # =============================================================================
 
-DISPLAY_WIDTH = 1280
-DISPLAY_HEIGHT = 720
+DISPLAY_WIDTH = 1920
+DISPLAY_HEIGHT = 1080
 
 # Qualité JPEG du flux MJPEG (0-100). Plus haut = plus net, plus de bande passante.
 MJPEG_QUALITY = 75
