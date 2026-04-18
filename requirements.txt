@@ -22,6 +22,11 @@ mediapipe==0.10.30
 
 # --- Web ---
 flask
+python-dotenv
 
 # --- Utilitaires ---
 colorama
+
+# --- Dev / Qualité ---
+ruff
+mypy

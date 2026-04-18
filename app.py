@@ -1,6 +1,8 @@
 from flask import Flask, render_template, Response, jsonify, request
 import cv2
+import logging
 import numpy as np
+import os
 import threading
 import time
 
@@ -9,13 +11,20 @@ from core.face_recognition import FaceRecognizer
 from core.face_body_tracker import FaceBodyTracker
 from core.pose_estimation import PoseEstimator
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)-28s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
 # ══════════════════════════════════════════
 # INITIALISATION DES MODULES
 # ══════════════════════════════════════════
-print("[INIT] Chargement des modules...")
-print(f"[INIT] Source vidéo : {'WEBCAM' if config.USE_LOCAL_CAM else config.REMOTE_SOURCE}")
+logger.info("Chargement des modules...")
+logger.info("Source vidéo : %s", "WEBCAM" if config.USE_LOCAL_CAM else config.REMOTE_SOURCE)
 
 face_recognizer = FaceRecognizer(
     config.KNOWN_FACES_DIR,
@@ -25,8 +34,8 @@ face_recognizer = FaceRecognizer(
 tracker = FaceBodyTracker(face_recognizer)
 pose_estimator = PoseEstimator()
 
-print(f"[INIT] Visages connus : {list(face_recognizer.known_names)}")
-print("[INIT] Modules chargés ✅")
+logger.info("Visages connus : %s", list(face_recognizer.known_names))
+logger.info("Modules chargés")
 
 
 # ══════════════════════════════════════════
@@ -56,7 +65,7 @@ def _estimate_pose_safe(frame, bbox, track_id):
     try:
         return pose_estimator.estimate(crop)
     except Exception as e:
-        print(f"[POSE] Échec sur track #{track_id} : {type(e).__name__}: {e}")
+        logger.warning("Échec pose sur track #%d : %s: %s", track_id, type(e).__name__, e)
         return None
 
 
@@ -118,7 +127,7 @@ def _open_camera():
     if not cap.isOpened():
         cap.release()
         return None
-    print(f"[CAM] Caméra ouverte : {int(cap.get(3))}x{int(cap.get(4))}")
+    logger.info("Caméra ouverte : %dx%d", int(cap.get(3)), int(cap.get(4)))
     return cap
 
 
@@ -135,12 +144,12 @@ def _reconnect_camera(cap):
     attempt = 0
     while state.running:
         attempt += 1
-        print(f"[CAM] Reconnexion tentative #{attempt} dans {delay:.0f}s...")
+        logger.warning("Reconnexion tentative #%d dans %.0fs...", attempt, delay)
         time.sleep(delay)
 
         new_cap = _open_camera()
         if new_cap is not None:
-            print(f"[CAM] Reconnexion réussie après {attempt} tentative(s) ✅")
+            logger.info("Reconnexion réussie après %d tentative(s)", attempt)
             return new_cap
 
         # Exponential backoff plafonné à 30s
@@ -150,10 +159,10 @@ def _reconnect_camera(cap):
 
 
 def processing_loop():
-    print("[CAM] Thread de traitement démarré.")
+    logger.info("Thread de traitement démarré.")
     cap = _open_camera()
     if cap is None:
-        print(f"[ERREUR] Impossible d'ouvrir la caméra au démarrage : {config.CAMERA_SOURCE}")
+        logger.error("Impossible d'ouvrir la caméra au démarrage : %s", config.CAMERA_SOURCE)
         # Attendre une reconnexion plutôt que de mourir silencieusement
         cap = _reconnect_camera(None)
         if cap is None:
@@ -171,10 +180,9 @@ def processing_loop():
         if not ret:
             consecutive_failures += 1
             if consecutive_failures == 1:
-                print("[CAM] Frame perdue...")
+                logger.warning("Frame perdue...")
             elif consecutive_failures >= config.CAM_MAX_FAILURES:
-                # Trop d'échecs consécutifs → vraie déconnexion, tenter une reconnexion
-                print(f"[CAM] {consecutive_failures} échecs consécutifs — déconnexion détectée.")
+                logger.error("%d échecs consécutifs — déconnexion détectée.", consecutive_failures)
                 cap = _reconnect_camera(cap)
                 if cap is None:
                     break
@@ -195,7 +203,7 @@ def processing_loop():
         try:
             persons_cache = tracker.update(frame, frame_count)
         except Exception as e:
-            print(f"[ERREUR TRAITEMENT] {type(e).__name__}: {e}")
+            logger.error("Erreur traitement : %s: %s", type(e).__name__, e)
 
         # ── Pose estimation (toutes les FRAME_SKIP frames, sur le crop corps) ─
         if frame_count % config.FRAME_SKIP == 0:
@@ -242,7 +250,7 @@ def processing_loop():
 
     tracker.release()
     cap.release()
-    print("[CAM] Caméra fermée")
+    logger.info("Caméra fermée")
 
 
 # ══════════════════════════════════════════
@@ -277,33 +285,69 @@ def enroll():
     Enrôle une personne à chaud sans redémarrer l'application.
 
     Entrée (multipart/form-data) :
-        name  : str — identifiant de la personne (ex: "Armand_Lauener")
-        images: fichier(s) image JPG/PNG — au moins 1, idéalement 3-5
+        name   : str — identifiant de la personne (ex: "Armand_Lauener")
+        method : 'average' (défaut) | 'multitemplate'
+        images : fichier(s) image JPG/PNG
+
+    Méthode 'average' :
+        Toutes les images sont moyennées en un seul embedding L2.
+        Idéal : 3-10 photos frontales avec variations de lumière.
+        Exemple curl :
+            curl -X POST /enroll -F name=Armand -F method=average
+                 -F images=@front1.jpg -F images=@front2.jpg
+
+    Méthode 'multitemplate' :
+        Chaque image est stockée sous un template séparé "{name}#{stem}".
+        Le stem est le nom de fichier sans extension (ex: "ProfilG.jpg" → label "ProfilG").
+        L'UI ne voit que "Armand" grâce au nettoyage automatique dans _identify.
+        Exemple curl :
+            curl -X POST /enroll -F name=Armand -F method=multitemplate
+                 -F images=@Face.jpg -F images=@ProfilG.jpg
 
     Réponse :
         200 { success: true,  message: str, total_known: int }
         400 { success: false, message: str }
+        422 { success: false, message: str }  ← aucun visage trouvé
     """
     name = request.form.get('name', '').strip()
     if not name:
         return jsonify({'success': False, 'message': 'Champ "name" manquant ou vide.'}), 400
 
+    method = request.form.get('method', 'average').strip().lower()
+    if method not in ('average', 'multitemplate'):
+        return jsonify({'success': False,
+                        'message': 'Champ "method" invalide : attendu "average" ou "multitemplate".'}), 400
+
     files = request.files.getlist('images')
     if not files:
         return jsonify({'success': False, 'message': 'Aucune image fournie (champ "images").'}), 400
 
-    images = []
+    # ── Décodage des images en mémoire ───────────────────────────────────────
+    decoded = []  # liste de (label, img_bgr)
     for f in files:
         buf = np.frombuffer(f.read(), dtype=np.uint8)
         img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-        if img is not None:
-            images.append(img)
+        if img is None:
+            continue
+        # Label = nom de fichier sans extension (utilisé uniquement pour multitemplate)
+        label = os.path.splitext(f.filename)[0] if f.filename else f"img{len(decoded)}"
+        decoded.append((label, img))
 
-    if not images:
+    if not decoded:
         return jsonify({'success': False, 'message': 'Impossible de décoder les images reçues.'}), 400
 
-    success, message = face_recognizer.enroll(name, images)
+    # ── Dispatch selon la méthode ─────────────────────────────────────────────
+    if method == 'average':
+        images = [img for _, img in decoded]
+        success, message = face_recognizer.enroll_person_average(name, images)
 
+    else:  # multitemplate
+        # Construire le dict { label: image }. Si deux fichiers ont le même stem,
+        # on garde le dernier (comportement défini et prévisible).
+        frames_dict = {label: img for label, img in decoded}
+        success, message = face_recognizer.enroll_person_multitemplate(name, frames_dict)
+
+    # ── Réponse ───────────────────────────────────────────────────────────────
     if success:
         with state.lock:
             state.total_known = len(face_recognizer.known_names)
@@ -329,7 +373,7 @@ def status():
 if __name__ == '__main__':
     process_thread = threading.Thread(target=processing_loop, daemon=True)
     process_thread.start()
-    print(f"[SERVER] Démarrage sur http://{config.FLASK_HOST}:{config.FLASK_PORT}")
+    logger.info("Démarrage sur http://%s:%d", config.FLASK_HOST, config.FLASK_PORT)
 
     app.run(host=config.FLASK_HOST, port=config.FLASK_PORT,
             debug=config.DEBUG_MODE, threaded=True)

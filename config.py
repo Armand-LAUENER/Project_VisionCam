@@ -6,6 +6,9 @@ ne doit être hardcodée ailleurs (ni dans app.py, ni dans core/).
 """
 
 import os
+from dotenv import load_dotenv
+
+load_dotenv()  # Charge .env sans écraser les variables d'environnement système
 
 # =============================================================================
 # CHEMINS DU PROJET
@@ -24,10 +27,10 @@ EMBEDDINGS_CACHE_PATH = os.path.join(DATA_DIR, "embeddings.pkl")
 # =============================================================================
 
 # True = webcam locale, False = caméra IP
-USE_LOCAL_CAM = True
+USE_LOCAL_CAM = os.getenv("USE_LOCAL_CAM", "true").lower() == "true"
 
 LOCAL_SOURCE = 0
-REMOTE_SOURCE = "http://192.168.27.65:5000/video"
+REMOTE_SOURCE = os.getenv("REMOTE_SOURCE", "http://192.168.27.65:5000/video")
 CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 
 
@@ -35,8 +38,8 @@ CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 # SERVEUR FLASK
 # =============================================================================
 
-FLASK_HOST = "0.0.0.0"
-FLASK_PORT = 5000
+FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
+FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 DEBUG_MODE = False
 
 
@@ -50,7 +53,7 @@ INSIGHTFACE_DET_SIZE = (1280,1280)
 
 # Seuil cosinus minimum pour valider un match (plus bas = plus strict).
 # Typique : 0.45 (strict) — 0.65 (permissif).
-RECOGNITION_THRESHOLD = 0.65
+RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.65"))
 
 
 # =============================================================================
