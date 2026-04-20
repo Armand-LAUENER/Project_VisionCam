@@ -47,9 +47,14 @@ DEBUG_MODE = False
 # INSIGHTFACE (reconnaissance faciale)
 # =============================================================================
 
-INSIGHTFACE_MODEL = "buffalo_l"
+INSIGHTFACE_MODEL = "antelopev2"
 ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-INSIGHTFACE_DET_SIZE = (1280,1280)
+
+# Résolution d'entrée du détecteur de visages.
+# (640, 640) : bon compromis perf/précision pour flux 1080p, personnes à < 5m.
+# (320, 320) : +rapide, moins précis sur visages lointains.
+# (1280, 1280): détection longue distance, mais ~4x plus lent — éviter en temps réel.
+INSIGHTFACE_DET_SIZE = (640, 640)
 
 # Seuil cosinus minimum pour valider un match (plus bas = plus strict).
 # Typique : 0.45 (strict) — 0.65 (permissif).
@@ -74,11 +79,21 @@ DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 # PIPELINE BODY-FIRST (YOLOv8 + DeepSORT + InsightFace)
 # =============================================================================
 
-# Modèle YOLO à utiliser. "yolov8n.pt" = Nano (~3ms/frame GPU), auto-téléchargé.
-YOLO_MODEL = "yolov8m.pt"
+# Modèle YOLO-Pose : détecte les corps ET les keypoints du squelette COCO (17 pts).
+# "yolov8s-pose.pt" = Small-Pose — auto-téléchargé au premier lancement.
+YOLO_MODEL = "yolov8s-pose.pt"
 
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
 YOLO_CONF_THRESHOLD = 0.5
+
+# Confiance minimale du keypoint Nez (COCO #0) pour déclencher InsightFace.
+# En dessous → personne probablement de dos → skip (gain FPS gratuit).
+POSE_NOSE_CONF_THRESHOLD = 0.5
+
+# Demi-taille du crop carré centré sur le nez, en pixels.
+# Le crop final = 2 × POSE_CROP_HALF_SIZE × 2 × POSE_CROP_HALF_SIZE.
+# Adaptatif : max(POSE_CROP_HALF_SIZE, body_height × 0.25) pour les personnes proches.
+POSE_CROP_HALF_SIZE = 125
 
 # Lancer InsightFace toutes les N frames seulement.
 # 5 = bon compromis (15ms × 1/5 = 3ms amortis/frame) ; baisser si réseau lent.

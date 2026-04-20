@@ -3,6 +3,7 @@ import cv2
 import logging
 import numpy as np
 import os
+import queue
 import threading
 import time
 
@@ -49,12 +50,17 @@ class AppState:
         self.fps = 0.0
         self.total_known = len(face_recognizer.known_names)
         self.running = True
+        # PRESENCE_TIMEOUT : { track_id: (person_dict, last_seen_timestamp) }
+        self.last_seen: dict = {}
 
 state = AppState()
 
+# Queue inter-thread caméra → AI. Taille 2 : on garde toujours la frame la plus fraîche.
+_frame_queue: queue.Queue = queue.Queue(maxsize=2)
+
 
 # ══════════════════════════════════════════
-# BOUCLE DE TRAITEMENT (thread séparé)
+# HELPERS PIPELINE
 # ══════════════════════════════════════════
 def _estimate_pose_safe(frame, bbox, track_id):
     """Calcule la pose depuis le crop du corps, avec log explicite en cas d'échec."""
@@ -83,13 +89,13 @@ def _draw_person(display_frame, person, pose, frame_count):
     frames_since_face = frame_count - person.last_face_frame
 
     if person.name == 'Inconnu':
-        color = (100, 100, 255)     # Bleu — inconnu
+        color = (100, 100, 255)
         mode_tag = None
     elif frames_since_face <= config.FACE_FRESHNESS_FRAMES:
-        color = (0, 245, 160)       # Vert — visage vu récemment
+        color = (0, 245, 160)
         mode_tag = None
     else:
-        color = (0, 165, 255)       # Orange — tracking corps uniquement
+        color = (0, 165, 255)
         mode_tag = "BODY"
 
     cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
@@ -152,28 +158,30 @@ def _reconnect_camera(cap):
             logger.info("Reconnexion réussie après %d tentative(s)", attempt)
             return new_cap
 
-        # Exponential backoff plafonné à 30s
         delay = min(delay * 2, 30.0)
 
     return None
 
 
-def processing_loop():
-    logger.info("Thread de traitement démarré.")
+# ══════════════════════════════════════════
+# THREAD A — LECTURE CAMÉRA
+# ══════════════════════════════════════════
+def camera_loop():
+    """
+    Lit les frames depuis la caméra et les pousse dans _frame_queue.
+    Entièrement découplé du pipeline AI : cap.read() ne bloque jamais
+    le calcul YOLO/InsightFace. La queue conserve toujours la frame
+    la plus récente (drop oldest si pleine).
+    """
+    logger.info("Thread caméra démarré.")
     cap = _open_camera()
     if cap is None:
         logger.error("Impossible d'ouvrir la caméra au démarrage : %s", config.CAMERA_SOURCE)
-        # Attendre une reconnexion plutôt que de mourir silencieusement
         cap = _reconnect_camera(None)
         if cap is None:
             return
 
-    frame_count = 0
-    fps_time = time.time()
-    fps_counter = 0
     consecutive_failures = 0
-    persons_cache = []
-    pose_cache = {}
 
     while state.running:
         ret, frame = cap.read()
@@ -193,13 +201,50 @@ def processing_loop():
 
         consecutive_failures = 0
 
+        # Toujours garder la frame la plus fraîche : drop oldest si queue pleine.
+        try:
+            _frame_queue.put_nowait(frame)
+        except queue.Full:
+            try:
+                _frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                _frame_queue.put_nowait(frame)
+            except queue.Full:
+                pass
+
+    cap.release()
+    logger.info("Thread caméra arrêté.")
+
+
+# ══════════════════════════════════════════
+# THREAD B — PIPELINE AI
+# ══════════════════════════════════════════
+def processing_loop():
+    """
+    Consomme les frames de _frame_queue et applique le pipeline AI.
+    Ne touche plus à la caméra — entièrement découplé de camera_loop.
+    """
+    logger.info("Thread de traitement démarré.")
+
+    frame_count = 0
+    fps_time = time.time()
+    fps_counter = 0
+    persons_cache = []
+    pose_cache = {}
+
+    while state.running:
+        try:
+            frame = _frame_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+
         frame_count += 1
         fps_counter += 1
         display_frame = frame.copy()
 
         # ── Pipeline Body-First (YOLO + DeepSORT + InsightFace) ──────────────
-        # FaceBodyTracker gère en interne sa propre cadence pour InsightFace
-        # (toutes les FACE_RECOGNITION_SKIP frames). YOLO tourne à chaque appel.
         try:
             persons_cache = tracker.update(frame, frame_count)
         except Exception as e:
@@ -213,17 +258,31 @@ def processing_loop():
             }
 
         # ── Dessin + construction de la liste de présence ────────────────────
+        now = time.time()
         present_list = []
+        present_ids = set()
+
         for person in persons_cache:
             pose = pose_cache.get(person.track_id)
             _draw_person(display_frame, person, pose, frame_count)
-            present_list.append({
+            entry = {
                 'name': person.name,
                 'track_id': person.track_id,
                 'confidence': person.confidence,
                 'pose': pose,
                 'last_face_frame': person.last_face_frame,
-            })
+            }
+            present_list.append(entry)
+            present_ids.add(person.track_id)
+            state.last_seen[person.track_id] = (entry, now)
+
+        # ── PRESENCE_TIMEOUT : réinjecter les personnes récemment vues ───────
+        for tid, (person_entry, last_time) in list(state.last_seen.items()):
+            if tid not in present_ids:
+                if now - last_time <= config.PRESENCE_TIMEOUT:
+                    present_list.append(person_entry)
+                else:
+                    del state.last_seen[tid]
 
         # ── FPS ──────────────────────────────────────────────────────────────
         elapsed = time.time() - fps_time
@@ -249,15 +308,13 @@ def processing_loop():
             state.fps = current_fps
 
     tracker.release()
-    cap.release()
-    logger.info("Caméra fermée")
+    logger.info("Thread de traitement arrêté.")
 
 
 # ══════════════════════════════════════════
 # ROUTES FLASK
 # ══════════════════════════════════════════
 def generate_frames():
-    # Cadence navigateur — bornée par config.MJPEG_FPS_LIMIT
     interval = 1.0 / max(1, config.MJPEG_FPS_LIMIT)
     while True:
         with state.lock:
@@ -289,21 +346,6 @@ def enroll():
         method : 'average' (défaut) | 'multitemplate'
         images : fichier(s) image JPG/PNG
 
-    Méthode 'average' :
-        Toutes les images sont moyennées en un seul embedding L2.
-        Idéal : 3-10 photos frontales avec variations de lumière.
-        Exemple curl :
-            curl -X POST /enroll -F name=Armand -F method=average
-                 -F images=@front1.jpg -F images=@front2.jpg
-
-    Méthode 'multitemplate' :
-        Chaque image est stockée sous un template séparé "{name}#{stem}".
-        Le stem est le nom de fichier sans extension (ex: "ProfilG.jpg" → label "ProfilG").
-        L'UI ne voit que "Armand" grâce au nettoyage automatique dans _identify.
-        Exemple curl :
-            curl -X POST /enroll -F name=Armand -F method=multitemplate
-                 -F images=@Face.jpg -F images=@ProfilG.jpg
-
     Réponse :
         200 { success: true,  message: str, total_known: int }
         400 { success: false, message: str }
@@ -322,32 +364,25 @@ def enroll():
     if not files:
         return jsonify({'success': False, 'message': 'Aucune image fournie (champ "images").'}), 400
 
-    # ── Décodage des images en mémoire ───────────────────────────────────────
-    decoded = []  # liste de (label, img_bgr)
+    decoded = []
     for f in files:
         buf = np.frombuffer(f.read(), dtype=np.uint8)
         img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if img is None:
             continue
-        # Label = nom de fichier sans extension (utilisé uniquement pour multitemplate)
         label = os.path.splitext(f.filename)[0] if f.filename else f"img{len(decoded)}"
         decoded.append((label, img))
 
     if not decoded:
         return jsonify({'success': False, 'message': 'Impossible de décoder les images reçues.'}), 400
 
-    # ── Dispatch selon la méthode ─────────────────────────────────────────────
     if method == 'average':
         images = [img for _, img in decoded]
         success, message = face_recognizer.enroll_person_average(name, images)
-
-    else:  # multitemplate
-        # Construire le dict { label: image }. Si deux fichiers ont le même stem,
-        # on garde le dernier (comportement défini et prévisible).
+    else:
         frames_dict = {label: img for label, img in decoded}
         success, message = face_recognizer.enroll_person_multitemplate(name, frames_dict)
 
-    # ── Réponse ───────────────────────────────────────────────────────────────
     if success:
         with state.lock:
             state.total_known = len(face_recognizer.known_names)
@@ -355,6 +390,65 @@ def enroll():
                         'total_known': state.total_known}), 200
 
     return jsonify({'success': False, 'message': message}), 422
+
+
+@app.route('/capture', methods=['POST'])
+def capture():
+    """
+    Enrôle une personne depuis la frame courante du flux caméra.
+
+    Entrée (multipart/form-data) :
+        name : str — identifiant de la personne
+
+    Réponse :
+        200 { success: true,  message: str, total_known: int }
+        400 { success: false, message: str }
+        503 { success: false, message: str }  ← pas de frame disponible
+        422 { success: false, message: str }  ← aucun visage détecté
+    """
+    name = request.form.get('name', '').strip()
+    if not name:
+        return jsonify({'success': False, 'message': 'Champ "name" manquant ou vide.'}), 400
+
+    with state.lock:
+        frame_bytes = state.current_frame
+
+    if not frame_bytes:
+        return jsonify({'success': False, 'message': 'Aucune frame disponible (caméra déconnectée ?)'}), 503
+
+    # Décoder le JPEG actuellement streamé pour en extraire le visage
+    buf = np.frombuffer(frame_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+
+    success, message = face_recognizer.enroll_person_average(name, [frame])
+
+    if success:
+        with state.lock:
+            state.total_known = len(face_recognizer.known_names)
+        return jsonify({'success': True, 'message': message,
+                        'total_known': state.total_known}), 200
+
+    return jsonify({'success': False, 'message': message}), 422
+
+
+@app.route('/rebuild', methods=['POST'])
+def rebuild():
+    """
+    Reconstruit la base d'embeddings depuis known_faces/ à chaud.
+    Lance le rebuild dans un thread daemon pour ne pas bloquer la réponse HTTP.
+
+    Réponse immédiate :
+        202 { started: true, message: str }
+    """
+    def _do_rebuild():
+        logger.info("Rebuild base embeddings demandé via UI...")
+        face_recognizer.rebuild_database()
+        with state.lock:
+            state.total_known = len(face_recognizer.known_names)
+        logger.info("Rebuild terminé : %d entrée(s)", state.total_known)
+
+    threading.Thread(target=_do_rebuild, daemon=True).start()
+    return jsonify({'started': True, 'message': 'Reconstruction lancée en arrière-plan.'}), 202
 
 
 @app.route('/status')
@@ -371,7 +465,9 @@ def status():
 # LANCEMENT
 # ══════════════════════════════════════════
 if __name__ == '__main__':
+    camera_thread = threading.Thread(target=camera_loop, daemon=True)
     process_thread = threading.Thread(target=processing_loop, daemon=True)
+    camera_thread.start()
     process_thread.start()
     logger.info("Démarrage sur http://%s:%d", config.FLASK_HOST, config.FLASK_PORT)
 

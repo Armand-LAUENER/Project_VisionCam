@@ -1,32 +1,33 @@
 # --- Dépôts personnalisés (VITAL POUR WINDOWS GPU) ---
 --extra-index-url https://download.pytorch.org/whl/cu121
 
-# --- PyTorch (CUDA) ---
-torch
-torchvision
-torchaudio
+# --- PyTorch (CUDA 12.1) ---
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torchaudio==2.5.1+cu121
 
 # --- GPU / IA ---
-insightface
-onnxruntime-gpu
-numpy
-opencv-python
-scikit-learn
-scipy
+insightface==0.7.3
+onnxruntime-gpu==1.24.4
+numpy==1.26.4
+opencv-python==4.13.0.92
+scikit-learn==1.8.0
+scipy==1.17.1
 setuptools
-ultralytics          # YOLOv8 — détection corps (pipeline Body-First)
+ultralytics==8.4.39          # YOLOv8 — détection corps (pipeline Body-First)
 
 # --- Tracking ---
-deep-sort-realtime   # DeepSORT + ReID apparence (pipeline Body-First)
+deep-sort-realtime==1.3.2    # DeepSORT + ReID apparence (pipeline Body-First)
 mediapipe==0.10.21
 
 # --- Web ---
-flask
-python-dotenv
+flask==3.1.3
+python-dotenv==1.2.2
 
 # --- Utilitaires ---
-colorama
+colorama==0.4.6
 
 # --- Dev / Qualité ---
 ruff
 mypy
+pytest
