@@ -4,6 +4,7 @@ import threading
 import cv2
 import numpy as np
 import pickle
+import config
 from insightface.app import FaceAnalysis
 
 logger = logging.getLogger(__name__)
@@ -19,9 +20,17 @@ class FaceRecognizer:
         self._lock = threading.Lock()   # Protège known_embeddings/known_names (accès multi-thread)
 
         # ── Charger InsightFace ──
-        logger.info("Chargement InsightFace (buffalo_l)...")
-        self.app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-        self.app.prepare(ctx_id=0, det_size=(640, 640))
+        # allowed_modules : détection + reconnaissance uniquement.
+        # Sans cette restriction, buffalo_l charge aussi landmark_2d_106,
+        # landmark_3d_68 et genderage — inutiles ici et responsables du pic
+        # de latence toutes les FACE_RECOGNITION_SKIP frames.
+        logger.info("Chargement InsightFace (%s, det+rec only)...", config.INSIGHTFACE_MODEL)
+        self.app = FaceAnalysis(
+            name=config.INSIGHTFACE_MODEL,
+            allowed_modules=['detection', 'recognition'],
+            providers=config.ONNX_PROVIDERS,
+        )
+        self.app.prepare(ctx_id=0, det_size=config.INSIGHTFACE_DET_SIZE)
         logger.info("InsightFace chargé")
 
         # ── Charger ou construire la base ──
@@ -176,8 +185,7 @@ class FaceRecognizer:
             score = float(np.dot(embedding_norm, known_emb))
             if score > best_score:
                 best_score = score
-                if score >= self.threshold:
-                    best_name = names[i]
+                best_name = names[i] if score >= self.threshold else "Inconnu"
 
         # Nettoyer le suffixe multi-template avant de retourner
         clean_name = best_name.split('#')[0] if '#' in best_name else best_name

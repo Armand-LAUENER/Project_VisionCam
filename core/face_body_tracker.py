@@ -1,11 +1,13 @@
 """
-face_body_tracker.py — Pipeline Body-First avec association Visage/Corps.
+face_body_tracker.py — Pipeline Body-First avec keypoints YOLO-Pose.
 
 Architecture :
-  1. YOLOv8     → détection corps (classe 'person', chaque frame)
-  2. DeepSORT   → tracking corps + ReID apparence (chaque frame)
-  3. InsightFace → reconnaissance visages (toutes les FACE_RECOGNITION_SKIP frames)
-  4. Association géométrique → face_center ∈ moitié supérieure du body_bbox
+  1. YOLOv8-Pose → détection corps + keypoints squelette COCO (17 pts)
+  2. DeepSORT    → tracking corps + ReID apparence (chaque frame)
+                   Les keypoints sont transmis via `others` du tuple DeepSORT.
+  3. InsightFace → crop dynamique centré sur le Nez (keypoint 0)
+                   Skip automatique si nez non visible (dos tourné → gain FPS).
+  4. Association → face_center ↔ nose_keypoint (proximité euclidienne)
   5. Persistance → identity_map[track_id] conserve le nom même sans visage visible
 """
 
@@ -13,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import numpy as np
-from dataclasses import dataclass, field
+from collections import deque
 from typing import Optional
 
 from ultralytics import YOLO
@@ -29,17 +31,21 @@ logger = logging.getLogger(__name__)
 # Structures de données
 # ─────────────────────────────────────────────────────────────────────────────
 
-@dataclass
 class TrackedPerson:
     """
     Résultat final pour une personne trackée à un instant donné.
-    Contient à la fois les infos de position (corps) et d'identité (visage).
+    Contient les infos de position (corps) et d'identité (visage).
     """
-    track_id: int
-    body_bbox: list[int]          # [x1, y1, x2, y2] du corps (YOLO + DeepSORT)
-    name: str = "Inconnu"
-    confidence: float = 0.0
-    last_face_frame: int = -1     # Frame où le visage a été vu pour la dernière fois
+    __slots__ = ('track_id', 'body_bbox', 'name', 'confidence', 'last_face_frame')
+
+    def __init__(self, track_id: int, body_bbox: list[int],
+                 name: str = "Inconnu", confidence: float = 0.0,
+                 last_face_frame: int = -1) -> None:
+        self.track_id = track_id
+        self.body_bbox = body_bbox
+        self.name = name
+        self.confidence = confidence
+        self.last_face_frame = last_face_frame
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,30 +54,25 @@ class TrackedPerson:
 
 class FaceBodyTracker:
     """
-    Orchestre le pipeline Body-First.
+    Orchestre le pipeline Body-First avec keypoints YOLO-Pose.
 
     Usage:
-        face_recognizer = FaceRecognizer(...)
-        tracker = FaceBodyTracker(face_recognizer)
-
+        tracker = FaceBodyTracker(FaceRecognizer(...))
         for frame_count, frame in enumerate(camera):
             persons = tracker.update(frame, frame_count)
             for p in persons:
                 draw_box(frame, p.body_bbox, p.name)
     """
 
-    # Fraction maximale de la hauteur du corps depuis le haut dans laquelle
-    # on accepte un visage. 0.6 = les 60% supérieurs (tête + épaules).
-    # Au-delà = torse ou jambes, ce n'est pas un visage.
-    FACE_IN_BODY_VERTICAL_RATIO = 0.6
+    # Lissage temporel : consensus requis avant de confirmer une identité.
+    # VOTE_WINDOW=3, majorité = 2/3 → ≈ 100ms à 30 FPS.
+    VOTE_WINDOW = 3
 
     def __init__(self, face_recognizer: FaceRecognizer) -> None:
-        # ── Détecteur de corps ──────────────────────────────────────────────
-        logger.info("Chargement YOLO (%s)...", config.YOLO_MODEL)
+        logger.info("Chargement YOLO-Pose (%s)...", config.YOLO_MODEL)
         self.yolo = YOLO(config.YOLO_MODEL)
-        logger.info("YOLO chargé")
+        logger.info("YOLO-Pose chargé")
 
-        # ── Tracker de corps avec ReID apparence ────────────────────────────
         self.body_tracker = DeepSort(
             max_age=config.DEEPSORT_MAX_AGE,
             n_init=config.DEEPSORT_N_INIT,
@@ -79,79 +80,127 @@ class FaceBodyTracker:
             embedder_gpu=config.DEEPSORT_EMBEDDER_GPU,
         )
 
-        # ── Reconnaissance faciale (réutilisée depuis l'architecture existante)
         self.face_recognizer = face_recognizer
 
-        # ── Carte d'identité persistante ────────────────────────────────────
         # { track_id: { 'name': str, 'confidence': float, 'last_face_frame': int } }
         self._identity_map: dict[int, dict] = {}
+
+        # { track_id: deque([(name, confidence), ...], maxlen=VOTE_WINDOW) }
+        self._vote_buffer: dict[int, deque] = {}
+
+        # { track_id: (nose_x, nose_y, nose_conf) }
+        # Mis à jour par IoU matching YOLO↔DeepSORT chaque frame.
+        # Contourne le fait que track.others n'est pas fiable dans DeepSORT 1.3.x.
+        self._nose_map: dict[int, tuple] = {}
 
     # ─────────────────────────────────────────────────────────────────────────
     # Point d'entrée public
     # ─────────────────────────────────────────────────────────────────────────
 
     def update(self, frame: np.ndarray, frame_count: int) -> list[TrackedPerson]:
-        """
-        Pipeline complet pour une frame avec optimisation drastique des FPS.
-        """
-        # ── Étape 1 : Détection des corps (YOLO) ────────────────────────────
+        """Pipeline complet pour une frame."""
+
+        # Étape 1 : Détection YOLO-Pose (corps + keypoints)
         body_detections = self._detect_bodies(frame)
 
-        # ── Étape 2 : Tracking des corps (DeepSORT) ─────────────────────────
+        # Étape 2 : Tracking DeepSORT
         raw_tracks = self.body_tracker.update_tracks(body_detections, frame=frame)
         active_tracks = [t for t in raw_tracks if t.is_confirmed()]
 
-        # ── Étape 3 & 4 : Reco faciale intelligente ─────────────────────────
+        # Étape 2b : Mise à jour du nose_map par IoU matching YOLO↔tracks
+        # track.others n'est pas fiable dans DeepSORT 1.3.x → on maintient
+        # notre propre dict { track_id: (nx, ny, nc) }.
+        self._update_nose_map(active_tracks, body_detections)
+
+        # Étapes 3 & 4 : Reconnaissance faciale intelligente (cadencée)
         if frame_count % config.FACE_RECOGNITION_SKIP == 0 and active_tracks:
 
-            # OPTIMISATION : On ne sélectionne QUE les corps qui ont besoin d'être identifiés
             tracks_to_recognize = []
             for track in active_tracks:
                 identity = self._identity_map.get(track.track_id, {})
                 name = identity.get('name', 'Inconnu')
                 last_face_frame = identity.get('last_face_frame', -1)
 
-                # S'il est inconnu, OU si on n'a pas revérifié son visage depuis FACE_FRESHNESS_FRAMES
                 if name == 'Inconnu' or (frame_count - last_face_frame > config.FACE_FRESHNESS_FRAMES):
                     tracks_to_recognize.append(track)
 
-            # OPTIMISATION 2 : On limite à 1 ou 2 analyses max par frame pour garantir les FPS
-            # Si on a 5 inconnus, les autres seront analysés aux frames suivantes !
+            # Max 2 InsightFace/frame pour garantir les FPS
             tracks_to_recognize = tracks_to_recognize[:2]
 
             if tracks_to_recognize:
-                body_rois = [t.to_ltrb() for t in tracks_to_recognize]
-                faces = self._recognize_faces_in_rois(frame, body_rois)
-                # On passe toujours active_tracks complet pour l'association géométrique
+                faces = self._recognize_faces_for_tracks(frame, tracks_to_recognize)
                 self._associate_faces_to_tracks(active_tracks, faces, frame_count)
 
-        # ── Étape 5 : Construire la liste de résultats ───────────────────────
+        # Étape 5 : Construire les résultats
         results = self._build_results(active_tracks)
 
-        # Nettoyage : retirer les identités des tracks qui ne sont plus actifs
+        # Nettoyage : purger les entrées des tracks disparus
         active_ids = {t.track_id for t in active_tracks}
-        self._identity_map = {
-            tid: v for tid, v in self._identity_map.items()
-            if tid in active_ids
-        }
+        self._identity_map = {tid: v for tid, v in self._identity_map.items() if tid in active_ids}
+        self._vote_buffer  = {tid: v for tid, v in self._vote_buffer.items()  if tid in active_ids}
+        # _nose_map est déjà purgé dans _update_nose_map
 
         return results
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Étape 1 — Détection YOLO
+    # Étape 2b — Mise à jour du nose_map (bypass track.others)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _update_nose_map(self, active_tracks: list, body_detections: list) -> None:
+        """
+        Associe chaque track confirmé à la détection YOLO la plus proche (IoU)
+        et met à jour self._nose_map[track_id] avec le keypoint nez correspondant.
+
+        Nécessaire car track.others n'est pas propagé de façon fiable par
+        deep_sort_realtime 1.3.x pour les tracks confirmés.
+        """
+        for track in active_tracks:
+            tx1, ty1, tx2, ty2 = track.to_ltrb()
+            best_iou = 0.0
+            best_nose = None
+
+            for det_bbox, _conf, _cls, det_others in body_detections:
+                dx, dy, dw, dh = det_bbox
+                dx2, dy2 = dx + dw, dy + dh
+
+                ix1 = max(tx1, dx);  iy1 = max(ty1, dy)
+                ix2 = min(tx2, dx2); iy2 = min(ty2, dy2)
+                inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+                if inter == 0.0:
+                    continue
+                union = (tx2 - tx1) * (ty2 - ty1) + dw * dh - inter
+                iou = inter / union if union > 0.0 else 0.0
+
+                if iou > best_iou:
+                    best_iou = iou
+                    best_nose = det_others.get('nose')
+
+            if best_iou > 0.3 and best_nose is not None:
+                self._nose_map[track.track_id] = best_nose
+            # Si pas de match : on conserve la valeur précédente (track coasté)
+
+        # Purger les tracks disparus
+        active_ids = {t.track_id for t in active_tracks}
+        self._nose_map = {tid: v for tid, v in self._nose_map.items() if tid in active_ids}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Étape 1 — Détection YOLO-Pose
     # ─────────────────────────────────────────────────────────────────────────
 
     def _detect_bodies(self, frame: np.ndarray) -> list[tuple]:
         """
-        Détecte les personnes et formate les résultats pour DeepSORT.
+        Détecte les personnes avec YOLOv8-Pose et formate les résultats pour DeepSORT.
+
+        Chaque détection est un 4-tuple : ([x, y, w, h], conf, 'person', others).
+        `others` contient le keypoint Nez sous la forme (x, y, conf) ou None.
+        DeepSORT stocke `others` dans track.others → disponible dans les étapes suivantes.
 
         Returns:
-            Liste de tuples ([x1, y1, w, h], confidence, 'person').
-            DeepSORT attend le format ltwh (left-top-width-height).
+            Liste de 4-tuples au format DeepSORT avec keypoints embarqués.
         """
         yolo_results = self.yolo.predict(
             frame,
-            classes=[0],                        # Classe 0 = 'person' (COCO)
+            classes=[0],
             conf=config.YOLO_CONF_THRESHOLD,
             device=0,
             verbose=False,
@@ -159,93 +208,99 @@ class FaceBodyTracker:
 
         detections = []
         for result in yolo_results:
-            for box in result.boxes:
+            kps_data = result.keypoints.data if result.keypoints is not None else None
+
+            for i, box in enumerate(result.boxes):
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 conf = float(box.conf[0])
-                # DeepSORT attend [x_left, y_top, width, height]
-                detections.append(([x1, y1, x2 - x1, y2 - y1], conf, 'person'))
+
+                # Extraire le nez (COCO keypoint #0) depuis les keypoints de cette détection
+                nose = None
+                if kps_data is not None and i < len(kps_data):
+                    kp = kps_data[i]        # Tensor (17, 3) : (x, y, conf) par keypoint
+                    nx, ny, nc = float(kp[0][0]), float(kp[0][1]), float(kp[0][2])
+                    nose = (nx, ny, nc)
+
+                others = {'nose': nose}
+                detections.append(([x1, y1, x2 - x1, y2 - y1], conf, 'person', others))
 
         return detections
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Étape 3 — Reconnaissance faciale par "Zoom & Crop"
+    # Étape 3 — Reconnaissance faciale par crop dynamique centré sur le Nez
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _recognize_faces_in_rois(
+    def _recognize_faces_for_tracks(
             self,
             frame: np.ndarray,
-            body_rois: list[list[float]],
+            tracks_to_recognize: list,
     ) -> list[dict]:
         """
-        Découpe la partie supérieure de chaque corps (Crop) et l'envoie à InsightFace.
-        Permet un "zoom" artificiel qui améliore drastiquement la reconnaissance à distance.
+        Pour chaque track, extrait le keypoint Nez depuis track.others et découpe
+        un carré dynamique centré sur ce point pour InsightFace.
+
+        Avantages vs. crop "60% supérieur" :
+          - Fonctionne quelle que soit la distance à la caméra.
+          - Skip automatique si nez absent (dos tourné) → gain FPS immédiat.
+          - Crop plus petit et plus précis → InsightFace plus rapide.
 
         Returns:
-            Liste de tous les visages détectés dans ces zones, remis aux coordonnées globales.
+            Liste de visages détectés avec bbox remises aux coordonnées globales
+            et `source_track_id` indiquant le track d'origine.
         """
         all_faces = []
         h_img, w_img = frame.shape[:2]
 
-        for body_bbox in body_rois:
-            bx1, by1, bx2, by2 = [int(v) for v in body_bbox]
+        for track in tracks_to_recognize:
+            nose = self._nose_map.get(track.track_id)
 
-            # 1. Calculer la limite basse du crop (les 60% supérieurs du corps)
-            crop_y_bottom = int(by1 + (by2 - by1) * self.FACE_IN_BODY_VERTICAL_RATIO)
-
-            # 2. Sécuriser les bordures (au cas où YOLO déborde de l'image)
-            bx1, by1 = max(0, bx1), max(0, by1)
-            bx2, crop_y_bottom = min(w_img, bx2), min(h_img, crop_y_bottom)
-
-            # Si la boîte est invalide ou microscopique, on ignore
-            if bx2 - bx1 < 20 or crop_y_bottom - by1 < 20:
+            # Pas de nez ou confiance insuffisante → personne probablement de dos → skip
+            if nose is None:
+                logger.debug("track #%s : nez absent du nose_map → skip", track.track_id)
+                continue
+            if nose[2] < config.POSE_NOSE_CONF_THRESHOLD:
+                logger.debug("track #%s : nose_conf=%.3f < %.2f → skip",
+                             track.track_id, nose[2], config.POSE_NOSE_CONF_THRESHOLD)
                 continue
 
-            # 3. Découper (Cropper) l'image : on ne garde que la tête/épaules
-            head_crop = frame[by1:crop_y_bottom, bx1:bx2]
+            nose_x, nose_y, _ = nose
 
-            # 4. Lancer InsightFace sur ce "zoom"
-            crop_faces = self.face_recognizer.detect_and_recognize(head_crop)
+            # Taille du crop adaptative : au moins POSE_CROP_HALF_SIZE,
+            # proportionnelle à la hauteur du corps pour les personnes proches
+            bx1, by1, bx2, by2 = [int(v) for v in track.to_ltrb()]
+            body_height = max(1, by2 - by1)
+            half = max(config.POSE_CROP_HALF_SIZE, int(body_height * 0.25))
 
-            # 5. Ajuster les coordonnées (bbox) pour les ramener à l'échelle de l'image entière
+            cx, cy = int(nose_x), int(nose_y)
+            crop_x1 = max(0, cx - half)
+            crop_y1 = max(0, cy - half)
+            crop_x2 = min(w_img, cx + half)
+            crop_y2 = min(h_img, cy + half)
+
+            if crop_x2 - crop_x1 < 20 or crop_y2 - crop_y1 < 20:
+                continue
+
+            head_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+
+            try:
+                crop_faces = self.face_recognizer.detect_and_recognize(head_crop)
+            except Exception as e:
+                logger.warning("InsightFace erreur track #%s : %s: %s",
+                               track.track_id, type(e).__name__, e)
+                continue
+
             for face in crop_faces:
                 fx1, fy1, fx2, fy2 = face['bbox']
-
-                # Le visage a été trouvé dans le crop, il faut rajouter l'offset du crop (bx1, by1)
-                # pour que les rectangles s'affichent au bon endroit sur l'écran final !
-                face['bbox'] = [fx1 + bx1, fy1 + by1, fx2 + bx1, fy2 + by1]
-
+                # Remettre les coordonnées du crop à l'échelle de l'image globale
+                face['bbox'] = [fx1 + crop_x1, fy1 + crop_y1, fx2 + crop_x1, fy2 + crop_y1]
+                # Association directe : on sait déjà à quel track ce visage appartient
+                face['source_track_id'] = track.track_id
                 all_faces.append(face)
 
-        # Plus besoin de vérifier si le visage appartient au corps,
-        # puisqu'on a forcé l'IA à chercher DEDANS !
         return all_faces
 
-    def _face_belongs_to_any_body(
-
-        self,
-        face_bbox: list[int],
-        body_rois: list[list[float]],
-        ) -> bool:
-        """
-        Retourne True si le centre du visage appartient à la zone
-        supérieure d'au moins un corps connu.
-        """
-        fx1, fy1, fx2, fy2 = face_bbox
-        face_cx = (fx1 + fx2) / 2
-        face_cy = (fy1 + fy2) / 2
-
-        for body_bbox in body_rois:
-            bx1, by1, bx2, by2 = body_bbox
-            # Limite verticale : on accepte le visage dans les 60% supérieurs du corps.
-            upper_limit = by1 + (by2 - by1) * self.FACE_IN_BODY_VERTICAL_RATIO
-
-            if bx1 <= face_cx <= bx2 and by1 <= face_cy <= upper_limit:
-                return True
-
-        return False
-
     # ─────────────────────────────────────────────────────────────────────────
-    # Étape 4 — Association géométrique Visage → Corps
+    # Étape 4 — Association Visage → Corps (basée sur le nez)
     # ─────────────────────────────────────────────────────────────────────────
 
     def _associate_faces_to_tracks(
@@ -255,82 +310,101 @@ class FaceBodyTracker:
             frame_count: int,
     ) -> None:
         """
-        Pour chaque visage reconnu (nom != 'Inconnu'), trouve le track corps
-        qui le contient et met à jour _identity_map.
+        Associe chaque visage reconnu à son track et met à jour _identity_map.
+
+        Priorité d'association :
+          1. source_track_id (défini au crop → association directe, sans calcul).
+          2. Proximité euclidienne face_center ↔ nose_keypoint (fallback).
 
         Règles absolues :
-            - 'Inconnu' ne remplace JAMAIS une identité établie (filtre en amont).
-            - Une confiance < RECOGNITION_THRESHOLD ne met jamais à jour la map.
-            - ANTI-CLONAGE : Une identité ne peut appartenir qu'à un seul corps à la fois.
+          - 'Inconnu' ne remplace JAMAIS une identité établie.
+          - Confiance < RECOGNITION_THRESHOLD → rejeté.
+          - Anti-clonage : une identité ne peut appartenir qu'à un seul corps.
+          - Vote buffer : consensus requis avant confirmation.
         """
+        active_track_map = {t.track_id: t for t in active_tracks}
+
         for face in faces:
-            # Inconnu ne doit jamais écraser une identité établie.
             if face['name'] == 'Inconnu':
                 continue
-
-            # Gate de confiance : rejeter les détections trop faibles.
             if face['confidence'] < config.RECOGNITION_THRESHOLD:
                 continue
 
-            best_track_id = self._find_containing_track(face['bbox'], active_tracks)
+            # Association directe via source_track_id (chemin nominal)
+            best_track_id = face.get('source_track_id')
+            if best_track_id not in active_track_map:
+                # Fallback géométrique si le track a disparu entre le crop et l'association
+                best_track_id = self._find_containing_track(face['bbox'], active_tracks)
 
-            if best_track_id is not None:
-                new_name = face['name']
+            if best_track_id is None:
+                continue
 
-                # --- LOGIQUE ANTI-CLONAGE ---
-                # Si ce nom est déjà attribué à un autre corps actif, on le retire.
-                # La détection actuelle (qui vient d'être vue de face à l'instant) fait autorité.
-                for old_tid, identity in list(self._identity_map.items()):
-                    if old_tid != best_track_id and identity.get('name') == new_name:
-                        # Rétrograder l'ancien corps à "Inconnu"
-                        self._identity_map[old_tid] = {
-                            'name': 'Inconnu',
-                            'confidence': 0.0,
-                            'last_face_frame': -1
-                        }
-                        logger.warning(
-                            "Correction usurpation : '%s' passe du corps #%d au corps #%d",
-                            new_name, old_tid, best_track_id,
-                        )
+            # ── Vote buffer ────────────────────────────────────────────────────
+            if best_track_id not in self._vote_buffer:
+                self._vote_buffer[best_track_id] = deque(maxlen=self.VOTE_WINDOW)
+            self._vote_buffer[best_track_id].append((face['name'], face['confidence']))
 
-                # Mise à jour du nouveau corps
-                self._identity_map[best_track_id] = {
-                    'name': new_name,
-                    'confidence': face['confidence'],
-                    'last_face_frame': frame_count,
-                }
+            votes: dict[str, list[float]] = {}
+            for name, conf in self._vote_buffer[best_track_id]:
+                votes.setdefault(name, []).append(conf)
+
+            top_name = max(votes, key=lambda n: len(votes[n]))
+            top_count = len(votes[top_name])
+            if top_count < (self.VOTE_WINDOW + 1) // 2:
+                continue  # pas encore de consensus
+
+            avg_confidence = sum(votes[top_name]) / top_count
+            new_name = top_name
+
+            # ── Anti-clonage ────────────────────────────────────────────────
+            for old_tid, identity in list(self._identity_map.items()):
+                if old_tid != best_track_id and identity.get('name') == new_name:
+                    self._identity_map[old_tid] = {
+                        'name': 'Inconnu', 'confidence': 0.0, 'last_face_frame': -1
+                    }
+                    logger.warning(
+                        "Correction usurpation : '%s' passe du corps #%d au corps #%d",
+                        new_name, old_tid, best_track_id,
+                    )
+
+            self._identity_map[best_track_id] = {
+                'name': new_name,
+                'confidence': avg_confidence,
+                'last_face_frame': frame_count,
+            }
 
     def _find_containing_track(
-        self,
-        face_bbox: list[int],
-        active_tracks: list,
+            self,
+            face_bbox: list[int],
+            active_tracks: list,
     ) -> Optional[int]:
         """
-        Retourne le track_id du corps qui contient géométriquement ce visage.
-        Si plusieurs corps candidats, retourne le plus proche (distance des centres).
-        Retourne None si aucun corps ne contient ce visage.
+        Fallback d'association : retourne le track dont le nez est le plus proche
+        du centre de la bbox du visage.
+
+        Seuil de proximité : 80% de la largeur du corps (tolérant aux imprécisions
+        YOLO vs InsightFace sur la localisation du nez).
         """
-        fx1, fy1, fx2, fy2 = face_bbox
-        face_cx = (fx1 + fx2) / 2
-        face_cy = (fy1 + fy2) / 2
+        face_cx = (face_bbox[0] + face_bbox[2]) / 2
+        face_cy = (face_bbox[1] + face_bbox[3]) / 2
 
         best_track_id = None
         best_distance = float('inf')
 
         for track in active_tracks:
-            bx1, by1, bx2, by2 = [int(v) for v in track.to_ltrb()]
-            upper_limit = by1 + (by2 - by1) * self.FACE_IN_BODY_VERTICAL_RATIO
-
-            # Le centre du visage doit être dans la zone supérieure du corps.
-            if not (bx1 <= face_cx <= bx2 and by1 <= face_cy <= upper_limit):
+            nose = self._nose_map.get(track.track_id)
+            if nose is None or nose[2] < config.POSE_NOSE_CONF_THRESHOLD:
                 continue
 
-            body_cx = (bx1 + bx2) / 2
-            body_cy = (by1 + by2) / 2
-            distance = ((face_cx - body_cx) ** 2 + (face_cy - body_cy) ** 2) ** 0.5
+            nose_x, nose_y, _ = nose
+            dist = ((face_cx - nose_x) ** 2 + (face_cy - nose_y) ** 2) ** 0.5
 
-            if distance < best_distance:
-                best_distance = distance
+            bx1, by1, bx2, by2 = [int(v) for v in track.to_ltrb()]
+            body_width = max(1, bx2 - bx1)
+            max_dist = body_width * 0.8
+
+            if dist < max_dist and dist < best_distance:
+                best_distance = dist
                 best_track_id = track.track_id
 
         return best_track_id
@@ -362,6 +436,7 @@ class FaceBodyTracker:
     # ─────────────────────────────────────────────────────────────────────────
 
     def release(self) -> None:
-        """Libère les ressources (appeler à l'arrêt de l'application)."""
+        """Libère les ressources."""
         self._identity_map.clear()
+        self._vote_buffer.clear()
         logger.info("Ressources libérées")
