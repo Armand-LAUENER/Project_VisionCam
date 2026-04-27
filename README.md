@@ -24,7 +24,7 @@
 ## Architecture
 
 ```
-┌───────────────────┐     ┌───────────────────────┐
+┌───────────────────┐     ┌────────────────────────┐
 │  Webcam locale    │  OU │  Caméra IP (MJPEG LAN) │
 └────────┬──────────┘     └──────────┬─────────────┘
          └──────────┬────────────────┘
@@ -38,17 +38,17 @@
        │ Thread B — processing_loop()                       │
        │                                                    │
        │ FaceBodyTracker.update(frame, count)               │
-       │   1. YOLOv8-Pose  → corps + keypoints squelette   │
-       │   2. DeepSORT      → track_id persistant / ReID   │
-       │   3. InsightFace   → crop centré sur tête (1/5f)  │
-       │      ├─ centroïde keypoints visibles (lunettes ✓) │
-       │      └─ fallback body-top si dos tourné           │
-       │   4. Vote buffer   → anti-flip identité           │
-       │   5. PoseEstimator → 4 classes MediaPipe          │
+       │   1. YOLOv8-Pose  → corps + keypoints squelette    │
+       │   2. DeepSORT      → track_id persistant / ReID    │
+       │   3. InsightFace   → crop centré sur tête (1/5f)   │
+       │      ├─ centroïde keypoints visibles (lunettes ✓)  │
+       │      └─ fallback body-top si dos tourné            │
+       │   4. Vote buffer   → anti-flip identité            │
+       │   5. PoseEstimator → 4 classes MediaPipe           │
        └────────────┬───────────────────────────────────────┘
                     ▼
        ┌────────────────────┐     ┌──────────────────────────┐
-       │  AppState (lock)   │────►│  Flask (thread principal) │
+       │  AppState (lock)   │────►│  Flask (thread principal)│
        │  current_frame     │     │  GET  /                  │
        │  currently_present │     │  GET  /video  (MJPEG)    │
        └────────────────────┘     │  GET  /status (JSON)     │
