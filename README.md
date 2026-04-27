@@ -1,75 +1,113 @@
-# Project_VisionCam
+# VisionCam
 
-> Application de vision par ordinateur temps réel combinant **reconnaissance faciale**,
-> **tracking multi-personnes** et **estimation de pose** sur flux vidéo, exposée via
-> une interface web Flask.
-
----
-
-## Aperçu
-
-Un pipeline d'IA vidéo qui :
-
-1. Lit un flux vidéo — **webcam locale** ou **caméra IP** (MJPEG sur LAN).
-2. Détecte et identifie les visages connus via **InsightFace** (modèle `buffalo_l`).
-3. Suit chaque personne détectée avec un **tracker IoU** maison (ID persistant).
-4. Diffuse le rendu annoté en **streaming MJPEG** sur une UI web minimaliste.
-5. Expose un endpoint JSON `/status` listant les personnes actuellement visibles.
-
-Le tout tourne dans un seul processus Python en ~300 lignes de code,
-avec un thread daemon dédié au traitement et Flask pour le serveur web.
+> Pipeline de **reconnaissance faciale en temps réel** sur flux vidéo,
+> résistant aux lunettes, aux occlusions partielles et aux variations de distance.
+> Exposé via une interface web MJPEG + API REST.
 
 ---
 
-## Démo
+## Fonctionnalités
+
+- **Détection & tracking multi-personnes** — YOLOv8-Pose + DeepSORT (IDs persistants)
+- **Reconnaissance faciale robuste** — InsightFace antelopev2 (CUDA)
+  - Centroïde des keypoints faciaux visibles (nez, yeux, oreilles)
+  - Résistant aux lunettes et aux occlusions partielles
+  - Fallback automatique sur la bbox corps si aucun keypoint visible
+- **Estimation de pose** — MediaPipe (debout / assis / allongé / autre)
+- **Tracking par corps** — identité maintenue même quand le visage disparaît
+- **Enrôlement à chaud** — ajout de personnes sans redémarrer l'application
+- **Streaming MJPEG** — flux annoté en direct dans le navigateur
+- **Reconnexion automatique** — backoff exponentiel 1 s → 30 s pour les caméras IP
+
+---
+
+## Architecture
 
 ```
-┌────────────────────┐         ┌──────────────────┐
-│ Webcam / Caméra IP │ ──────► │ processing_loop  │
-└────────────────────┘         │  ├─ InsightFace  │
-                               │  ├─ IoU Tracker  │
-                               │  └─ JPEG encode  │
-                               └────────┬─────────┘
-                                        │
-                                        ▼
-                         ┌─────────────────────────────┐
-                         │ Flask — MJPEG stream + JSON │
-                         │  GET /video  (stream)       │
-                         │  GET /status (présence)     │
-                         └─────────────────────────────┘
+┌───────────────────┐     ┌───────────────────────┐
+│  Webcam locale    │  OU │  Caméra IP (MJPEG LAN) │
+└────────┬──────────┘     └──────────┬─────────────┘
+         └──────────┬────────────────┘
+                    ▼
+       ┌────────────────────────────────────────┐
+       │ Thread A — camera_loop()               │
+       │  cap.read() → _frame_queue             │
+       └────────────┬───────────────────────────┘
+                    ▼
+       ┌────────────────────────────────────────────────────┐
+       │ Thread B — processing_loop()                       │
+       │                                                    │
+       │ FaceBodyTracker.update(frame, count)               │
+       │   1. YOLOv8-Pose  → corps + keypoints squelette   │
+       │   2. DeepSORT      → track_id persistant / ReID   │
+       │   3. InsightFace   → crop centré sur tête (1/5f)  │
+       │      ├─ centroïde keypoints visibles (lunettes ✓) │
+       │      └─ fallback body-top si dos tourné           │
+       │   4. Vote buffer   → anti-flip identité           │
+       │   5. PoseEstimator → 4 classes MediaPipe          │
+       └────────────┬───────────────────────────────────────┘
+                    ▼
+       ┌────────────────────┐     ┌──────────────────────────┐
+       │  AppState (lock)   │────►│  Flask (thread principal) │
+       │  current_frame     │     │  GET  /                  │
+       │  currently_present │     │  GET  /video  (MJPEG)    │
+       └────────────────────┘     │  GET  /status (JSON)     │
+                                  │  POST /enroll            │
+                                  │  POST /capture           │
+                                  │  POST /rebuild           │
+                                  └──────────────────────────┘
 ```
+
+### Feedback visuel
+
+| Couleur | Signification |
+|:--------|:--------------|
+| **Vert** | Visage reconnu récemment (< `FACE_FRESHNESS_FRAMES`) |
+| **Orange** `[BODY]` | Identité connue, tracking corps seul |
+| **Bleu** | Personne inconnue |
 
 ---
 
 ## Stack technique
 
-| Domaine | Outil |
-|:--|:--|
-| Langage | Python 3.11+ |
-| Web | Flask (streaming MJPEG + routes JSON) |
-| Reconnaissance faciale | InsightFace (buffalo_l, ONNX Runtime GPU) |
-| Tracking | Algorithme IoU greedy (implémentation maison) |
-| Pose estimation | MediaPipe |
-| Traitement image | OpenCV |
-| Persistance | Pickle (cache embeddings) + arborescence fichier |
+| Domaine | Outil | Version |
+|:--------|:------|:--------|
+| Langage | Python | 3.11+ |
+| Web | Flask | 3.1 |
+| Reconnaissance faciale | InsightFace (antelopev2) + ONNX Runtime GPU | 0.7.3 |
+| Détection corps | YOLOv8-Pose (ultralytics) | 8.4 |
+| Tracking | DeepSORT + ReID MobileNet GPU | 1.3.2 |
+| Pose estimation | MediaPipe | 0.10 |
+| Traitement image | OpenCV | 4.13 |
+| GPU | PyTorch CUDA 12.1 | 2.5.1 |
 
 ---
 
 ## Structure du projet
 
 ```
-Project_VisionCam/
-├── app.py                 # Entrée Flask + boucle de traitement
-├── config.py              # Constantes (caméra, seuils, port)
-├── requirements.txt
+VisionCam/
+├── app.py                  # Entrée : Flask + 2 threads (caméra + pipeline AI)
+├── config.py               # Source unique de toutes les constantes
+├── requirements.txt        # Dépendances Python
+├── .env.example            # Template configuration locale
+│
 ├── core/
-│   ├── face_recognition.py   # FaceRecognizer (InsightFace + embeddings)
-│   ├── tracker.py            # PersonTracker (association IoU)
-│   └── pose_estimation.py    # PoseEstimator (MediaPipe)
+│   ├── face_recognition.py   # FaceRecognizer — InsightFace + enrôlement
+│   ├── face_body_tracker.py  # FaceBodyTracker — orchestrateur YOLO+DeepSORT
+│   └── pose_estimation.py    # PoseEstimator — MediaPipe 4 classes
+│
 ├── templates/
-│   └── index.html         # UI web (stream + liste présence)
-└── known_faces/           # Dataset d'entraînement (non inclus — RGPD)
-    └── <Personne>/*.jpg
+│   └── index.html           # UI : stream + liste de présence
+│
+├── tests/
+│   ├── test_face_body_association.py      # 18 tests géométriques (0 GPU)
+│   └── regression/
+│       └── test_pose_exposed_in_status.py # Tests régression pose
+│
+├── known_faces/             # Non inclus (RGPD) — voir section Enrôlement
+└── data/                    # Non inclus — généré au démarrage
+    └── embeddings.pkl       # Cache des embeddings (reconstructible)
 ```
 
 ---
@@ -78,9 +116,9 @@ Project_VisionCam/
 
 ### Prérequis
 
-- Python 3.11 ou supérieur
+- Python 3.11+
+- GPU NVIDIA avec CUDA 12.1 **fortement recommandé** (CPU possible mais ~5× plus lent)
 - Webcam OU caméra IP accessible sur le LAN
-- GPU CUDA **recommandé** (fallback CPU possible mais lent)
 
 ### Étapes
 
@@ -91,90 +129,130 @@ cd Project_VisionCam
 
 # 2. Environnement virtuel
 python -m venv .venv
-source .venv/bin/activate           # Linux / macOS
-.venv\Scripts\activate              # Windows
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux / macOS
 
-# 3. Dépendances
+# 3. Dépendances (PyTorch CUDA 12.1 inclus)
 pip install -r requirements.txt
 
-# 4. Préparer le dataset
-mkdir -p known_faces/MonNom
-# Y copier 3-5 photos claires du visage de la personne à reconnaître
-
-# 5. Variables d'environnement (optionnel)
+# 4. Configuration
 cp .env.example .env
-# Éditer .env si besoin
+# Éditer .env si nécessaire (source vidéo, seuils, port)
+
+# 5. Préparer le dataset (voir section Enrôlement)
+mkdir known_faces\MonNom
+# Y copier 3-5 photos du visage
 
 # 6. Lancer
 python app.py
 ```
 
-L'application est ensuite disponible sur `http://localhost:8080`.
+L'interface est disponible sur `http://localhost:5000`.
 
 ---
 
 ## Configuration
 
-Tous les paramètres sont dans `config.py` :
+Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 
 | Constante | Défaut | Rôle |
-|:--|:--|:--|
+|:----------|:-------|:-----|
 | `USE_LOCAL_CAM` | `True` | Webcam locale si `True`, caméra IP sinon |
-| `LOCAL_SOURCE` | `0` | Index OpenCV de la webcam |
-| `REMOTE_SOURCE` | URL MJPEG | Flux caméra IP |
-| `RECOGNITION_THRESHOLD` | `0.45` | Seuil cosinus min pour identifier |
-| `FRAME_SKIP` | `2` | Traiter 1 frame sur N (perf) |
-| `FLASK_PORT` | `8080` | Port du serveur Flask |
-
-Pour **ajouter une personne** : créer `known_faces/<Nom>/` et y placer quelques
-photos. Supprimer `data/embeddings.pkl` pour forcer la reconstruction de la base.
-
----
-
-## Endpoints
-
-| Méthode | Chemin | Réponse |
-|:--|:--|:--|
-| GET | `/` | Interface web (stream + liste) |
-| GET | `/video` | Flux MJPEG `multipart/x-mixed-replace` |
-| GET | `/status` | `{ currently_present[], fps, total_known }` |
+| `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
+| `FLASK_PORT` | `5000` | Port du serveur Flask |
+| `RECOGNITION_THRESHOLD` | `0.65` | Seuil cosinus min pour identifier (0–1) |
+| `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames |
+| `FACE_FRESHNESS_FRAMES` | `30` | Frames avant passage en mode orange [BODY] |
+| `POSE_NOSE_CONF_THRESHOLD` | `0.5` | Confiance minimale d'un keypoint facial |
+| `POSE_FACE_KP_MIN_VISIBLE` | `1` | Keypoints visibles min pour utiliser le centroïde |
+| `YOLO_MODEL` | `yolov8s-pose.pt` | Modèle YOLO (auto-téléchargé) |
+| `DEEPSORT_MAX_AGE` | `70` | Frames avant suppression d'un track perdu |
+| `FRAME_SKIP` | `2` | Cadence pose estimation |
 
 ---
 
-## Points techniques notables
+## Enrôlement
 
-- **Pipeline multi-thread** : le traitement IA tourne dans un thread daemon
-  dédié, Flask dans le thread principal. Communication via un `AppState`
-  protégé par `threading.Lock()`.
-- **Frame skip** : la reconnaissance ne tourne qu'une frame sur N. Les frames
-  intermédiaires réutilisent le cache de détections, ce qui double le FPS
-  effectif sans perte visuelle notable.
-- **Embedding moyen par personne** : pour chaque personne, plusieurs photos
-  sont agrégées en un unique embedding moyen normalisé, plus robuste aux
-  variations d'angle et d'éclairage.
-- **Tracker IoU greedy** : association frame-à-frame par matrice IoU +
-  matching glouton, avec TTL de 30 frames avant suppression d'un track perdu.
+### Option 1 — Dossier `known_faces/`
+
+Créer un sous-dossier par personne et y placer 3 à 5 photos :
+
+```
+known_faces/
+├── Alice/
+│   ├── alice_1.jpg
+│   └── alice_2.jpg
+└── Bob/
+    └── bob.jpg
+```
+
+Supprimer `data/embeddings.pkl` pour forcer la reconstruction, puis relancer.
+
+### Option 2 — API REST (à chaud, sans redémarrer)
+
+**Depuis des fichiers :**
+```bash
+curl -X POST http://localhost:5000/enroll \
+  -F "name=Alice" \
+  -F "method=average" \
+  -F "images=@photo1.jpg" \
+  -F "images=@photo2.jpg"
+```
+
+**Depuis la frame courante du flux caméra :**
+```bash
+curl -X POST http://localhost:5000/capture \
+  -F "name=Alice"
+```
+
+**Reconstruire la base depuis `known_faces/` :**
+```bash
+curl -X POST http://localhost:5000/rebuild
+```
+
+Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multitemplate` (un vecteur par angle — plus précis sur les grands changements de pose).
+
+---
+
+## Endpoints API
+
+| Méthode | Chemin | Description |
+|:--------|:-------|:------------|
+| `GET` | `/` | Interface web (stream + liste de présence) |
+| `GET` | `/video` | Flux MJPEG `multipart/x-mixed-replace` |
+| `GET` | `/status` | `{ currently_present[], fps, total_known }` |
+| `POST` | `/enroll` | Enrôlement depuis fichiers image |
+| `POST` | `/capture` | Enrôlement depuis la frame courante |
+| `POST` | `/rebuild` | Reconstruction base embeddings depuis `known_faces/` |
+
+---
+
+## Tests
+
+```bash
+pytest tests/
+# 23 tests — 0 GPU requis, ~0.2 s
+```
 
 ---
 
 ## Limitations connues
 
-- La reconnaissance faciale n'est robuste qu'avec 3-5 photos minimum par personne
-- Le tracker IoU peut mélanger les IDs lors de croisements serrés
-  (corrigé au frame suivant par la reconnaissance)
-- Pas d'authentification sur les endpoints — prévu pour usage en LAN uniquement
-- `PoseEstimator` est instancié mais pas encore intégré dans `processing_loop`
+- La reconnaissance est optimale avec 3-5 photos minimum par personne, prises sous angles variés
+- DeepSORT peut inverser des IDs lors de croisements serrés (corrigé au frame suivant par la reconnaissance)
+- Pas d'authentification sur les endpoints — conçu pour usage en LAN uniquement
+- CPU fallback disponible mais déconseillé en temps réel (InsightFace seul : ~200 ms/face)
 
 ---
 
-## Licence & usage
+## Licence & confidentialité
 
-Code disponible à des fins de démonstration et d'apprentissage.
-Le modèle `buffalo_l` de InsightFace a ses propres conditions d'usage —
-à auditer avant tout déploiement commercial.
+Code source disponible à des fins d'apprentissage et de démonstration.
 
-**Aucune donnée personnelle** (photos, embeddings) n'est incluse dans ce repo.
-Le dossier `known_faces/` et le fichier `data/embeddings.pkl` sont strictement locaux.
+**Aucune donnée biométrique** (photos, embeddings) n'est incluse dans ce dépôt.
+Les dossiers `known_faces/` et `data/` sont exclus par `.gitignore` (RGPD).
+
+Le modèle InsightFace est soumis aux conditions d'usage d'Insightface — à vérifier avant tout déploiement commercial.
 
 ---
 

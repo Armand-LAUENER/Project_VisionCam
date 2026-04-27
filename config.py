@@ -86,9 +86,12 @@ YOLO_MODEL = "yolov8s-pose.pt"
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
 YOLO_CONF_THRESHOLD = 0.5
 
-# Confiance minimale du keypoint Nez (COCO #0) pour déclencher InsightFace.
-# En dessous → personne probablement de dos → skip (gain FPS gratuit).
+# Confiance minimale d'un keypoint facial (COCO 0-4) pour le considérer visible.
 POSE_NOSE_CONF_THRESHOLD = 0.5
+
+# Nombre minimal de keypoints faciaux visibles pour utiliser le centroïde.
+# En dessous → fallback sur l'estimation tête depuis la bbox corps.
+POSE_FACE_KP_MIN_VISIBLE = 1
 
 # Demi-taille du crop carré centré sur le nez, en pixels.
 # Le crop final = 2 × POSE_CROP_HALF_SIZE × 2 × POSE_CROP_HALF_SIZE.
