@@ -93,6 +93,9 @@ class FaceBodyTracker:
         # Contourne le fait que track.others n'est pas fiable dans DeepSORT 1.3.x.
         self._nose_map: dict[int, tuple] = {}
 
+        # { track_id: list[(x, y, conf) × 5] } — keypoints COCO 0-4 (nose, eyes, ears)
+        self._face_kps_map: dict[int, list] = {}
+
     # ─────────────────────────────────────────────────────────────────────────
     # Point d'entrée public
     # ─────────────────────────────────────────────────────────────────────────
@@ -138,7 +141,7 @@ class FaceBodyTracker:
         active_ids = {t.track_id for t in active_tracks}
         self._identity_map = {tid: v for tid, v in self._identity_map.items() if tid in active_ids}
         self._vote_buffer  = {tid: v for tid, v in self._vote_buffer.items()  if tid in active_ids}
-        # _nose_map est déjà purgé dans _update_nose_map
+        # _nose_map et _face_kps_map sont déjà purgés dans _update_nose_map
 
         return results
 
@@ -158,6 +161,7 @@ class FaceBodyTracker:
             tx1, ty1, tx2, ty2 = track.to_ltrb()
             best_iou = 0.0
             best_nose = None
+            best_face_kps = None
 
             for det_bbox, _conf, _cls, det_others in body_detections:
                 dx, dy, dw, dh = det_bbox
@@ -174,14 +178,19 @@ class FaceBodyTracker:
                 if iou > best_iou:
                     best_iou = iou
                     best_nose = det_others.get('nose')
+                    best_face_kps = det_others.get('face_kps')
 
-            if best_iou > 0.3 and best_nose is not None:
-                self._nose_map[track.track_id] = best_nose
-            # Si pas de match : on conserve la valeur précédente (track coasté)
+            if best_iou > 0.3:
+                if best_nose is not None:
+                    self._nose_map[track.track_id] = best_nose
+                if best_face_kps is not None:
+                    self._face_kps_map[track.track_id] = best_face_kps
+            # Si pas de match : on conserve les valeurs précédentes (track coasté)
 
         # Purger les tracks disparus
         active_ids = {t.track_id for t in active_tracks}
-        self._nose_map = {tid: v for tid, v in self._nose_map.items() if tid in active_ids}
+        self._nose_map    = {tid: v for tid, v in self._nose_map.items()    if tid in active_ids}
+        self._face_kps_map = {tid: v for tid, v in self._face_kps_map.items() if tid in active_ids}
 
     # ─────────────────────────────────────────────────────────────────────────
     # Étape 1 — Détection YOLO-Pose
@@ -214,14 +223,16 @@ class FaceBodyTracker:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 conf = float(box.conf[0])
 
-                # Extraire le nez (COCO keypoint #0) depuis les keypoints de cette détection
+                # Extraire les keypoints faciaux COCO 0-4 : nose, left_eye, right_eye, left_ear, right_ear
                 nose = None
+                face_kps = None
                 if kps_data is not None and i < len(kps_data):
                     kp = kps_data[i]        # Tensor (17, 3) : (x, y, conf) par keypoint
                     nx, ny, nc = float(kp[0][0]), float(kp[0][1]), float(kp[0][2])
                     nose = (nx, ny, nc)
+                    face_kps = [(float(kp[j][0]), float(kp[j][1]), float(kp[j][2])) for j in range(5)]
 
-                others = {'nose': nose}
+                others = {'nose': nose, 'face_kps': face_kps}
                 detections.append(([x1, y1, x2 - x1, y2 - y1], conf, 'person', others))
 
         return detections
@@ -252,26 +263,33 @@ class FaceBodyTracker:
         h_img, w_img = frame.shape[:2]
 
         for track in tracks_to_recognize:
-            nose = self._nose_map.get(track.track_id)
-
-            # Pas de nez ou confiance insuffisante → personne probablement de dos → skip
-            if nose is None:
-                logger.debug("track #%s : nez absent du nose_map → skip", track.track_id)
-                continue
-            if nose[2] < config.POSE_NOSE_CONF_THRESHOLD:
-                logger.debug("track #%s : nose_conf=%.3f < %.2f → skip",
-                             track.track_id, nose[2], config.POSE_NOSE_CONF_THRESHOLD)
-                continue
-
-            nose_x, nose_y, _ = nose
-
-            # Taille du crop adaptative : au moins POSE_CROP_HALF_SIZE,
-            # proportionnelle à la hauteur du corps pour les personnes proches
             bx1, by1, bx2, by2 = [int(v) for v in track.to_ltrb()]
             body_height = max(1, by2 - by1)
             half = max(config.POSE_CROP_HALF_SIZE, int(body_height * 0.25))
 
-            cx, cy = int(nose_x), int(nose_y)
+            # Centroïde des keypoints faciaux COCO 0-4 visibles (nez, yeux, oreilles).
+            # Résistant aux lunettes et aux occlusions partielles : 1 keypoint suffit.
+            crop_center = None
+            face_kps = self._face_kps_map.get(track.track_id)
+            if face_kps:
+                visible = [(x, y) for x, y, c in face_kps if c >= config.POSE_NOSE_CONF_THRESHOLD]
+                if len(visible) >= config.POSE_FACE_KP_MIN_VISIBLE:
+                    cx = int(sum(x for x, y in visible) / len(visible))
+                    cy = int(sum(y for x, y in visible) / len(visible))
+                    crop_center = (cx, cy)
+                    if len(visible) < 5:
+                        logger.debug("track #%s : %d/5 keypoints faciaux visibles → centroïde",
+                                     track.track_id, len(visible))
+
+            # Fallback : aucun keypoint visible (personne de dos, très loin, très occulté)
+            # → on estime la position de la tête depuis le haut de la bbox corps.
+            if crop_center is None:
+                cx = (bx1 + bx2) // 2
+                cy = by1 + int(body_height * 0.15)
+                crop_center = (cx, cy)
+                logger.debug("track #%s : aucun keypoint facial → fallback body-top", track.track_id)
+
+            cx, cy = crop_center
             crop_x1 = max(0, cx - half)
             crop_y1 = max(0, cy - half)
             crop_x2 = min(w_img, cx + half)
@@ -439,4 +457,5 @@ class FaceBodyTracker:
         """Libère les ressources."""
         self._identity_map.clear()
         self._vote_buffer.clear()
+        self._face_kps_map.clear()
         logger.info("Ressources libérées")
