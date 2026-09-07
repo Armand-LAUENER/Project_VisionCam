@@ -1,5 +1,7 @@
+import glob
 import logging
 import os
+import shutil
 import threading
 import cv2
 import numpy as np
@@ -8,6 +10,27 @@ import config
 from insightface.app import FaceAnalysis
 
 logger = logging.getLogger(__name__)
+
+
+def _flatten_model_dir(name, root="~/.insightface"):
+    """Remonte les .onnx d'un pack de modèles extrait dans un sous-dossier homonyme.
+
+    Certains packs (antelopev2) sont distribués dans un zip contenant déjà un
+    dossier à leur nom : l'extraction produit <pack>/<pack>/*.onnx alors
+    qu'InsightFace ne cherche les .onnx que directement dans <pack>/.
+
+    Retourne True si un aplatissement a été effectué, False sinon.
+    """
+    model_dir = os.path.join(os.path.expanduser(root), "models", name)
+    nested = os.path.join(model_dir, name)
+    if glob.glob(os.path.join(model_dir, "*.onnx")) or not os.path.isdir(nested):
+        return False
+
+    logger.warning("Pack de modèles imbriqué détecté, aplatissement : %s", nested)
+    for filename in os.listdir(nested):
+        shutil.move(os.path.join(nested, filename), os.path.join(model_dir, filename))
+    os.rmdir(nested)
+    return True
 
 
 class FaceRecognizer:
@@ -25,16 +48,28 @@ class FaceRecognizer:
         # landmark_3d_68 et genderage — inutiles ici et responsables du pic
         # de latence toutes les FACE_RECOGNITION_SKIP frames.
         logger.info("Chargement InsightFace (%s, det+rec only)...", config.INSIGHTFACE_MODEL)
-        self.app = FaceAnalysis(
-            name=config.INSIGHTFACE_MODEL,
-            allowed_modules=['detection', 'recognition'],
-            providers=config.ONNX_PROVIDERS,
-        )
+        try:
+            self.app = self._new_face_analysis()
+        except AssertionError:
+            # Aucun modèle chargé : le pack vient probablement d'être téléchargé
+            # et extrait dans un sous-dossier imbriqué. On aplatit puis on réessaie
+            # une fois — inutile de retélécharger, les .onnx sont déjà là.
+            if not _flatten_model_dir(config.INSIGHTFACE_MODEL):
+                raise
+            self.app = self._new_face_analysis()
         self.app.prepare(ctx_id=0, det_size=config.INSIGHTFACE_DET_SIZE)
         logger.info("InsightFace chargé")
 
         # ── Charger ou construire la base ──
         self._load_or_build_database()
+
+    def _new_face_analysis(self):
+        """Instancie FaceAnalysis avec la configuration du projet."""
+        return FaceAnalysis(
+            name=config.INSIGHTFACE_MODEL,
+            allowed_modules=['detection', 'recognition'],
+            providers=config.ONNX_PROVIDERS,
+        )
 
     # =========================================================================
     # CHARGEMENT / CONSTRUCTION
