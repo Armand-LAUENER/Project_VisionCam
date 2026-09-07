@@ -103,7 +103,12 @@ POSE_KP_VISIBLE_CONF = 0.3          # en dessous : keypoint considéré non visi
 POSE_KP_NOSE_CONF = 0.4             # nez moins sûr que ça → personne de dos
 POSE_EAR_DIFF_THRESHOLD = 0.4       # écart de confiance entre oreilles → profil
 POSE_OFFSET_RATIO_THRESHOLD = 0.15  # décalage nez/centre des épaules → face
-POSE_MIN_SHOULDER_DIST_PX = 8       # écart d'épaules trop faible → indécidable
+# Écart d'épaules minimal (px) pour que l'orientation soit jugée fiable.
+# Mesuré par tools/pose_threshold_study.py sur 7 séquences MOT17 + un plan
+# webcam rapproché (657 observations) : l'accord avec Mediapipe reste erratique
+# entre 51 % et 80 % en dessous de 100 px, et atteint 100 % au-delà. Sous ce
+# seuil, l'estimateur renvoie None — mieux vaut ne rien dire que se tromper.
+POSE_MIN_SHOULDER_DIST_PX = 100
 
 # Nombre minimal de keypoints faciaux visibles pour utiliser le centroïde.
 # En dessous → fallback sur l'estimation tête depuis la bbox corps.

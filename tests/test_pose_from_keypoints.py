@@ -23,13 +23,14 @@ from core.pose_from_keypoints import KeypointPoseEstimator
 def make_kps(nose=(100.0, 50.0, 0.9),
              left_ear=(115.0, 45.0, 0.8),
              right_ear=(85.0, 45.0, 0.8),
-             left_shoulder=(140.0, 100.0, 0.9),
-             right_shoulder=(60.0, 100.0, 0.9)):
+             left_shoulder=(160.0, 100.0, 0.9),
+             right_shoulder=(40.0, 100.0, 0.9)):
     """
     Construit une séquence de keypoints COCO 0-6.
 
     Défauts : personne de face, nez exactement au centre des épaules
-    (centre = 100, écart = 80 px), oreilles également visibles.
+    (centre = 100, écart = 120 px, au-dessus de POSE_MIN_SHOULDER_DIST_PX),
+    oreilles également visibles.
     Les yeux (indices 1-2) ne sont pas lus par l'estimateur.
     """
     eye = (0.0, 0.0, 0.0)
@@ -126,9 +127,18 @@ class TestDonneesInexploitables:
         assert estimator.estimate(kps) is None
 
     def test_epaules_trop_proches(self, estimator):
-        """Écart de 4 px, sous POSE_MIN_SHOULDER_DIST_PX (8) : ratio non fiable."""
+        """Écart de 4 px : personne minuscule ou de profil strict, ratio non fiable."""
         kps = make_kps(left_shoulder=(102.0, 100.0, 0.9),
                        right_shoulder=(98.0, 100.0, 0.9))
+        assert estimator.estimate(kps) is None
+
+    def test_personne_lointaine_sous_le_seuil_de_taille(self, estimator):
+        """
+        Écart de 80 px, typique d'une personne à distance moyenne : sous les
+        100 px mesurés comme limite de fiabilité, on refuse de conclure.
+        """
+        kps = make_kps(left_shoulder=(140.0, 100.0, 0.9),
+                       right_shoulder=(60.0, 100.0, 0.9))
         assert estimator.estimate(kps) is None
 
 
