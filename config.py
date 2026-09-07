@@ -89,6 +89,22 @@ YOLO_CONF_THRESHOLD = 0.5
 # Confiance minimale d'un keypoint facial (COCO 0-4) pour le considérer visible.
 POSE_NOSE_CONF_THRESHOLD = 0.5
 
+# --- Source de l'estimation d'orientation (face/profil/dos) -------------------
+# "mediapipe" : modèle Mediapipe Pose sur un crop, une inférence CPU par
+#               personne et par frame.
+# "yolo"      : relecture des keypoints COCO déjà produits par YOLOv8-Pose sur
+#               GPU — aucune inférence supplémentaire.
+POSE_SOURCE = os.getenv("POSE_SOURCE", "mediapipe").strip().lower()
+
+# Seuils de la classification depuis les keypoints YOLO (POSE_SOURCE="yolo").
+# Repris de la logique Mediapipe ; la confiance de keypoint YOLO ne suit pas la
+# même distribution que la `visibility` Mediapipe, ils sont donc réglables.
+POSE_KP_VISIBLE_CONF = 0.3          # en dessous : keypoint considéré non visible
+POSE_KP_NOSE_CONF = 0.4             # nez moins sûr que ça → personne de dos
+POSE_EAR_DIFF_THRESHOLD = 0.4       # écart de confiance entre oreilles → profil
+POSE_OFFSET_RATIO_THRESHOLD = 0.15  # décalage nez/centre des épaules → face
+POSE_MIN_SHOULDER_DIST_PX = 8       # écart d'épaules trop faible → indécidable
+
 # Nombre minimal de keypoints faciaux visibles pour utiliser le centroïde.
 # En dessous → fallback sur l'estimation tête depuis la bbox corps.
 POSE_FACE_KP_MIN_VISIBLE = 1

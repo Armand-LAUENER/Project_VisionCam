@@ -11,6 +11,7 @@ import config
 from core.face_recognition import FaceRecognizer
 from core.face_body_tracker import FaceBodyTracker
 from core.pose_estimation import PoseEstimator
+from core.pose_from_keypoints import KeypointPoseEstimator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,7 +34,15 @@ face_recognizer = FaceRecognizer(
     cache_path=config.EMBEDDINGS_CACHE_PATH,
 )
 tracker = FaceBodyTracker(face_recognizer)
-pose_estimator = PoseEstimator()
+if config.POSE_SOURCE == "yolo":
+    pose_estimator = KeypointPoseEstimator()
+elif config.POSE_SOURCE == "mediapipe":
+    pose_estimator = PoseEstimator()
+else:
+    raise ValueError(
+        f"POSE_SOURCE invalide : {config.POSE_SOURCE!r} — attendu 'mediapipe' ou 'yolo'."
+    )
+logger.info("Source d'orientation : %s", config.POSE_SOURCE)
 
 logger.info("Visages connus : %s", list(face_recognizer.known_names))
 logger.info("Modules chargés")
@@ -62,16 +71,25 @@ _frame_queue: queue.Queue = queue.Queue(maxsize=2)
 # ══════════════════════════════════════════
 # HELPERS PIPELINE
 # ══════════════════════════════════════════
-def _estimate_pose_safe(frame, bbox, track_id):
-    """Calcule la pose depuis le crop du corps, avec log explicite en cas d'échec."""
-    x1, y1, x2, y2 = bbox
-    crop = frame[y1:y2, x1:x2]
-    if crop.size == 0:
-        return None
+def _estimate_pose_safe(frame, person):
+    """
+    Calcule l'orientation d'une personne, avec log explicite en cas d'échec.
+
+    Deux sources selon config.POSE_SOURCE : les keypoints YOLO déjà produits
+    sur GPU, ou une inférence Mediapipe sur le crop du corps.
+    """
     try:
+        if config.POSE_SOURCE == "yolo":
+            return pose_estimator.estimate(person.pose_kps)
+
+        x1, y1, x2, y2 = person.body_bbox
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
         return pose_estimator.estimate(crop)
     except Exception as e:
-        logger.warning("Échec pose sur track #%d : %s: %s", track_id, type(e).__name__, e)
+        logger.warning("Échec pose sur track #%d : %s: %s",
+                       person.track_id, type(e).__name__, e)
         return None
 
 
@@ -253,7 +271,7 @@ def processing_loop():
         # ── Pose estimation (toutes les FRAME_SKIP frames, sur le crop corps) ─
         if frame_count % config.FRAME_SKIP == 0:
             pose_cache = {
-                p.track_id: _estimate_pose_safe(frame, p.body_bbox, p.track_id)
+                p.track_id: _estimate_pose_safe(frame, p)
                 for p in persons_cache
             }
 
