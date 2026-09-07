@@ -104,6 +104,19 @@ class TestDonneesInexploitables:
         """Moins de 7 keypoints : les épaules manquent, rien n'est décidable."""
         assert estimator.estimate(make_kps()[:5]) is None
 
+    def test_personne_lointaine_tous_keypoints_incertains(self, estimator):
+        """
+        Non-régression : une personne trop petite pour que YOLO soit sûr de quoi
+        que ce soit doit donner None, pas "Dos". Le contrôle des épaules passe
+        donc avant celui de la tête.
+        """
+        kps = make_kps(nose=(100.0, 50.0, 0.1),
+                       left_ear=(115.0, 45.0, 0.1),
+                       right_ear=(85.0, 45.0, 0.1),
+                       left_shoulder=(140.0, 100.0, 0.15),
+                       right_shoulder=(60.0, 100.0, 0.15))
+        assert estimator.estimate(kps) is None
+
     def test_epaule_non_detectee(self, estimator):
         """
         YOLO renvoie (0, 0, 0) pour un keypoint absent. Sans ce garde-fou,
