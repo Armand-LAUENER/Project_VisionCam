@@ -7,28 +7,15 @@ Fix : pose déplacée dans le bloc FRAME_SKIP, résultat propagé dans present_l
 """
 
 import json
-import sys
-import threading
 import unittest
-from unittest.mock import MagicMock, patch
 
-# Injection des stubs GPU avant tout import applicatif
-for _mod in [
-    "cv2",
-    "insightface",
-    "insightface.app",
-    "ultralytics",
-    "deep_sort_realtime",
-    "deep_sort_realtime.deepsort_tracker",
-    "mediapipe",
-    "mediapipe.solutions",
-    "mediapipe.solutions.pose",
-    "numpy",
-    "flask",
-]:
-    sys.modules.setdefault(_mod, MagicMock())
-
-import numpy as np
+# Ce test ne vérifie que la forme des entrées de currently_present : il n'importe
+# ni l'application ni de modèle, donc aucun stub n'est nécessaire.
+#
+# Il en injectait auparavant dans sys.modules (cv2, numpy, flask, insightface...)
+# alors qu'aucun n'était utilisé. Comme sys.modules est global au processus, le
+# faux `flask` restait en place pour les fichiers de test collectés ensuite et
+# faisait échouer tests/test_web_routes.py, qui importe la vraie application.
 
 
 class TestPoseExposedInStatus(unittest.TestCase):
