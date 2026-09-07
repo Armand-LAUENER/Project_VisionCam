@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import os
 import queue
+import statistics
 import threading
 import time
 
@@ -61,6 +62,11 @@ class AppState:
         self.running = True
         # PRESENCE_TIMEOUT : { track_id: (person_dict, last_seen_timestamp) }
         self.last_seen: dict = {}
+        # Dernière frame BRUTE (sans overlay) et TrackedPerson associés.
+        # Alimentent /bench/pose, qui a besoin des crops et des keypoints,
+        # pas du JPEG annoté envoyé au navigateur.
+        self.bench_frame = None
+        self.bench_persons: list = []
 
 state = AppState()
 
@@ -324,6 +330,8 @@ def processing_loop():
             state.current_frame = buffer.tobytes()
             state.currently_present = present_list
             state.fps = current_fps
+            state.bench_frame = frame
+            state.bench_persons = persons_cache
 
     tracker.release()
     logger.info("Thread de traitement arrêté.")
@@ -467,6 +475,131 @@ def rebuild():
 
     threading.Thread(target=_do_rebuild, daemon=True).start()
     return jsonify({'started': True, 'message': 'Reconstruction lancée en arrière-plan.'}), 202
+
+
+# ══════════════════════════════════════════
+# MESURE COMPARATIVE DES SOURCES D'ORIENTATION
+# ══════════════════════════════════════════
+_bench_lock = threading.Lock()
+_bench_estimators: dict = {}
+
+
+def _bench_get_estimators():
+    """
+    Instancie les deux estimateurs à la première mesure.
+
+    Mediapipe met ~1 s à charger : le faire à la demande évite de payer ce coût
+    au démarrage quand POSE_SOURCE vaut "yolo".
+    """
+    if not _bench_estimators:
+        _bench_estimators['mediapipe'] = PoseEstimator()
+        _bench_estimators['yolo'] = KeypointPoseEstimator()
+    return _bench_estimators['mediapipe'], _bench_estimators['yolo']
+
+
+def _percentile_ms(values, ratio):
+    if not values:
+        return None
+    ordered = sorted(values)
+    return round(ordered[min(int(len(ordered) * ratio), len(ordered) - 1)], 3)
+
+
+@app.route('/bench/pose', methods=['POST'])
+def bench_pose():
+    """
+    Compare les deux sources d'orientation sur le flux en cours.
+
+    Entrée (form) :
+        samples : nombre d'échantillons de frames (5-200, défaut 30)
+
+    Réponse :
+        200 { success: true, ... mesures ... }
+        400 { success: false, message }  ← paramètre invalide
+        409 { success: false, message }  ← mesure déjà en cours
+        503 { success: false, message }  ← aucune personne suivie
+    """
+    raw = request.form.get('samples', '30')
+    try:
+        samples = int(raw)
+    except ValueError:
+        return jsonify({'success': False,
+                        'message': f'Paramètre "samples" invalide : {raw!r}.'}), 400
+    samples = max(5, min(samples, 200))
+
+    # Mediapipe n'est pas réentrant : une seule mesure à la fois.
+    if not _bench_lock.acquire(blocking=False):
+        return jsonify({'success': False, 'message': 'Une mesure est déjà en cours.'}), 409
+
+    try:
+        mediapipe_est, keypoint_est = _bench_get_estimators()
+        mp_times, kp_times, spans = [], [], []
+        confusion: dict = {}
+        agree = compared = mp_silent = kp_silent = 0
+
+        for _ in range(samples):
+            with state.lock:
+                frame = state.bench_frame
+                persons = list(state.bench_persons)
+
+            if frame is None or not persons:
+                time.sleep(0.05)
+                continue
+
+            for person in persons:
+                x1, y1, x2, y2 = person.body_bbox
+                crop = frame[y1:y2, x1:x2]
+                if crop.size == 0:
+                    continue
+
+                t0 = time.perf_counter()
+                mp_verdict = mediapipe_est.estimate(crop)
+                mp_times.append((time.perf_counter() - t0) * 1000)
+
+                t0 = time.perf_counter()
+                kp_verdict = keypoint_est.estimate(person.pose_kps)
+                kp_times.append((time.perf_counter() - t0) * 1000)
+
+                if person.pose_kps:
+                    spans.append(abs(person.pose_kps[5][0] - person.pose_kps[6][0]))
+
+                key = f"{mp_verdict} → {kp_verdict}"
+                confusion[key] = confusion.get(key, 0) + 1
+                mp_silent += mp_verdict is None
+                kp_silent += kp_verdict is None
+                if mp_verdict is not None:
+                    compared += 1
+                    agree += mp_verdict == kp_verdict
+
+            time.sleep(0.05)
+
+        if not mp_times:
+            return jsonify({'success': False,
+                            'message': 'Aucune personne suivie pendant la mesure.'}), 503
+
+        return jsonify({
+            'success': True,
+            'observations': len(mp_times),
+            'pose_source_actif': config.POSE_SOURCE,
+            'mediapipe_ms': {'moy': round(statistics.mean(mp_times), 2),
+                             'med': round(statistics.median(mp_times), 2),
+                             'p95': _percentile_ms(mp_times, 0.95)},
+            'yolo_ms': {'moy': round(statistics.mean(kp_times), 3),
+                        'med': round(statistics.median(kp_times), 3),
+                        'p95': _percentile_ms(kp_times, 0.95)},
+            'economie_ms_par_frame': round(
+                (statistics.mean(mp_times) - statistics.mean(kp_times))
+                * len(mp_times) / max(1, samples), 2),
+            'accord': {'compares': compared, 'accords': agree,
+                       'taux': round(100 * agree / compared, 1) if compared else None},
+            'abstentions': {'mediapipe': mp_silent, 'yolo': kp_silent},
+            'ecart_epaules_px': {'min': round(min(spans), 1),
+                                 'med': round(statistics.median(spans), 1),
+                                 'max': round(max(spans), 1)} if spans else None,
+            'seuil_fiabilite_px': config.POSE_MIN_SHOULDER_DIST_PX,
+            'confusion': sorted(confusion.items(), key=lambda kv: -kv[1]),
+        }), 200
+    finally:
+        _bench_lock.release()
 
 
 @app.route('/status')
