@@ -72,16 +72,25 @@ class KeypointPoseEstimator:
         left_sh_x, _, left_sh_conf = keypoints[LEFT_SHOULDER]
         right_sh_x, _, right_sh_conf = keypoints[RIGHT_SHOULDER]
 
-        # Tête invisible sous tous les angles → la personne est de dos.
+        # Les épaules d'abord : ce sont les keypoints les plus robustes du haut
+        # du corps, ils restent détectés de dos comme de profil. Si YOLO n'est
+        # même pas sûr d'elles, c'est que la personne est trop petite ou trop
+        # occultée pour conclure quoi que ce soit — et surtout pas "Dos".
+        #
+        # Ce contrôle précède délibérément le test de la tête. Dans l'ordre
+        # inverse, une personne lointaine dont TOUS les keypoints sont
+        # incertains ressortait "Dos" au lieu de None : mesuré sur MOT17-04,
+        # 122 verdicts "Dos" sur 240 observations là où Mediapipe déclarait
+        # forfait.
+        if (left_sh_conf < config.POSE_KP_VISIBLE_CONF
+                or right_sh_conf < config.POSE_KP_VISIBLE_CONF):
+            return None
+
+        # Épaules vues mais tête invisible sous tous les angles → de dos.
         if (nose_conf < config.POSE_KP_VISIBLE_CONF
                 and left_ear_conf < config.POSE_KP_VISIBLE_CONF
                 and right_ear_conf < config.POSE_KP_VISIBLE_CONF):
             return "Dos"
-
-        # Sans épaules fiables, l'écart de référence n'a pas de sens.
-        if (left_sh_conf < config.POSE_KP_VISIBLE_CONF
-                or right_sh_conf < config.POSE_KP_VISIBLE_CONF):
-            return None
 
         shoulder_dist = abs(left_sh_x - right_sh_x)
         if shoulder_dist < config.POSE_MIN_SHOULDER_DIST_PX:
