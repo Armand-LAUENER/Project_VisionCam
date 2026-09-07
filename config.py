@@ -58,7 +58,7 @@ INSIGHTFACE_DET_SIZE = (640, 640)
 
 # Seuil cosinus minimum pour valider un match (plus bas = plus strict).
 # Typique : 0.45 (strict) — 0.65 (permissif).
-RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.65"))
+RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.45"))
 
 
 # =============================================================================
