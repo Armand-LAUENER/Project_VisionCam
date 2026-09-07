@@ -182,13 +182,17 @@ class FaceRecognizer:
         """
         Sauvegarde les images source sur disque.
 
+        Le séparateur '#' des noms multi-template est conservé tel quel : il est
+        valide sur NTFS comme sur ext4, et c'est lui qui permet à _identify de
+        retrouver le nom de base après un rebuild_database. Le remplacer par '_'
+        rendait les entrées reconstruites indistinguables d'un nom ordinaire.
+
         Args:
-            dir_name : sous-dossier dans known_faces/ (# remplacé par _ pour Windows)
+            dir_name : sous-dossier dans known_faces/ (ex: "Armand#Face")
             images   : liste d'images BGR
             prefix   : préfixe du nom de fichier
         """
-        safe_dir = dir_name.replace('#', '_')
-        person_dir = os.path.join(self.known_faces_dir, safe_dir)
+        person_dir = os.path.join(self.known_faces_dir, dir_name)
         os.makedirs(person_dir, exist_ok=True)
         for idx, img in enumerate(images):
             cv2.imwrite(os.path.join(person_dir, f"{prefix}_{idx:03d}.jpg"), img)
