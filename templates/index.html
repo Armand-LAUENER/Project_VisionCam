@@ -167,6 +167,27 @@
                 </div>
             </div>
 
+            <!-- Mesures : comparaison des deux sources d'orientation -->
+            <div class="glass rounded-2xl p-4 flex flex-col">
+                <h2 class="text-sm font-semibold text-accent-400 mb-3">
+                    📊 Mesures
+                </h2>
+                <div class="flex items-center gap-2 mb-3">
+                    <input id="benchSamples" type="number" min="5" max="200" value="30"
+                           title="Nombre d'échantillons de frames"
+                           class="w-20 px-2 py-1 rounded-lg bg-black/30 border border-white/10 text-xs" />
+                    <button id="benchBtn" onclick="runPoseBench()"
+                            class="flex-1 px-3 py-1.5 rounded-lg text-xs font-medium
+                                   bg-purple-600/30 border border-purple-500/40 text-purple-300
+                                   hover:bg-purple-600/50 transition-colors disabled:opacity-40">
+                        ⏱️ Comparer mediapipe / yolo
+                    </button>
+                </div>
+                <div id="benchResult" class="text-xs text-gray-400 font-mono space-y-1">
+                    <p class="text-gray-500">Aucune mesure lancée.</p>
+                </div>
+            </div>
+
             <!-- Journal des événements -->
             <div class="glass rounded-2xl p-4 h-48 flex flex-col">
                 <h2 class="text-sm font-semibold text-accent-400 mb-3">
@@ -365,6 +386,68 @@
         // Polling toutes les 500ms
         setInterval(fetchStatus, 500);
         fetchStatus();
+        // ── Mesure comparative des sources d'orientation ──
+        function renderBench(d) {
+            const rows = [
+                ['observations', d.observations],
+                ['source active', d.pose_source_actif],
+                ['mediapipe', `${d.mediapipe_ms.moy} ms (med ${d.mediapipe_ms.med}, p95 ${d.mediapipe_ms.p95})`],
+                ['keypoints yolo', `${d.yolo_ms.moy} ms (med ${d.yolo_ms.med}, p95 ${d.yolo_ms.p95})`],
+                ['économie', `${d.economie_ms_par_frame} ms/frame`],
+                ['accord', d.accord.taux === null
+                    ? 'aucune référence'
+                    : `${d.accord.taux} % (${d.accord.accords}/${d.accord.compares})`],
+                ['abstentions', `mediapipe ${d.abstentions.mediapipe} · yolo ${d.abstentions.yolo}`],
+            ];
+            if (d.ecart_epaules_px) {
+                rows.push(['écart épaules',
+                    `${d.ecart_epaules_px.min} / ${d.ecart_epaules_px.med} / ${d.ecart_epaules_px.max} px `
+                    + `(seuil ${d.seuil_fiabilite_px})`]);
+            }
+            const line = (k, v, cls) =>
+                `<div class="flex justify-between gap-2"><span class="text-gray-500">${k}</span>`
+                + `<span class="${cls || 'text-gray-200'} text-right">${v}</span></div>`;
+
+            let html = rows.map(([k, v]) => line(k, v)).join('');
+            if (d.confusion && d.confusion.length) {
+                html += '<div class="pt-2 mt-2 border-t border-white/10 text-gray-500">verdicts</div>';
+                html += d.confusion.map(([k, n]) => line(k, n, 'text-gray-300')).join('');
+            }
+            return html;
+        }
+
+        async function runPoseBench() {
+            const btn = document.getElementById('benchBtn');
+            const out = document.getElementById('benchResult');
+            const samples = document.getElementById('benchSamples').value;
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Mesure...';
+            out.innerHTML = '<p class="text-gray-500">Mesure en cours — reste dans le champ.</p>';
+            addLogEntry(`📊 Mesure comparative lancée (${samples} échantillons)`, 'gray');
+
+            try {
+                const body = new FormData();
+                body.append('samples', samples);
+                const res = await fetch('/bench/pose', { method: 'POST', body });
+                const d = await res.json();
+
+                if (!d.success) {
+                    out.innerHTML = `<p class="text-red-400">${d.message}</p>`;
+                    addLogEntry(`⚠️ ${d.message}`, 'danger');
+                    return;
+                }
+                out.innerHTML = renderBench(d);
+                addLogEntry(`✅ Mesure terminée : ${d.observations} observations`, 'success');
+            } catch (e) {
+                out.innerHTML = '<p class="text-red-400">Erreur réseau pendant la mesure.</p>';
+                addLogEntry('❌ Échec de la mesure', 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⏱️ Comparer mediapipe / yolo';
+            }
+        }
+
     </script>
 </body>
 </html>
