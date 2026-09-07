@@ -36,16 +36,19 @@ class TrackedPerson:
     Résultat final pour une personne trackée à un instant donné.
     Contient les infos de position (corps) et d'identité (visage).
     """
-    __slots__ = ('track_id', 'body_bbox', 'name', 'confidence', 'last_face_frame')
+    __slots__ = ('track_id', 'body_bbox', 'name', 'confidence', 'last_face_frame',
+                 'pose_kps')
 
     def __init__(self, track_id: int, body_bbox: list[int],
                  name: str = "Inconnu", confidence: float = 0.0,
-                 last_face_frame: int = -1) -> None:
+                 last_face_frame: int = -1, pose_kps: list | None = None) -> None:
         self.track_id = track_id
         self.body_bbox = body_bbox
         self.name = name
         self.confidence = confidence
         self.last_face_frame = last_face_frame
+        # Keypoints COCO 0-6 du dernier match YOLO, pour POSE_SOURCE="yolo".
+        self.pose_kps = pose_kps
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +98,10 @@ class FaceBodyTracker:
 
         # { track_id: list[(x, y, conf) × 5] } — keypoints COCO 0-4 (nose, eyes, ears)
         self._face_kps_map: dict[int, list] = {}
+
+        # { track_id: list[(x, y, conf) × 7] } — COCO 0-6, ajoute les épaules.
+        # Alimente l'estimation d'orientation quand POSE_SOURCE="yolo".
+        self._pose_kps_map: dict[int, list] = {}
 
     # ─────────────────────────────────────────────────────────────────────────
     # Point d'entrée public
@@ -162,6 +169,7 @@ class FaceBodyTracker:
             best_iou = 0.0
             best_nose = None
             best_face_kps = None
+            best_pose_kps = None
 
             for det_bbox, _conf, _cls, det_others in body_detections:
                 dx, dy, dw, dh = det_bbox
@@ -179,18 +187,22 @@ class FaceBodyTracker:
                     best_iou = iou
                     best_nose = det_others.get('nose')
                     best_face_kps = det_others.get('face_kps')
+                    best_pose_kps = det_others.get('pose_kps')
 
             if best_iou > 0.3:
                 if best_nose is not None:
                     self._nose_map[track.track_id] = best_nose
                 if best_face_kps is not None:
                     self._face_kps_map[track.track_id] = best_face_kps
+                if best_pose_kps is not None:
+                    self._pose_kps_map[track.track_id] = best_pose_kps
             # Si pas de match : on conserve les valeurs précédentes (track coasté)
 
         # Purger les tracks disparus
         active_ids = {t.track_id for t in active_tracks}
         self._nose_map    = {tid: v for tid, v in self._nose_map.items()    if tid in active_ids}
         self._face_kps_map = {tid: v for tid, v in self._face_kps_map.items() if tid in active_ids}
+        self._pose_kps_map = {tid: v for tid, v in self._pose_kps_map.items() if tid in active_ids}
 
     # ─────────────────────────────────────────────────────────────────────────
     # Étape 1 — Détection YOLO-Pose
@@ -226,13 +238,16 @@ class FaceBodyTracker:
                 # Extraire les keypoints faciaux COCO 0-4 : nose, left_eye, right_eye, left_ear, right_ear
                 nose = None
                 face_kps = None
+                pose_kps = None
                 if kps_data is not None and i < len(kps_data):
                     kp = kps_data[i]        # Tensor (17, 3) : (x, y, conf) par keypoint
                     nx, ny, nc = float(kp[0][0]), float(kp[0][1]), float(kp[0][2])
                     nose = (nx, ny, nc)
                     face_kps = [(float(kp[j][0]), float(kp[j][1]), float(kp[j][2])) for j in range(5)]
+                    # 0-6 : les 5 précédents + épaules gauche/droite, pour l'orientation.
+                    pose_kps = [(float(kp[j][0]), float(kp[j][1]), float(kp[j][2])) for j in range(7)]
 
-                others = {'nose': nose, 'face_kps': face_kps}
+                others = {'nose': nose, 'face_kps': face_kps, 'pose_kps': pose_kps}
                 detections.append(([x1, y1, x2 - x1, y2 - y1], conf, 'person', others))
 
         return detections
@@ -445,6 +460,7 @@ class FaceBodyTracker:
                 name=identity.get('name', 'Inconnu'),
                 confidence=identity.get('confidence', 0.0),
                 last_face_frame=identity.get('last_face_frame', -1),
+                pose_kps=self._pose_kps_map.get(tid),
             ))
 
         return results
