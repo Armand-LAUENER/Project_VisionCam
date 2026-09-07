@@ -10,7 +10,7 @@ torchaudio==2.5.1+cu121
 insightface==0.7.3
 onnxruntime-gpu==1.24.4
 numpy==1.26.4
-opencv-python==4.13.0.92
+opencv-python==4.11.0.86      # dernière version compatible numpy 1.x (mediapipe impose numpy<2)
 scikit-learn==1.8.0
 scipy==1.17.1
 setuptools
