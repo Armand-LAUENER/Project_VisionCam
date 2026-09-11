@@ -255,3 +255,57 @@ class TestRustBackendUpdate:
         assert len({t.track_id for t in confirmed}) == 2
         np.testing.assert_allclose(confirmed[0].to_ltrb(), [50, 100, 110, 280], atol=1e-3)
         np.testing.assert_allclose(confirmed[1].to_ltrb(), [400, 100, 460, 280], atol=1e-3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paramètres transmis aux deux implémentations
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBothBackendsGetTheSameParameters:
+    """Les deux backends ne sont comparables que s'ils tournent avec les mêmes
+    réglages. `nn_budget` est le piège : deep_sort_realtime le laisse à None
+    (banque d'apparence illimitée) et le crate à 100, donc l'oublier d'un côté
+    fait diverger les pistes sans rien signaler."""
+
+    def test_python_backend_forwards_the_configured_budget(self, monkeypatch):
+        captured = {}
+
+        class SpyDeepSortCtor(SpyDeepSort):
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        monkeypatch.setattr(tracker_backends, "DeepSort", SpyDeepSortCtor)
+        monkeypatch.setattr(config, "DEEPSORT_NN_BUDGET", 100)
+
+        PythonDeepSortBackend()
+
+        assert captured["nn_budget"] == 100
+        assert captured["max_age"] == config.DEEPSORT_MAX_AGE
+        assert captured["n_init"] == config.DEEPSORT_N_INIT
+
+    def test_rust_backend_forwards_the_configured_budget(self, monkeypatch):
+        import deepsort_rs
+
+        captured = {}
+        monkeypatch.setattr(
+            deepsort_rs, "Tracker", lambda **kwargs: captured.update(kwargs)
+        )
+        fake_module = types.ModuleType("deep_sort_realtime.embedder.embedder_pytorch")
+        fake_module.MobileNetv2_Embedder = FakeEmbedder
+        monkeypatch.setitem(
+            sys.modules, "deep_sort_realtime.embedder.embedder_pytorch", fake_module
+        )
+        monkeypatch.setattr(config, "DEEPSORT_EMBEDDER", "mobilenet")
+        monkeypatch.setattr(config, "DEEPSORT_NN_BUDGET", 100)
+
+        RustDeepSortBackend()
+
+        assert captured["nn_budget"] == 100
+        assert captured["max_age"] == config.DEEPSORT_MAX_AGE
+        assert captured["n_init"] == config.DEEPSORT_N_INIT
+
+    def test_the_budget_is_not_left_unbounded(self):
+        """Garde-fou : revenir à None ferait croître le coût de l'association
+        avec la durée de la session (5,01 ms contre 2,24 ms mesurés)."""
+        assert config.DEEPSORT_NN_BUDGET is not None
+        assert config.DEEPSORT_NN_BUDGET > 0
