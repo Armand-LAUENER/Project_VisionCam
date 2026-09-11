@@ -108,6 +108,7 @@ VisionCam/
 ├── tests/
 │   ├── test_face_body_association.py      # 18 tests géométriques (0 GPU)
 │   ├── test_tracker_backends.py           # Bascule de backend + adaptateur Rust
+│   ├── test_face_recognition_cache.py     # Robustesse du cache d'embeddings
 │   └── regression/
 │       └── test_pose_exposed_in_status.py # Tests régression pose
 │
@@ -297,7 +298,7 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 
 ```bash
 pytest tests/
-# 69 tests — 0 GPU requis, ~0.5 s
+# 76 tests — 0 GPU requis, ~0.6 s
 ```
 
 ---

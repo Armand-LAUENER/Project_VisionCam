@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import shutil
+import tempfile
 import threading
 import cv2
 import numpy as np
@@ -76,18 +77,35 @@ class FaceRecognizer:
     # =========================================================================
 
     def _load_or_build_database(self):
-        """Charge le cache ou reconstruit la base d'embeddings."""
+        """Charge le cache ou reconstruit la base d'embeddings.
+
+        Un cache illisible est traité comme absent : il est entièrement
+        reconstructible depuis known_faces/, il n'y a donc aucune raison
+        d'empêcher le démarrage pour ça.
+        """
         os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
 
-        if os.path.exists(self.cache_path):
-            logger.info("Chargement du cache : %s", self.cache_path)
+        if not os.path.exists(self.cache_path):
+            self._build_database()
+            return
+
+        logger.info("Chargement du cache : %s", self.cache_path)
+        try:
             with open(self.cache_path, 'rb') as f:
                 data = pickle.load(f)
-                self.known_embeddings = data['embeddings']
-                self.known_names = data['names']
-            logger.info("%d entrée(s) chargée(s) depuis le cache", len(self.known_names))
-        else:
+            embeddings, names = data['embeddings'], data['names']
+        except (EOFError, pickle.UnpicklingError, KeyError, TypeError, AttributeError,
+                ImportError, OSError) as e:
+            logger.warning(
+                "Cache illisible (%s: %s) — reconstruction depuis %s",
+                type(e).__name__, e, self.known_faces_dir,
+            )
             self._build_database()
+            return
+
+        self.known_embeddings = embeddings
+        self.known_names = names
+        logger.info("%d entrée(s) chargée(s) depuis le cache", len(self.known_names))
 
     def _build_database(self):
         """Parcourt known_faces/ et calcule l'embedding moyen par personne."""
@@ -127,12 +145,31 @@ class FaceRecognizer:
         logger.info("Base construite : %d entrée(s)", len(self.known_names))
 
     def _save_cache(self):
-        """Sauvegarde les embeddings en cache (appeler sous lock si partagé)."""
-        with open(self.cache_path, 'wb') as f:
-            pickle.dump({
-                'embeddings': self.known_embeddings,
-                'names': self.known_names
-            }, f)
+        """Sauvegarde les embeddings en cache (appeler sous lock si partagé).
+
+        Écriture atomique : sans elle, un arrêt du processus pendant le dump
+        laisse un fichier tronqué (voire vide) qui remplace un cache valide.
+        os.replace est atomique tant que le temporaire est sur le même
+        système de fichiers, d'où le dossier de destination.
+
+        Effet de bord assumé : mkstemp crée en 0600, le cache n'est donc plus
+        lisible que par son propriétaire. C'est le bon défaut pour un fichier
+        d'embeddings faciaux ; à revoir si le service tourne un jour sous un
+        autre utilisateur que celui qui a construit la base.
+        """
+        directory = os.path.dirname(self.cache_path) or '.'
+        fd, tmp_path = tempfile.mkstemp(dir=directory, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'wb') as f:
+                pickle.dump({
+                    'embeddings': self.known_embeddings,
+                    'names': self.known_names
+                }, f)
+            os.replace(tmp_path, self.cache_path)
+        except BaseException:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
         logger.debug("Cache sauvegardé : %s", self.cache_path)
 
     def rebuild_database(self):
