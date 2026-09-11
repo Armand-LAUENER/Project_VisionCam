@@ -18,6 +18,10 @@ ultralytics==8.4.39          # YOLOv8 — détection corps (pipeline Body-First)
 
 # --- Tracking ---
 deep-sort-realtime==1.3.2    # DeepSORT + ReID apparence (pipeline Body-First)
+# deepsort-rs                # OPTIONNEL — association en Rust (TRACKER_BACKEND=rust).
+                             # Pas sur PyPI : à construire localement, cf. README.
+                             # deep-sort-realtime reste requis dans tous les cas,
+                             # le backend Rust lui emprunte son embedder MobileNetV2.
 mediapipe==0.10.21
 
 # --- Web ---

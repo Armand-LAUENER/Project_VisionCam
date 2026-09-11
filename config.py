@@ -75,6 +75,13 @@ DEEPSORT_N_INIT = 3             # Confirmations minimales avant qu'un track soit
 DEEPSORT_EMBEDDER = "mobilenet" # Embedder d'apparence pour la ReID (vêtements).
 DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 
+# Implémentation de l'association de tracks (cf. core/tracker_backends.py).
+# "python" : deep_sort_realtime 1.3.2, embedder MobileNetV2 intégré.
+# "rust"   : crate deepsort-rs via PyO3. Même algorithme et même embedder —
+#            seule l'association (Kalman + cascade + IoU) passe en Rust.
+# Bascule à chaud : TRACKER_BACKEND=rust dans .env, sans toucher au code.
+TRACKER_BACKEND = os.getenv("TRACKER_BACKEND", "python").strip().lower()
+
 # =============================================================================
 # PIPELINE BODY-FIRST (YOLOv8 + DeepSORT + InsightFace)
 # =============================================================================
