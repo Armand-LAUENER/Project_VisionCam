@@ -75,6 +75,14 @@ DEEPSORT_N_INIT = 3             # Confirmations minimales avant qu'un track soit
 DEEPSORT_EMBEDDER = "mobilenet" # Embedder d'apparence pour la ReID (vêtements).
 DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 
+# Nombre de vecteurs d'apparence conservés par piste (les plus récents).
+# None = illimité, le défaut de deep_sort_realtime : la banque grossit d'une
+# feature par frame et par piste, donc le coût de l'association croît avec la
+# durée de la session. Mesuré à 6 personnes/frame sur 200 frames : 5,01 ms
+# d'association avec None contre 2,24 ms avec 100, et l'écart s'aggrave.
+# 100 est la valeur du papier Wojke et al. 2017 et le défaut du crate.
+DEEPSORT_NN_BUDGET = 100
+
 # Implémentation de l'association de tracks (cf. core/tracker_backends.py).
 # "python" : deep_sort_realtime 1.3.2, embedder MobileNetV2 intégré.
 # "rust"   : crate deepsort-rs via PyO3. Même algorithme et même embedder —

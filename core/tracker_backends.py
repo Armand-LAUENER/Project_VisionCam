@@ -67,6 +67,7 @@ class PythonDeepSortBackend:
         self._tracker = DeepSort(
             max_age=config.DEEPSORT_MAX_AGE,
             n_init=config.DEEPSORT_N_INIT,
+            nn_budget=config.DEEPSORT_NN_BUDGET,
             embedder=config.DEEPSORT_EMBEDDER,
             embedder_gpu=config.DEEPSORT_EMBEDDER_GPU,
         )
@@ -78,10 +79,10 @@ class PythonDeepSortBackend:
 class RustDeepSortBackend:
     """Association en Rust (deepsort-rs), embeddings inchangés côté Python.
 
-    Les paramètres passés au crate reproduisent ceux que `PythonDeepSortBackend`
-    obtient de deep_sort_realtime — y compris ses défauts implicites, que le
-    crate ne partage pas tous (`nn_budget` vaut None dans la référence et 100
-    dans le crate). Ils sont donc tous explicites ici.
+    Les paramètres passés au crate reproduisent ceux de `PythonDeepSortBackend`,
+    y compris les défauts implicites de deep_sort_realtime que le crate ne
+    partage pas. Ils sont donc tous explicites des deux côtés — c'est ce qui
+    rend les deux backends comparables ligne à ligne.
     """
 
     name = "rust"
@@ -107,7 +108,7 @@ class RustDeepSortBackend:
             max_age=config.DEEPSORT_MAX_AGE,
             n_init=config.DEEPSORT_N_INIT,
             max_cosine_distance=0.2,
-            nn_budget=None,
+            nn_budget=config.DEEPSORT_NN_BUDGET,
             max_iou_distance=0.7,
         )
 
