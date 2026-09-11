@@ -16,6 +16,8 @@ Lancer : pytest tests/test_face_body_association.py -v
 
 import sys
 import pytest
+
+import config
 from unittest.mock import MagicMock
 
 
@@ -312,3 +314,52 @@ class TestFaceFreshness:
         assert len(results) == 1
         assert results[0].last_face_frame == -1
         assert results[0].name == 'Inconnu'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tests : _recognize_faces_for_tracks  (géométrie du crop envoyé à InsightFace)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestHeadCropGeometry:
+    """SCRFD ne détecte pas un visage qui remplit son image d'entrée : le crop
+    doit garder de la marge autour du visage, donc grandir avec la personne.
+
+    Régression : avec un ratio de 0.25, un plan rapproché (corps de 499 px)
+    retombait sur le plancher de 125 px, soit un crop de 250×250 pour un visage
+    de 184×250 — InsightFace n'y trouvait plus rien, et la personne restait
+    « Inconnu » quelle que soit la qualité de l'enrôlement.
+    """
+
+    @staticmethod
+    def _captured_crop(tracker, track, frame_size=(720, 1280)):
+        """Lance _recognize_faces_for_tracks et retourne le crop transmis."""
+        import numpy as np
+
+        crops = []
+        tracker.face_recognizer.detect_and_recognize = lambda crop: crops.append(crop) or []
+        frame = np.zeros((*frame_size, 3), dtype=np.uint8)
+        tracker._recognize_faces_for_tracks(frame, [track])
+        return crops[0] if crops else None
+
+    def test_close_up_crop_is_larger_than_the_floor(self, tracker_no_gpu):
+        """Le cas mesuré en live : le crop doit suivre la taille du corps."""
+        track = make_track(track_id=1, ltrb=[366, 210, 899, 709])   # corps de 499 px
+        tracker_no_gpu._face_kps_map[1] = [(642, 390, 0.99)] * 5
+
+        crop = self._captured_crop(tracker_no_gpu, track)
+
+        expected = 2 * int(499 * config.POSE_CROP_BODY_RATIO)
+        assert crop.shape[:2] == (expected, expected)
+        assert expected > 2 * config.POSE_CROP_HALF_SIZE
+
+    def test_distant_person_still_uses_the_floor(self, tracker_no_gpu):
+        """L'inverse ne doit pas régresser : sur une petite personne le ratio
+        donnerait un crop minuscule, le plancher doit reprendre la main."""
+        track = make_track(track_id=1, ltrb=[600, 300, 640, 450])   # corps de 150 px
+        tracker_no_gpu._face_kps_map[1] = [(620, 320, 0.99)] * 5
+
+        crop = self._captured_crop(tracker_no_gpu, track)
+
+        assert int(150 * config.POSE_CROP_BODY_RATIO) < config.POSE_CROP_HALF_SIZE
+        floor = 2 * config.POSE_CROP_HALF_SIZE
+        assert crop.shape[:2] == (floor, floor)

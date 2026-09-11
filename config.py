@@ -121,10 +121,20 @@ POSE_MIN_SHOULDER_DIST_PX = 100
 # En dessous → fallback sur l'estimation tête depuis la bbox corps.
 POSE_FACE_KP_MIN_VISIBLE = 1
 
-# Demi-taille du crop carré centré sur le nez, en pixels.
-# Le crop final = 2 × POSE_CROP_HALF_SIZE × 2 × POSE_CROP_HALF_SIZE.
-# Adaptatif : max(POSE_CROP_HALF_SIZE, body_height × 0.25) pour les personnes proches.
+# Demi-taille du crop carré centré sur le visage, en pixels.
+# Plancher utilisé pour les personnes lointaines, dont le visage est petit :
+# l'agrandir diluerait les petits visages au redimensionnement d'InsightFace.
 POSE_CROP_HALF_SIZE = 125
+
+# Le crop grandit avec la personne : half = max(POSE_CROP_HALF_SIZE,
+# body_height × POSE_CROP_BODY_RATIO). SCRFD, le détecteur d'InsightFace, a
+# besoin de marge autour du visage — un visage qui remplit le crop n'est pas
+# détecté du tout. Mesuré sur un plan rapproché (corps 499 px, visage
+# 184×250 px) : à 0.25 le crop tombait sur le plancher de 125, soit 250×250,
+# et InsightFace ne trouvait aucun visage ; à 0.40 il fait 398×398 et le
+# détecte à 0.754. Le score de similarité, lui, ne dépend pas de la taille du
+# crop (0.57-0.60 dans tous les cas où le visage est trouvé).
+POSE_CROP_BODY_RATIO = 0.40
 
 # Lancer InsightFace toutes les N frames seulement.
 # 5 = bon compromis (15ms × 1/5 = 3ms amortis/frame) ; baisser si réseau lent.
