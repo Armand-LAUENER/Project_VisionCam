@@ -35,3 +35,5 @@ colorama==0.4.6
 ruff
 mypy
 pytest
+motmetrics                   # MOTA/IDF1 — utilisé par tools/eval_mot.py uniquement,
+                             # inutile à l'exécution de l'application.
