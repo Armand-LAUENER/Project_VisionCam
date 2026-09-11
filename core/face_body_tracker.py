@@ -13,7 +13,10 @@ Architecture :
 
 from __future__ import annotations
 
+import itertools
 import logging
+import math
+
 import numpy as np
 from collections import deque
 from typing import Optional
@@ -252,6 +255,26 @@ class FaceBodyTracker:
     # Étape 3 — Reconnaissance faciale par crop dynamique centré sur le Nez
     # ─────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _crop_half_size(visible_face_kps: list, body_height: int) -> int:
+        """Demi-taille du crop tête soumis à InsightFace.
+
+        SCRFD ne détecte pas un visage qui remplit son entrée : le crop doit
+        grandir avec le visage, pas avec le corps. L'écart maximal entre deux
+        keypoints faciaux visibles mesure directement cette taille (cf.
+        POSE_CROP_KP_SPAN_RATIO pour les mesures qui calent le facteur).
+
+        Avec moins de deux keypoints il n'y a pas d'écart à mesurer : on
+        retombe sur la hauteur du corps, moins fiable mais toujours là.
+        """
+        if len(visible_face_kps) >= 2:
+            span = max(math.dist(a, b)
+                       for a, b in itertools.combinations(visible_face_kps, 2))
+            scaled = int(span * config.POSE_CROP_KP_SPAN_RATIO)
+        else:
+            scaled = int(body_height * config.POSE_CROP_BODY_RATIO)
+        return max(config.POSE_CROP_HALF_SIZE, scaled)
+
     def _recognize_faces_for_tracks(
             self,
             frame: np.ndarray,
@@ -276,12 +299,11 @@ class FaceBodyTracker:
         for track in tracks_to_recognize:
             bx1, by1, bx2, by2 = [int(v) for v in track.to_ltrb()]
             body_height = max(1, by2 - by1)
-            half = max(config.POSE_CROP_HALF_SIZE,
-                       int(body_height * config.POSE_CROP_BODY_RATIO))
 
             # Centroïde des keypoints faciaux COCO 0-4 visibles (nez, yeux, oreilles).
             # Résistant aux lunettes et aux occlusions partielles : 1 keypoint suffit.
             crop_center = None
+            visible: list[tuple[float, float]] = []
             face_kps = self._face_kps_map.get(track.track_id)
             if face_kps:
                 visible = [(x, y) for x, y, c in face_kps if c >= config.POSE_NOSE_CONF_THRESHOLD]
@@ -302,6 +324,7 @@ class FaceBodyTracker:
                 logger.debug("track #%s : aucun keypoint facial → fallback body-top", track.track_id)
 
             cx, cy = crop_center
+            half = self._crop_half_size(visible, body_height)
             crop_x1 = max(0, cx - half)
             crop_y1 = max(0, cy - half)
             crop_x2 = min(w_img, cx + half)

@@ -317,22 +317,77 @@ class TestFaceFreshness:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tests : _recognize_faces_for_tracks  (géométrie du crop envoyé à InsightFace)
+# Tests : dimensionnement du crop tête envoyé à InsightFace
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestHeadCropGeometry:
+class TestCropHalfSize:
     """SCRFD ne détecte pas un visage qui remplit son image d'entrée : le crop
-    doit garder de la marge autour du visage, donc grandir avec la personne.
+    doit grandir avec le VISAGE.
 
-    Régression : avec un ratio de 0.25, un plan rapproché (corps de 499 px)
-    retombait sur le plancher de 125 px, soit un crop de 250×250 pour un visage
-    de 184×250 — InsightFace n'y trouvait plus rien, et la personne restait
-    « Inconnu » quelle que soit la qualité de l'enrôlement.
+    Régression : la taille était dérivée de la hauteur du corps, qui de près
+    n'est plus qu'une tête-épaules et sous-estime le visage. Un plan rapproché
+    tombait sur le plancher de 125 px — crop 250×250 pour un visage de 246 px —
+    et InsightFace n'y trouvait rien, laissant la personne « Inconnu » quelle
+    que soit la qualité de l'enrôlement.
+
+    Les valeurs de référence viennent de 70 mesures sur le flux live (visages
+    de 51 à 246 px) : `min_half / kp_span` vaut 1.16 en médiane, 1.48 au pire.
     """
+
+    # Écart entre keypoints et demi-taille minimale effectivement mesurée,
+    # aux deux extrémités de la plage couverte.
+    CLOSE_UP_SPAN, CLOSE_UP_MEASURED_MIN = 184.5, 210
+    DISTANT_SPAN, DISTANT_MEASURED_MIN = 41.0, 60
+
+    @staticmethod
+    def kps_spanning(distance: float) -> list[tuple[float, float]]:
+        """Deux keypoints faciaux séparés de `distance` pixels."""
+        return [(600.0, 400.0), (600.0 + distance, 400.0)]
+
+    def test_close_up_covers_the_measured_minimum(self, tracker_no_gpu):
+        half = tracker_no_gpu._crop_half_size(
+            self.kps_spanning(self.CLOSE_UP_SPAN), body_height=451)
+
+        assert half >= self.CLOSE_UP_MEASURED_MIN
+        # Et le corps ne doit plus décider : à 451 px il donnait 125 (plancher),
+        # soit la moitié de ce qu'il faut.
+        assert half > config.POSE_CROP_HALF_SIZE
+
+    def test_distant_person_falls_back_on_the_floor(self, tracker_no_gpu):
+        """Le plancher doit reprendre la main quand le visage est minuscule —
+        l'abaisser au ratio seul donnerait un crop plus petit que le minimum
+        mesuré."""
+        half = tracker_no_gpu._crop_half_size(
+            self.kps_spanning(self.DISTANT_SPAN), body_height=126)
+
+        assert half == config.POSE_CROP_HALF_SIZE
+        assert half >= self.DISTANT_MEASURED_MIN
+
+    def test_crop_grows_with_the_face_not_the_body(self, tracker_no_gpu):
+        """Le cœur du correctif : à corps identique, un visage plus grand doit
+        donner un crop plus grand. L'ancienne règle rendait la même valeur."""
+        small = tracker_no_gpu._crop_half_size(self.kps_spanning(90), body_height=450)
+        large = tracker_no_gpu._crop_half_size(self.kps_spanning(185), body_height=450)
+
+        assert large > small
+
+    def test_single_keypoint_falls_back_on_body_height(self, tracker_no_gpu):
+        """De profil marqué ou de dos, il n'y a pas d'écart à mesurer."""
+        half = tracker_no_gpu._crop_half_size([(600.0, 400.0)], body_height=500)
+
+        assert half == int(500 * config.POSE_CROP_BODY_RATIO)
+
+    def test_no_keypoint_falls_back_on_body_height(self, tracker_no_gpu):
+        half = tracker_no_gpu._crop_half_size([], body_height=500)
+
+        assert half == int(500 * config.POSE_CROP_BODY_RATIO)
+
+
+class TestHeadCropGeometry:
+    """Le crop réellement découpé dans la frame suit bien cette demi-taille."""
 
     @staticmethod
     def _captured_crop(tracker, track, frame_size=(720, 1280)):
-        """Lance _recognize_faces_for_tracks et retourne le crop transmis."""
         import numpy as np
 
         crops = []
@@ -341,25 +396,16 @@ class TestHeadCropGeometry:
         tracker._recognize_faces_for_tracks(frame, [track])
         return crops[0] if crops else None
 
-    def test_close_up_crop_is_larger_than_the_floor(self, tracker_no_gpu):
-        """Le cas mesuré en live : le crop doit suivre la taille du corps."""
-        track = make_track(track_id=1, ltrb=[366, 210, 899, 709])   # corps de 499 px
-        tracker_no_gpu._face_kps_map[1] = [(642, 390, 0.99)] * 5
+    def test_crop_is_sized_from_the_facial_keypoints(self, tracker_no_gpu):
+        track = make_track(track_id=1, ltrb=[366, 210, 899, 709])
+        # Cinq keypoints étalés sur 180 px, centrés loin des bords.
+        tracker_no_gpu._face_kps_map[1] = [
+            (560.0, 360.0, 0.99), (740.0, 360.0, 0.99), (650.0, 380.0, 0.99),
+            (600.0, 400.0, 0.99), (700.0, 400.0, 0.99),
+        ]
 
         crop = self._captured_crop(tracker_no_gpu, track)
 
-        expected = 2 * int(499 * config.POSE_CROP_BODY_RATIO)
+        expected = 2 * tracker_no_gpu._crop_half_size(
+            [(x, y) for x, y, _ in tracker_no_gpu._face_kps_map[1]], 499)
         assert crop.shape[:2] == (expected, expected)
-        assert expected > 2 * config.POSE_CROP_HALF_SIZE
-
-    def test_distant_person_still_uses_the_floor(self, tracker_no_gpu):
-        """L'inverse ne doit pas régresser : sur une petite personne le ratio
-        donnerait un crop minuscule, le plancher doit reprendre la main."""
-        track = make_track(track_id=1, ltrb=[600, 300, 640, 450])   # corps de 150 px
-        tracker_no_gpu._face_kps_map[1] = [(620, 320, 0.99)] * 5
-
-        crop = self._captured_crop(tracker_no_gpu, track)
-
-        assert int(150 * config.POSE_CROP_BODY_RATIO) < config.POSE_CROP_HALF_SIZE
-        floor = 2 * config.POSE_CROP_HALF_SIZE
-        assert crop.shape[:2] == (floor, floor)
