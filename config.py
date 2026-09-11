@@ -126,15 +126,24 @@ POSE_FACE_KP_MIN_VISIBLE = 1
 # l'agrandir diluerait les petits visages au redimensionnement d'InsightFace.
 POSE_CROP_HALF_SIZE = 125
 
-# Le crop grandit avec la personne : half = max(POSE_CROP_HALF_SIZE,
-# body_height × POSE_CROP_BODY_RATIO). SCRFD, le détecteur d'InsightFace, a
-# besoin de marge autour du visage — un visage qui remplit le crop n'est pas
-# détecté du tout. Mesuré sur un plan rapproché (corps 499 px, visage
-# 184×250 px) : à 0.25 le crop tombait sur le plancher de 125, soit 250×250,
-# et InsightFace ne trouvait aucun visage ; à 0.40 il fait 398×398 et le
-# détecte à 0.754. Le score de similarité, lui, ne dépend pas de la taille du
-# crop (0.57-0.60 dans tous les cas où le visage est trouvé).
-POSE_CROP_BODY_RATIO = 0.40
+# Le crop doit grandir avec le VISAGE : SCRFD, le détecteur d'InsightFace, ne
+# trouve pas un visage qui remplit son entrée. L'écart maximal entre deux
+# keypoints faciaux visibles (COCO 0-4) mesure directement cette taille, et
+# c'est la seule grandeur du genre disponible avant d'appeler le détecteur.
+#
+# Calé sur 70 mesures live (visages de 51 à 246 px, 7 échelles) : le rapport
+# demi-taille minimale / écart vaut 1.16 en médiane, 1.40 au p95 et 1.48 au
+# pire. Le facteur retenu couvre ce pire cas avec de la marge — dépasser est
+# sans risque pour la détection (vérifié jusqu'à une demi-taille de 500), le
+# seul coût est d'attraper le visage d'un voisin dans une scène dense.
+POSE_CROP_KP_SPAN_RATIO = 1.6
+
+# Repli quand moins de deux keypoints faciaux sont visibles (personne de profil
+# marqué ou de dos) : la hauteur du corps, qui est un proxy nettement plus
+# dispersé sur les mêmes mesures (rapport de 0.28 à 0.51). De près, la boîte
+# YOLO n'est plus qu'une tête-épaules et sous-estime la taille du visage —
+# c'est exactement ce qui faisait échouer la reco en plan rapproché.
+POSE_CROP_BODY_RATIO = 0.55
 
 # Lancer InsightFace toutes les N frames seulement.
 # 5 = bon compromis (15ms × 1/5 = 3ms amortis/frame) ; baisser si réseau lent.
