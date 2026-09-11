@@ -276,7 +276,8 @@ class FaceBodyTracker:
         for track in tracks_to_recognize:
             bx1, by1, bx2, by2 = [int(v) for v in track.to_ltrb()]
             body_height = max(1, by2 - by1)
-            half = max(config.POSE_CROP_HALF_SIZE, int(body_height * 0.25))
+            half = max(config.POSE_CROP_HALF_SIZE,
+                       int(body_height * config.POSE_CROP_BODY_RATIO))
 
             # Centroïde des keypoints faciaux COCO 0-4 visibles (nez, yeux, oreilles).
             # Résistant aux lunettes et aux occlusions partielles : 1 keypoint suffit.
