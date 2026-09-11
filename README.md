@@ -95,13 +95,19 @@ VisionCam/
 ├── core/
 │   ├── face_recognition.py   # FaceRecognizer — InsightFace + enrôlement
 │   ├── face_body_tracker.py  # FaceBodyTracker — orchestrateur YOLO+DeepSORT
+│   ├── tracker_backends.py   # Association : deep_sort_realtime ou deepsort-rs
 │   └── pose_estimation.py    # PoseEstimator — MediaPipe 4 classes
+│
+├── tools/
+│   ├── bench_tracker.py      # Compare les deux backends (parité + vitesse)
+│   └── bench_pose.py         # Compare les deux sources d'orientation
 │
 ├── templates/
 │   └── index.html           # UI : stream + liste de présence
 │
 ├── tests/
 │   ├── test_face_body_association.py      # 18 tests géométriques (0 GPU)
+│   ├── test_tracker_backends.py           # Bascule de backend + adaptateur Rust
 │   └── regression/
 │       └── test_pose_exposed_in_status.py # Tests régression pose
 │
@@ -168,6 +174,66 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `YOLO_MODEL` | `yolov8s-pose.pt` | Modèle YOLO (auto-téléchargé) |
 | `DEEPSORT_MAX_AGE` | `70` | Frames avant suppression d'un track perdu |
 | `FRAME_SKIP` | `2` | Cadence pose estimation |
+| `TRACKER_BACKEND` | `python` | Association de tracks : `python` ou `rust` |
+
+---
+
+## Tracker Rust (optionnel)
+
+L'association de tracks — filtre de Kalman, matching cascade, passage IoU —
+existe en deux implémentations interchangeables, choisies par
+`TRACKER_BACKEND` :
+
+| Valeur | Implémentation | Installation |
+|:-------|:---------------|:-------------|
+| `python` (défaut) | `deep_sort_realtime` 1.3.2 | déjà dans `requirements.txt` |
+| `rust` | crate [`deepsort-rs`](https://github.com/Armand-LAUENER/deepsort-rs) via PyO3 | à construire, ci-dessous |
+
+Seule l'association passe en Rust. La détection (YOLOv8-Pose), la
+reconnaissance faciale (InsightFace) et l'embedder d'apparence
+(MobileNetV2) restent identiques : le backend Rust réutilise l'embedder de
+`deep_sort_realtime` et ses crops, ce qui rend les deux backends comparables
+à l'identique.
+
+### Construire le wheel
+
+```bash
+# Rust + maturin, une seule fois
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+pip install 'maturin>=1.15,<2.0'
+
+git clone https://github.com/Armand-LAUENER/deepsort-rs.git
+cd deepsort-rs
+maturin develop --release      # --release est obligatoire : un build debug
+                               # fausserait complètement la comparaison
+```
+
+Puis `TRACKER_BACKEND=rust` dans `.env`.
+
+### Revenir en arrière
+
+Remettre `TRACKER_BACKEND=python` (ou retirer la ligne du `.env`) et
+redémarrer. Aucune désinstallation nécessaire, aucun autre fichier à toucher :
+c'est le seul point de bascule.
+
+### Résultats mesurés
+
+`python -m tools.bench_tracker --video <fichier> --frames 400` fait tourner les
+deux backends sur les mêmes détections YOLO, frame par frame, et compare pistes
+et temps.
+
+| Séquence | Personnes/frame | `python` | `rust` | Parité |
+|:---------|:----------------|:---------|:-------|:-------|
+| MOT17-04 | 3,9 (max 8) | 24,4 ms | 17,2 ms (×1,42) | 350/350 frames identiques |
+| MOT17-09 | 6,1 (max 10) | 31,1 ms | 25,9 ms (×1,20) | 350/350 frames identiques |
+
+Médianes par frame, 50 frames de warm-up. Les deux colonnes incluent
+l'embedder MobileNetV2, identique de part et d'autre — c'est lui qui domine le
+temps de tracker, et donc lui qui borne le gain visible ici. Sur l'association
+seule, le crate mesure ×5,8 à ×20,6 selon la densité (cf. son README).
+
+« Parité » = mêmes `track_id` et mêmes boîtes à 1e-3 px, pistes tentatives
+comprises.
 
 ---
 
@@ -231,7 +297,7 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 
 ```bash
 pytest tests/
-# 23 tests — 0 GPU requis, ~0.2 s
+# 69 tests — 0 GPU requis, ~0.5 s
 ```
 
 ---

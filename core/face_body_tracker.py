@@ -19,10 +19,10 @@ from collections import deque
 from typing import Optional
 
 from ultralytics import YOLO
-from deep_sort_realtime.deepsort_tracker import DeepSort
 
 import config
 from core.face_recognition import FaceRecognizer
+from core.tracker_backends import build_body_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +76,8 @@ class FaceBodyTracker:
         self.yolo = YOLO(config.YOLO_MODEL)
         logger.info("YOLO-Pose chargé")
 
-        self.body_tracker = DeepSort(
-            max_age=config.DEEPSORT_MAX_AGE,
-            n_init=config.DEEPSORT_N_INIT,
-            embedder=config.DEEPSORT_EMBEDDER,
-            embedder_gpu=config.DEEPSORT_EMBEDDER_GPU,
-        )
+        # deep_sort_realtime ou deepsort-rs selon config.TRACKER_BACKEND.
+        self.body_tracker = build_body_tracker()
 
         self.face_recognizer = face_recognizer
 
@@ -114,7 +110,7 @@ class FaceBodyTracker:
         body_detections = self._detect_bodies(frame)
 
         # Étape 2 : Tracking DeepSORT
-        raw_tracks = self.body_tracker.update_tracks(body_detections, frame=frame)
+        raw_tracks = self.body_tracker.update(body_detections, frame)
         active_tracks = [t for t in raw_tracks if t.is_confirmed()]
 
         # Étape 2b : Mise à jour du nose_map par IoU matching YOLO↔tracks
