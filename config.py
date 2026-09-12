@@ -83,6 +83,15 @@ DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 # 100 est la valeur du papier Wojke et al. 2017 et le défaut du crate.
 DEEPSORT_NN_BUDGET = 100
 
+# Seuils d'association. Ce sont les défauts de deep_sort_realtime, repris du
+# papier ; ils n'ont jamais été réglés pour VisionCam, où les personnes sont
+# vues de beaucoup plus près que dans MOT17. tools/eval_mot.py sait les
+# balayer, c'est la manière de les choisir sur mesure plutôt qu'au jugé.
+#   distance cosinus : au-delà, l'apparence est jugée trop différente
+#   distance IoU     : au-delà, le recouvrement est jugé insuffisant
+DEEPSORT_MAX_COSINE_DISTANCE = 0.2
+DEEPSORT_MAX_IOU_DISTANCE = 0.7
+
 # Implémentation de l'association de tracks (cf. core/tracker_backends.py).
 # "python" : deep_sort_realtime 1.3.2, embedder MobileNetV2 intégré.
 # "rust"   : crate deepsort-rs via PyO3. Même algorithme et même embedder —
