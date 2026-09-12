@@ -68,6 +68,8 @@ class PythonDeepSortBackend:
             max_age=config.DEEPSORT_MAX_AGE,
             n_init=config.DEEPSORT_N_INIT,
             nn_budget=config.DEEPSORT_NN_BUDGET,
+            max_cosine_distance=config.DEEPSORT_MAX_COSINE_DISTANCE,
+            max_iou_distance=config.DEEPSORT_MAX_IOU_DISTANCE,
             embedder=config.DEEPSORT_EMBEDDER,
             embedder_gpu=config.DEEPSORT_EMBEDDER_GPU,
         )
@@ -107,9 +109,9 @@ class RustDeepSortBackend:
         self._tracker = deepsort_rs.Tracker(
             max_age=config.DEEPSORT_MAX_AGE,
             n_init=config.DEEPSORT_N_INIT,
-            max_cosine_distance=0.2,
+            max_cosine_distance=config.DEEPSORT_MAX_COSINE_DISTANCE,
             nn_budget=config.DEEPSORT_NN_BUDGET,
-            max_iou_distance=0.7,
+            max_iou_distance=config.DEEPSORT_MAX_IOU_DISTANCE,
         )
 
     def update(self, detections: list[tuple], frame: np.ndarray) -> list[TrackLike]:

@@ -61,10 +61,12 @@ def sequence_length(seq_dir):
     return len(os.listdir(os.path.join(seq_dir, "img1")))
 
 
-def run_variant(seq_dir, backend_name, nn_budget, n_frames, min_conf):
+def run_variant(seq_dir, backend_name, nn_budget, n_frames, min_conf, overrides):
     """Rejoue la séquence avec un backend et retourne (résultats MOT, temps)."""
     config.TRACKER_BACKEND = backend_name
     config.DEEPSORT_NN_BUDGET = nn_budget
+    for name, value in overrides.items():
+        setattr(config, name, value)
     # Import tardif : les backends lisent la configuration à la construction.
     from core.tracker_backends import build_body_tracker
 
@@ -140,7 +142,24 @@ def main():
     parser.add_argument("--frames", type=int, default=0, help="0 = toute la séquence")
     parser.add_argument("--det-conf", type=float, default=0.0,
                         help="Seuil sur la confiance des détections publiques")
+    parser.add_argument("--max-cosine-distance", type=float,
+                        help="Écrase DEEPSORT_MAX_COSINE_DISTANCE")
+    parser.add_argument("--max-iou-distance", type=float,
+                        help="Écrase DEEPSORT_MAX_IOU_DISTANCE")
+    parser.add_argument("--max-age", type=int, help="Écrase DEEPSORT_MAX_AGE")
+    parser.add_argument("--n-init", type=int, help="Écrase DEEPSORT_N_INIT")
     args = parser.parse_args()
+
+    overrides = {
+        name: value
+        for name, value in (
+            ("DEEPSORT_MAX_COSINE_DISTANCE", args.max_cosine_distance),
+            ("DEEPSORT_MAX_IOU_DISTANCE", args.max_iou_distance),
+            ("DEEPSORT_MAX_AGE", args.max_age),
+            ("DEEPSORT_N_INIT", args.n_init),
+        )
+        if value is not None
+    }
 
     import motmetrics as mm
     import pandas as pd
@@ -155,6 +174,10 @@ def main():
     n_frames = args.frames or sequence_length(seq_dir)
     print(f"\nSéquence : {os.path.basename(seq_dir)} — {n_frames} frames, "
           f"détections publiques (conf >= {args.det_conf})")
+    if overrides:
+        print("  réglages écrasés : "
+              + ", ".join(f"{k.removeprefix('DEEPSORT_').lower()}={v}"
+                          for k, v in overrides.items()))
 
     summaries, timings = [], {}
     for variant in args.variant:
@@ -162,7 +185,8 @@ def main():
         nn_budget = None if budget.lower() in ("none", "") else int(budget)
         label = f"{backend}/nn_budget={budget or 'none'}"
         print(f"  → {label} ...", flush=True)
-        results, durations = run_variant(seq_dir, backend, nn_budget, n_frames, args.det_conf)
+        results, durations = run_variant(seq_dir, backend, nn_budget, n_frames,
+                                         args.det_conf, overrides)
         if not len(results):
             print("    aucune piste confirmée, variante ignorée")
             continue

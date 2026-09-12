@@ -16,6 +16,7 @@ Lancer : pytest tests/test_tracker_backends.py -v
 """
 
 import importlib
+import pathlib
 import sys
 import types
 
@@ -282,6 +283,8 @@ class TestBothBackendsGetTheSameParameters:
         assert captured["nn_budget"] == 100
         assert captured["max_age"] == config.DEEPSORT_MAX_AGE
         assert captured["n_init"] == config.DEEPSORT_N_INIT
+        assert captured["max_cosine_distance"] == config.DEEPSORT_MAX_COSINE_DISTANCE
+        assert captured["max_iou_distance"] == config.DEEPSORT_MAX_IOU_DISTANCE
 
     def test_rust_backend_forwards_the_configured_budget(self, monkeypatch):
         import deepsort_rs
@@ -303,6 +306,16 @@ class TestBothBackendsGetTheSameParameters:
         assert captured["nn_budget"] == 100
         assert captured["max_age"] == config.DEEPSORT_MAX_AGE
         assert captured["n_init"] == config.DEEPSORT_N_INIT
+        assert captured["max_cosine_distance"] == config.DEEPSORT_MAX_COSINE_DISTANCE
+        assert captured["max_iou_distance"] == config.DEEPSORT_MAX_IOU_DISTANCE
+
+    def test_no_association_threshold_stays_hardcoded(self):
+        """Un seuil en dur dans un seul backend rendrait les deux
+        incomparables sans que rien ne le signale — et empêcherait de le
+        balayer avec tools/eval_mot.py."""
+        source = (pathlib.Path(tracker_backends.__file__)).read_text()
+        for literal in ("max_cosine_distance=0.", "max_iou_distance=0."):
+            assert literal not in source, f"seuil en dur : {literal}"
 
     def test_the_budget_is_not_left_unbounded(self):
         """Garde-fou : revenir à None ferait croître le coût de l'association
