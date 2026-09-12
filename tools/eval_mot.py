@@ -146,6 +146,9 @@ def main():
                         help="Écrase DEEPSORT_MAX_COSINE_DISTANCE")
     parser.add_argument("--max-iou-distance", type=float,
                         help="Écrase DEEPSORT_MAX_IOU_DISTANCE")
+    parser.add_argument("--sweep-cosine",
+                        help="Liste de seuils cosinus à comparer, ex. 0.1,0.2,0.3 — "
+                             "chaque variante est rejouée pour chacun")
     parser.add_argument("--max-age", type=int, help="Écrase DEEPSORT_MAX_AGE")
     parser.add_argument("--n-init", type=int, help="Écrase DEEPSORT_N_INIT")
     args = parser.parse_args()
@@ -179,19 +182,27 @@ def main():
               + ", ".join(f"{k.removeprefix('DEEPSORT_').lower()}={v}"
                           for k, v in overrides.items()))
 
+    cosines = ([float(v) for v in args.sweep_cosine.split(",")]
+               if args.sweep_cosine else [None])
+
     summaries, timings = [], {}
     for variant in args.variant:
         backend, _, budget = variant.partition(":")
         nn_budget = None if budget.lower() in ("none", "") else int(budget)
-        label = f"{backend}/nn_budget={budget or 'none'}"
-        print(f"  → {label} ...", flush=True)
-        results, durations = run_variant(seq_dir, backend, nn_budget, n_frames,
-                                         args.det_conf, overrides)
-        if not len(results):
-            print("    aucune piste confirmée, variante ignorée")
-            continue
-        summaries.append(evaluate(ground_truth, results, label))
-        timings[label] = float(np.median(durations)) * 1e3
+        for cosine in cosines:
+            run_overrides = dict(overrides)
+            label = f"{backend}/budget={budget or 'none'}"
+            if cosine is not None:
+                run_overrides["DEEPSORT_MAX_COSINE_DISTANCE"] = cosine
+                label += f"/cos={cosine:g}"
+            print(f"  → {label} ...", flush=True)
+            results, durations = run_variant(seq_dir, backend, nn_budget, n_frames,
+                                             args.det_conf, run_overrides)
+            if not len(results):
+                print("    aucune piste confirmée, variante ignorée")
+                continue
+            summaries.append(evaluate(ground_truth, results, label))
+            timings[label] = float(np.median(durations)) * 1e3
 
     summary = pd.concat(summaries)
     summary["ms/frame"] = [timings[i] for i in summary.index]
