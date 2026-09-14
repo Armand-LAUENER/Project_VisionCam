@@ -18,6 +18,7 @@ import itertools
 import logging
 import math
 import os
+import time
 from collections import deque
 
 import numpy as np
@@ -154,6 +155,9 @@ class FaceBodyTracker:
         # Alimente l'estimation d'orientation quand POSE_SOURCE="yolo".
         self._pose_kps_map: dict[int, list] = {}
 
+        # Durées (s) des étapes de la dernière image : lues par la page Diagnostic.
+        self.last_timings: dict[str, float] = {}
+
     # ─────────────────────────────────────────────────────────────────────────
     # Point d'entrée public
     # ─────────────────────────────────────────────────────────────────────────
@@ -161,11 +165,17 @@ class FaceBodyTracker:
     def update(self, frame: np.ndarray, frame_count: int) -> list[TrackedPerson]:
         """Pipeline complet pour une frame."""
 
+        timings = {}
+        start = time.perf_counter()
+
         # Étape 1 : Détection YOLO-Pose (corps + keypoints)
         body_detections = self._detect_bodies(frame)
+        timings['detection'] = time.perf_counter() - start
 
         # Étape 2 : Tracking DeepSORT
+        start = time.perf_counter()
         raw_tracks = self.body_tracker.update(body_detections, frame)
+        timings['tracking'] = time.perf_counter() - start
         active_tracks = [t for t in raw_tracks if t.is_confirmed()]
 
         # Étape 2b : Mise à jour du nose_map par IoU matching YOLO↔tracks
@@ -203,8 +213,12 @@ class FaceBodyTracker:
                 self._last_attempt_frame[track.track_id] = frame_count
 
             if tracks_to_recognize:
+                start = time.perf_counter()
                 faces = self._recognize_faces_for_tracks(frame, tracks_to_recognize)
                 self._associate_faces_to_tracks(visible_tracks, faces, frame_count)
+                timings['recognition'] = time.perf_counter() - start
+
+        self.last_timings = timings
 
         # Étape 5 : Construire les résultats
         results = self._build_results(visible_tracks)
