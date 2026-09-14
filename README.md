@@ -107,6 +107,10 @@ VisionCam/
 │   ├── pose_threshold_study.py # Choix de POSE_MIN_SHOULDER_DIST_PX
 │   └── webcam_bridge.py      # Webcam Windows → flux MJPEG pour WSL2
 │
+├── docs/
+│   ├── improvements-backlog.md  # Optimisations et améliorations restantes
+│   └── roadmap-rust-tracker.md  # Roadmap (terminée) du backend Rust
+│
 ├── templates/
 │   └── index.html           # UI : stream + liste de présence
 │
