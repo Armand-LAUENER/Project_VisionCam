@@ -21,7 +21,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   tourner à tour de rôle. Test de régression : 3 tracks, les 2 premiers
   toujours inconnus, le 3e doit finir par être reconnu.
 
-- [ ] **`/capture` enrôle à partir d'une image déjà annotée** — `app.py:448-458`
+- [x] **`/capture` enrôle à partir d'une image déjà annotée** — `app.py:448-458`
   La route décode `state.current_frame`, c'est-à-dire le JPEG qualité 75 avec
   les boîtes et les textes dessinés dessus. Il faudrait prendre
   `state.bench_frame`, l'image brute. Autre problème : s'il y a plusieurs
