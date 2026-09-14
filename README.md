@@ -105,6 +105,8 @@ VisionCam/
 │   ├── pose_from_keypoints.py # KeypointPoseEstimator — orientation depuis YOLO
 │   └── pose_estimation.py    # PoseEstimator — MediaPipe
 │
+├── scripts/visioncam.sh    # Lance / arrête l'application et le pont webcam
+│
 ├── tools/
 │   ├── bench_tracker.py      # Compare les deux backends (parité + vitesse)
 │   ├── bench_pose.py         # Compare les deux sources d'orientation
@@ -171,8 +173,9 @@ uv sync                                   # GPU : torch CUDA 12.1
 # uv sync --no-group cu121 --group cpu    # sans GPU : torch CPU
 
 # 3. Configuration
-cp .env.example .env
+cp -n .env.example .env                   # -n : ne remplace jamais un .env existant
 # Éditer .env si nécessaire (source vidéo, seuils, port)
+uv run python tools/set_password.py       # recommandé : mot de passe d'accès
 
 # 4. Préparer le dataset (voir section Enrôlement)
 mkdir -p known_faces/MonNom
@@ -183,6 +186,17 @@ uv run app.py
 ```
 
 L'interface est disponible sur `http://localhost:5000`.
+
+### Lancement en arrière-plan (WSL2 + webcam Windows)
+
+```bash
+scripts/visioncam.sh start    # pont webcam Windows (si USE_LOCAL_CAM=false), puis l'application
+scripts/visioncam.sh status
+scripts/visioncam.sh logs     # suit logs/visioncam.log
+scripts/visioncam.sh stop     # application (sessions de présence fermées), puis pont webcam
+```
+
+Le pont est lancé côté Windows par `powershell.exe` (Python 3.11 via le lanceur `py`, fenêtre réduite) et n'est pas relancé s'il répond déjà. Rien ne démarre avec Windows : la caméra ne filme que sur `start`.
 
 ---
 

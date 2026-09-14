@@ -13,7 +13,9 @@ import json
 import logging
 import queue
 import secrets
+import signal
 import statistics
+import sys
 import threading
 import time
 from collections import defaultdict, deque
@@ -1097,10 +1099,18 @@ if __name__ == '__main__':
     # fait pour tourner en continu. Il fonctionne sous Linux comme sous Windows.
     from waitress import serve
 
+    # `scripts/visioncam.sh stop` envoie SIGTERM : sans handler, Python quitte
+    # sans passer par le finally et les sessions de présence restent ouvertes.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         serve(app, host=config.FLASK_HOST, port=config.FLASK_PORT,
               threads=config.SERVER_THREADS, ident="VisionCam")
     finally:
         state.running = False
+        # Attendre la fin des threads : quitter pendant une inférence GPU
+        # interrompait le processus (« terminate called without an active
+        # exception »), et une frame traitée après close_all rouvrirait une session.
+        process_thread.join(timeout=10)
+        camera_thread.join(timeout=10)
         # Ferme les sessions en cours à leur dernière heure vue.
         presence_log.close_all()
