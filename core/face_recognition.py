@@ -27,6 +27,12 @@ def _is_safe_name(value: str) -> bool:
     return bool(_SAFE_NAME.fullmatch(value))
 
 
+_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
+
+# Issues des opérations de gestion des personnes : l'API web en déduit le code HTTP.
+OK, INVALID, NOT_FOUND, CONFLICT, NO_FACE = "ok", "invalid", "not_found", "conflict", "no_face"
+
+
 def _flatten_model_dir(name, root="~/.insightface"):
     """Remonte les .onnx d'un pack de modèles extrait dans un sous-dossier homonyme.
 
@@ -56,6 +62,9 @@ class FaceRecognizer:
         self.known_embeddings = []
         self.known_names = []
         self._lock = threading.Lock()   # Protège known_embeddings/known_names (accès multi-thread)
+        # Sérialise ce qui modifie la base (enrôlement, renommage, suppression,
+        # reconstruction) : un enrôlement pendant un rebuild était écrasé.
+        self._write_lock = threading.RLock()
 
         # ── Charger InsightFace ──
         # allowed_modules : détection + reconnaissance uniquement.
@@ -205,9 +214,20 @@ class FaceRecognizer:
 
     def rebuild_database(self):
         """Force la reconstruction complète de la base depuis les images sur disque."""
-        if os.path.exists(self.cache_path):
-            os.remove(self.cache_path)
-        self._build_database()
+        with self._maintenance():
+            if os.path.exists(self.cache_path):
+                os.remove(self.cache_path)
+            self._build_database()
+
+    def _maintenance(self) -> threading.RLock:
+        """Verrou des opérations qui modifient la base.
+
+        Créé à la demande pour les instances construites sans __init__ (tests).
+        """
+        lock = self.__dict__.get("_write_lock")
+        if lock is None:
+            lock = self.__dict__.setdefault("_write_lock", threading.RLock())
+        return lock
 
     # =========================================================================
     # HELPERS INTERNES
@@ -265,13 +285,58 @@ class FaceRecognizer:
                          d'enrôlement valident le nom avant d'arriver ici ; ce
                          contrôle couvre un appelant qui ne l'aurait pas fait.
         """
-        base_dir = os.path.realpath(self.known_faces_dir)
-        person_dir = os.path.realpath(os.path.join(base_dir, dir_name))
-        if os.path.dirname(person_dir) != base_dir:
-            raise ValueError(f"Dossier d'enrôlement hors de known_faces/ : {dir_name!r}")
+        person_dir = self._entry_dir(dir_name)
         os.makedirs(person_dir, exist_ok=True)
-        for idx, img in enumerate(images):
+        # Numéro libre suivant : réenrôler une personne ajoute des photos au
+        # lieu d'écraser avg_000.jpg, avg_001.jpg… de l'enrôlement précédent.
+        idx = 0
+        for img in images:
+            while os.path.exists(os.path.join(person_dir, f"{prefix}_{idx:03d}.jpg")):
+                idx += 1
             cv2.imwrite(os.path.join(person_dir, f"{prefix}_{idx:03d}.jpg"), img)
+
+    def _entry_dir(self, entry: str) -> str:
+        """Dossier d'une entrée de la base, garanti directement sous known_faces/."""
+        base_dir = os.path.realpath(self.known_faces_dir)
+        entry_dir = os.path.realpath(os.path.join(base_dir, entry))
+        if os.path.dirname(entry_dir) != base_dir:
+            raise ValueError(f"Dossier d'enrôlement hors de known_faces/ : {entry!r}")
+        return entry_dir
+
+    def _entry_images(self, entry: str) -> list[str]:
+        """Chemins des photos d'une entrée, triés."""
+        entry_dir = self._entry_dir(entry)
+        if not os.path.isdir(entry_dir):
+            return []
+        return sorted(os.path.join(entry_dir, f) for f in os.listdir(entry_dir)
+                      if f.lower().endswith(_IMAGE_EXTENSIONS))
+
+    def _person_entries(self, name: str) -> list[str]:
+        """Entrées d'une personne sur disque : « Nom » et « Nom#label »."""
+        if not os.path.isdir(self.known_faces_dir):
+            return []
+        return sorted(e for e in os.listdir(self.known_faces_dir)
+                      if (e == name or e.startswith(name + "#"))
+                      and os.path.isdir(os.path.join(self.known_faces_dir, e)))
+
+    def _refresh_entry(self, entry: str) -> int:
+        """Recalcule l'embedding d'une entrée depuis toutes ses photos sur disque.
+
+        Même calcul que _build_database : la base en mémoire reste celle qu'un
+        rebuild produirait. Retourne le nombre de photos où un visage a été
+        trouvé ; à 0, l'entrée est retirée de la base.
+        """
+        images = [cv2.imread(path) for path in self._entry_images(entry)]
+        embeddings = self._extract_best_embeddings(images)
+        with self._lock:
+            if embeddings:
+                avg = np.mean(embeddings, axis=0)
+                self._upsert_embedding(entry, avg / np.linalg.norm(avg))
+            elif entry in self.known_names:
+                idx = self.known_names.index(entry)
+                self.known_names = self.known_names[:idx] + self.known_names[idx + 1:]
+                self.known_embeddings = self.known_embeddings[:idx] + self.known_embeddings[idx + 1:]
+        return len(embeddings)
 
     # =========================================================================
     # RECONNAISSANCE
@@ -368,24 +433,20 @@ class FaceRecognizer:
         if not _is_safe_name(name):
             return False, f"Nom invalide : {name!r}."
 
-        embeddings = self._extract_best_embeddings(frames)
-        if not embeddings:
+        # Seules les images où un visage est trouvé sont gardées sur disque.
+        kept = [img for img in frames if img is not None and self._extract_best_embeddings([img])]
+        if not kept:
             return False, "Aucun visage détecté dans les images fournies."
 
-        # Moyenne puis normalisation L2
-        avg = np.mean(embeddings, axis=0)
-        avg = avg / np.linalg.norm(avg)
-
-        # Persistance disque (source pour rebuild_database futur)
-        self._save_images_to_disk(name, frames, prefix="avg")
-
-        # Mise à jour atomique de la base
-        with self._lock:
-            self._upsert_embedding(name, avg)
-
-        self._save_cache()
-        logger.info("[AVG] '%s' enrôlé : %d embedding(s) -> moyenne L2.", name, len(embeddings))
-        return True, f"'{name}' enrôlé par averaging sur {len(embeddings)} image(s)."
+        with self._maintenance():
+            # Les nouvelles photos s'ajoutent aux précédentes, et l'embedding
+            # est la moyenne de toutes : comme après un rebuild_database.
+            self._save_images_to_disk(name, kept, prefix="avg")
+            total = self._refresh_entry(name)
+            self._save_cache()
+        logger.info("[AVG] '%s' enrôlé : %d nouvelle(s) photo(s), %d au total.",
+                    name, len(kept), total)
+        return True, f"'{name}' enrôlé : {len(kept)} photo(s) ajoutée(s), {total} au total."
 
     # =========================================================================
     # ENRÔLEMENT — Méthode 2 : Multi-Template (angles distincts)
@@ -420,27 +481,101 @@ class FaceRecognizer:
 
         enrolled_labels = []
 
-        for label, frame in frames_dict.items():
-            embeddings = self._extract_best_embeddings([frame])
-            if not embeddings:
-                logger.warning("[MT] Aucun visage dans le template '%s', ignoré.", label)
-                continue
+        with self._maintenance():
+            for label, frame in frames_dict.items():
+                if not self._extract_best_embeddings([frame]):
+                    logger.warning("[MT] Aucun visage dans le template '%s', ignoré.", label)
+                    continue
 
-            # Un seul embedding par template → normalisation directe (pas de moyenne)
-            emb = embeddings[0]
-            emb = emb / np.linalg.norm(emb)
+                template_name = f"{base_name}#{label}"
+                self._save_images_to_disk(template_name, [frame], prefix=label.lower())
+                self._refresh_entry(template_name)
+                enrolled_labels.append(label)
 
-            template_name = f"{base_name}#{label}"
-            self._save_images_to_disk(template_name, [frame], prefix=label.lower())
+            if not enrolled_labels:
+                return False, "Aucun visage détecté dans les images fournies."
 
-            with self._lock:
-                self._upsert_embedding(template_name, emb)
-
-            enrolled_labels.append(label)
-
-        if not enrolled_labels:
-            return False, "Aucun visage détecté dans les images fournies."
-
-        self._save_cache()
+            self._save_cache()
         logger.info("[MT] '%s' : %d template(s) -> %s", base_name, len(enrolled_labels), enrolled_labels)
         return True, f"'{base_name}' enrôlé en {len(enrolled_labels)} template(s) : {enrolled_labels}."
+
+    # =========================================================================
+    # GESTION DES PERSONNES
+    # =========================================================================
+
+    def list_people(self) -> list[dict]:
+        """Personnes connues, regroupées par nom de base.
+
+        Chaque entrée : name, templates (labels multitemplate), photos (nombre
+        de photos sur disque), thumbnail (chemin de la première photo ou None),
+        enrolled (présente dans la base de reconnaissance).
+        """
+        people: dict[str, dict] = {}
+
+        def person(name):
+            return people.setdefault(name, {"name": name, "templates": [], "photos": 0,
+                                            "thumbnail": None, "enrolled": False})
+
+        if os.path.isdir(self.known_faces_dir):
+            for entry in sorted(os.listdir(self.known_faces_dir)):
+                if not os.path.isdir(os.path.join(self.known_faces_dir, entry)):
+                    continue
+                name, _, label = entry.partition("#")
+                if not _is_safe_name(name):
+                    continue
+                p = person(name)
+                if label:
+                    p["templates"].append(label)
+                images = self._entry_images(entry)
+                p["photos"] += len(images)
+                if images and p["thumbnail"] is None:
+                    p["thumbnail"] = images[0]
+        with self._lock:
+            names = list(self.known_names)
+        for entry in names:
+            person(entry.split("#")[0])["enrolled"] = True
+        return sorted(people.values(), key=lambda p: p["name"].lower())
+
+    def rename_person(self, old: str, new: str) -> tuple[str, str]:
+        """Renomme une personne : ses dossiers dans known_faces/ et ses entrées en base."""
+        if not _is_safe_name(old) or not _is_safe_name(new):
+            return INVALID, f"Nom invalide : {old!r} ou {new!r}."
+        with self._maintenance():
+            entries = self._person_entries(old)
+            with self._lock:
+                in_memory = [n for n in self.known_names if n.split("#")[0] == old]
+                taken = any(n.split("#")[0] == new for n in self.known_names)
+            if not entries and not in_memory:
+                return NOT_FOUND, f"'{old}' n'existe pas."
+            if old == new:
+                return OK, f"'{old}' garde son nom."
+            if taken or self._person_entries(new):
+                return CONFLICT, f"'{new}' existe déjà."
+            for entry in entries:
+                os.rename(self._entry_dir(entry), self._entry_dir(new + entry[len(old):]))
+            with self._lock:
+                self.known_names = [new + n[len(old):] if n.split("#")[0] == old else n
+                                    for n in self.known_names]
+            self._save_cache()
+        logger.info("Personne renommée : '%s' -> '%s'", old, new)
+        return OK, f"'{old}' renommé en '{new}'."
+
+    def delete_person(self, name: str) -> tuple[str, str]:
+        """Supprime une personne : photos sur disque et entrées en base (droit à l'effacement)."""
+        if not _is_safe_name(name):
+            return INVALID, f"Nom invalide : {name!r}."
+        with self._maintenance():
+            entries = self._person_entries(name)
+            with self._lock:
+                keep = [i for i, n in enumerate(self.known_names) if n.split("#")[0] != name]
+                found = len(keep) != len(self.known_names)
+                if found:
+                    self.known_names = [self.known_names[i] for i in keep]
+                    self.known_embeddings = [self.known_embeddings[i] for i in keep]
+            if not entries and not found:
+                return NOT_FOUND, f"'{name}' n'existe pas."
+            for entry in entries:
+                shutil.rmtree(self._entry_dir(entry))
+            self._save_cache()
+        logger.info("Personne supprimée : '%s' (%d dossier(s))", name, len(entries))
+        return OK, f"'{name}' supprimé."

@@ -18,12 +18,14 @@ Lancer : pytest tests/test_web_routes.py -v
 """
 
 import concurrent.futures
+import io
 import sys
 import threading
 import time
 import urllib.request
 from unittest.mock import MagicMock
 
+import cv2
 import numpy as np
 import pytest
 
@@ -329,6 +331,71 @@ class TestRebuild:
         finally:
             visioncam._rebuild_lock.release()
         _recognizer.rebuild_database.assert_not_called()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/people — gestion des personnes
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPeopleApi:
+
+    def test_liste_sans_chemin_disque(self, client, tmp_path):
+        thumb = tmp_path / "a.jpg"
+        cv2.imwrite(str(thumb), np.full((400, 300, 3), 90, dtype=np.uint8))
+        _recognizer.list_people.return_value = [
+            {'name': 'Alice', 'templates': [], 'photos': 3, 'enrolled': True, 'thumbnail': str(thumb)},
+            {'name': 'Bob', 'templates': ['Face'], 'photos': 0, 'enrolled': False, 'thumbnail': None},
+        ]
+
+        people = client.get('/api/people').get_json()['people']
+
+        assert [p['name'] for p in people] == ['Alice', 'Bob']
+        assert people[0]['thumbnail_url'] == '/api/people/Alice/thumbnail'
+        assert people[1]['thumbnail_url'] is None
+        assert all('thumbnail' not in p for p in people)
+
+        res = client.get('/api/people/Alice/thumbnail')
+        assert res.status_code == 200 and res.mimetype == 'image/jpeg'
+        image = cv2.imdecode(np.frombuffer(res.data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        assert max(image.shape[:2]) == visioncam.THUMBNAIL_SIZE
+        assert client.get('/api/people/Bob/thumbnail').status_code == 404
+
+    @pytest.mark.parametrize("status, code", [('ok', 200), ('invalid', 400),
+                                              ('not_found', 404), ('conflict', 409)])
+    def test_renommer_traduit_le_statut(self, client, status, code):
+        _recognizer.rename_person.reset_mock()
+        _recognizer.rename_person.return_value = (status, 'msg')
+
+        res = client.post('/api/people/Alice/rename', json={'new_name': ' Alicia '})
+
+        assert res.status_code == code
+        _recognizer.rename_person.assert_called_once_with('Alice', 'Alicia')
+
+    def test_supprimer(self, client):
+        _recognizer.delete_person.return_value = ('not_found', "'Zoé' n'existe pas.")
+        assert client.delete('/api/people/Zoé').status_code == 404
+
+        _recognizer.delete_person.return_value = ('ok', 'supprimé')
+        assert client.delete('/api/people/Alice').status_code == 200
+
+    def test_ajouter_des_photos(self, client):
+        _, jpeg = cv2.imencode('.jpg', np.full((50, 50, 3), 120, dtype=np.uint8))
+        _recognizer.enroll_person_average.reset_mock()
+        _recognizer.enroll_person_average.return_value = (True, 'ok')
+
+        res = client.post('/api/people/Alice/photos',
+                          data={'images': [(io.BytesIO(jpeg.tobytes()), 'a.jpg')]},
+                          content_type='multipart/form-data')
+
+        assert res.status_code == 200
+        name, images = _recognizer.enroll_person_average.call_args[0]
+        assert name == 'Alice' and len(images) == 1
+
+    def test_ajouter_sans_image_lisible(self, client):
+        res = client.post('/api/people/Alice/photos',
+                          data={'images': [(io.BytesIO(b'pas une image'), 'a.jpg')]},
+                          content_type='multipart/form-data')
+        assert res.status_code == 400
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -483,6 +483,8 @@ curl -X POST http://localhost:5000/rebuild
 
 Noms et labels acceptés : lettres (accents compris), chiffres, `_`, `-`, espace et point, sans point initial, 64 caractères max.
 
+Réenrôler une personne ajoute les nouvelles photos aux anciennes : l'embedding est la moyenne de toutes ses photos, comme après une reconstruction.
+
 Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multitemplate` (un vecteur par angle — plus précis sur les grands changements de pose).
 
 ---
@@ -498,6 +500,11 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 | `POST` | `/capture` | Enrôlement depuis la frame courante (409 si plusieurs personnes) |
 | `POST` | `/rebuild` | Reconstruction base embeddings depuis `known_faces/` (409 si déjà en cours) |
 | `POST` | `/bench/pose` | Compare les deux sources d'orientation sur le flux |
+| `GET` | `/api/people` | Personnes connues : photos, labels multitemplate, miniature |
+| `GET` | `/api/people/<nom>/thumbnail` | Miniature de la première photo |
+| `POST` | `/api/people/<nom>/rename` | Renommer (`{"new_name": …}`) : dossiers et base ensemble |
+| `DELETE` | `/api/people/<nom>` | Supprimer photos et entrées (droit à l'effacement) |
+| `POST` | `/api/people/<nom>/photos` | Ajouter des photos ; l'embedding est recalculé sur toutes |
 
 ---
 

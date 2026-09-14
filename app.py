@@ -16,7 +16,7 @@ import time
 
 import cv2
 import numpy as np
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, render_template, request
 
 import config
 from core.face_body_tracker import FaceBodyTracker
@@ -545,6 +545,94 @@ def rebuild():
 
     threading.Thread(target=_do_rebuild, daemon=True).start()
     return jsonify({'started': True, 'message': 'Reconstruction lancée en arrière-plan.'}), 202
+
+
+# ══════════════════════════════════════════
+# GESTION DES PERSONNES
+# ══════════════════════════════════════════
+# Issue d'une opération de FaceRecognizer → code HTTP.
+_PEOPLE_STATUS = {'ok': 200, 'invalid': 400, 'not_found': 404, 'conflict': 409}
+THUMBNAIL_SIZE = 160
+
+
+def _refresh_total_known():
+    with state.lock:
+        state.total_known = len(face_recognizer.known_names)
+
+
+def _find_person(name):
+    return next((p for p in face_recognizer.list_people() if p['name'] == name), None)
+
+
+@app.route('/api/people')
+def api_people():
+    """
+    Personnes connues.
+
+    Réponse : 200 { people: [{ name, templates[], photos, enrolled, thumbnail_url|null }] }
+    """
+    people = [
+        {**{k: v for k, v in p.items() if k != 'thumbnail'},
+         'thumbnail_url': f"/api/people/{p['name']}/thumbnail" if p['thumbnail'] else None}
+        for p in face_recognizer.list_people()
+    ]
+    return jsonify({'people': people})
+
+
+@app.route('/api/people/<name>/thumbnail')
+def api_person_thumbnail(name):
+    """Première photo de la personne, réduite à THUMBNAIL_SIZE px : 200 image/jpeg ou 404."""
+    person = _find_person(name)
+    image = cv2.imread(person['thumbnail']) if person and person['thumbnail'] else None
+    if image is None:
+        abort(404)
+    scale = THUMBNAIL_SIZE / max(image.shape[:2])
+    if scale < 1:
+        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return Response(buffer.tobytes(), mimetype='image/jpeg',
+                    headers={'Cache-Control': 'no-cache'})
+
+
+@app.route('/api/people/<name>/rename', methods=['POST'])
+def api_rename_person(name):
+    """
+    Entrée (JSON) : { new_name: str }
+    Réponse : 200 | 400 nom invalide | 404 inconnue | 409 nom déjà pris — { success, message }
+    """
+    new_name = str((request.get_json(silent=True) or {}).get('new_name', '')).strip()
+    status, message = face_recognizer.rename_person(name, new_name)
+    return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
+
+
+@app.route('/api/people/<name>', methods=['DELETE'])
+def api_delete_person(name):
+    """Supprime photos et entrées. Réponse : 200 | 400 | 404 — { success, message }"""
+    status, message = face_recognizer.delete_person(name)
+    if status == 'ok':
+        _refresh_total_known()
+    return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
+
+
+@app.route('/api/people/<name>/photos', methods=['POST'])
+def api_add_photos(name):
+    """
+    Ajoute des photos à une personne (ou la crée) et recalcule son embedding.
+
+    Entrée (multipart) : images — fichier(s) image
+    Réponse : 200 | 400 aucune image lisible | 422 aucun visage — { success, message, total_known }
+    """
+    images = []
+    for f in request.files.getlist('images'):
+        img = cv2.imdecode(np.frombuffer(f.read(), dtype=np.uint8), cv2.IMREAD_COLOR)
+        if img is not None:
+            images.append(img)
+    if not images:
+        return jsonify({'success': False, 'message': 'Aucune image lisible (champ "images").'}), 400
+    success, message = face_recognizer.enroll_person_average(name, images)
+    _refresh_total_known()
+    return jsonify({'success': success, 'message': message,
+                    'total_known': state.total_known}), 200 if success else 422
 
 
 # ══════════════════════════════════════════
