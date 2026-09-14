@@ -262,6 +262,9 @@ PRESENCE_TIMEOUT = 5.0
 # PRESENCE_TIMEOUT, pour qu'une courte sortie du champ ne coupe pas la session.
 PRESENCE_DB_PATH = os.path.join(DATA_DIR, "presence.db")
 PRESENCE_LOG_GAP_S = float(os.getenv("PRESENCE_LOG_GAP_S", "60"))
+# Durée de conservation (jours) des sessions terminées ; 0 = sans limite.
+# Purge au démarrage puis toutes les heures (minimisation des données, RGPD).
+PRESENCE_RETENTION_DAYS = float(os.getenv("PRESENCE_RETENTION_DAYS", "30"))
 
 # Délai (s) après lequel une personne visible restée « Inconnu » est signalée
 # aux pages ouvertes (une seule fois par piste). Une piste neuve n'a pas encore

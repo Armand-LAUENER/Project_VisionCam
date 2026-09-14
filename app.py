@@ -109,7 +109,8 @@ class AppState:
         self.bench_persons: list = []
 
 state = AppState()
-presence_log = PresenceLog(config.PRESENCE_DB_PATH, gap=config.PRESENCE_LOG_GAP_S)
+presence_log = PresenceLog(config.PRESENCE_DB_PATH, gap=config.PRESENCE_LOG_GAP_S,
+                           retention=config.PRESENCE_RETENTION_DAYS * 86400 or None)
 events = EventBus()
 timings = StageTimer()
 unknown_watcher = UnknownWatcher(config.UNKNOWN_ALERT_S)

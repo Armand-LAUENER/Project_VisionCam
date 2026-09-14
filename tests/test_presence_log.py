@@ -163,3 +163,47 @@ class TestQueries:
 
         assert rows[0] == ["nom", "arrivée", "départ", "durée (s)", "en cours"]
         assert rows[1] == ["Alice", "2026-09-14T09:00:00", "2026-09-14T09:00:30", "30", "non"]
+
+
+class TestRetention:
+
+    DAY = 86400
+
+    def make(self, tmp_path, days=30):
+        return PresenceLog(str(tmp_path / "presence.db"), gap=60, flush_interval=10,
+                           retention=days * self.DAY, purge_interval=self.DAY)
+
+    def test_sessions_older_than_the_retention_are_purged(self, tmp_path):
+        log = self.make(tmp_path)
+        feed(log, [(0, ["Alice"]), (100, [])])
+        feed(log, [(20 * self.DAY, ["Bob"]), (20 * self.DAY + 100, [])])
+
+        # 31 jours après la session d'Alice : elle part, celle de Bob reste.
+        feed(log, [(31 * self.DAY, [])])
+
+        assert [s["name"] for s in log.sessions()] == ["Bob"]
+
+    def test_an_ongoing_session_is_never_purged(self, tmp_path):
+        log = PresenceLog(str(tmp_path / "presence.db"), gap=2 * 3600, flush_interval=10,
+                          retention=self.DAY, purge_interval=3600)
+        feed(log, [(offset, ["Alice"]) for offset in range(0, 3 * self.DAY, 3600)])
+
+        sessions = log.sessions()
+        assert len(sessions) == 1 and sessions[0]["ongoing"]
+
+    def test_purge_runs_at_most_once_per_interval(self, tmp_path, monkeypatch):
+        log = self.make(tmp_path)
+        calls = []
+        real_purge = log.purge
+        monkeypatch.setattr(log, "purge", lambda now=None: calls.append(now) or real_purge(now))
+
+        feed(log, [(offset, []) for offset in range(0, self.DAY + 1, 600)])
+
+        assert calls == [T0, T0 + self.DAY]
+
+    def test_no_retention_keeps_everything(self, tmp_path):
+        log = make_log(tmp_path)
+        feed(log, [(0, ["Alice"]), (100, []), (400 * self.DAY, [])])
+
+        assert log.purge(T0 + 400 * self.DAY) == 0
+        assert len(log.sessions()) == 1
