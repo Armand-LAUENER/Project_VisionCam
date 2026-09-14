@@ -114,6 +114,58 @@ class TestPropagationDesKeypoints:
         assert results[0].pose_kps is None
 
 
+class TestParseResult:
+    """_parse_result lit les tenseurs YOLO en bloc ; le format produit ne change pas."""
+
+    @staticmethod
+    def make_result(xyxy, conf, kps):
+        torch = pytest.importorskip("torch")
+        result = MagicMock()
+        result.boxes.xyxy = torch.tensor(xyxy, dtype=torch.float32).reshape(-1, 4)
+        result.boxes.conf = torch.tensor(conf, dtype=torch.float32)
+        if kps is None:
+            result.keypoints = None
+        else:
+            result.keypoints.data = torch.tensor(kps, dtype=torch.float32).reshape(-1, 17, 3)
+        return result
+
+    def test_format_deepsort_et_keypoints(self):
+        kps_17 = [list(kp) for kp in KPS_7] + [[0.0, 0.0, 0.0]] * 10
+        other = [[float(j), float(j) + 0.5, 0.25] for j in range(17)]
+        result = self.make_result(
+            [[10.0, 20.0, 110.0, 220.0], [300.0, 40.0, 350.0, 140.0]],
+            [0.9, 0.6],
+            [kps_17, other],
+        )
+
+        detections = FaceBodyTracker._parse_result(result)
+
+        assert len(detections) == 2
+        bbox, conf, cls, others = detections[0]
+        assert bbox == pytest.approx([10.0, 20.0, 100.0, 200.0])
+        assert conf == pytest.approx(0.9)
+        assert cls == 'person'
+        assert len(others['pose_kps']) == 7
+        assert len(others['face_kps']) == 5
+        for got, expected in zip(others['pose_kps'], KPS_7):
+            assert isinstance(got, tuple)
+            assert got == pytest.approx(expected)
+        assert others['nose'] == others['pose_kps'][0]
+        assert detections[1][3]['pose_kps'][6] == pytest.approx((6.0, 6.5, 0.25))
+
+    def test_sans_keypoints(self):
+        result = self.make_result([[0.0, 0.0, 50.0, 80.0]], [0.7], None)
+
+        (_, _, _, others), = FaceBodyTracker._parse_result(result)
+
+        assert others == {'nose': None, 'face_kps': None, 'pose_kps': None}
+
+    def test_aucune_detection(self):
+        result = self.make_result([], [], [])
+
+        assert FaceBodyTracker._parse_result(result) == []
+
+
 class TestNonRegressionFaceKps:
 
     def test_face_kps_reste_a_cinq_elements(self, tracker):
