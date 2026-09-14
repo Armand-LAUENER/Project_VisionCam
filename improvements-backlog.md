@@ -70,7 +70,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   Pistes : TensorRT, ou le calculer une frame sur deux quand l'association par
   IoU n'est pas ambiguë (vérifier MOTA/IDF1 avec `tools/eval_mot.py`).
 
-- [ ] **`POSE_SOURCE="yolo"` par défaut** — `config.py:121`
+- [x] **`POSE_SOURCE="yolo"` par défaut** — `config.py:121`
   MediaPipe fait une inférence CPU par personne toutes les `FRAME_SKIP`
   frames. `tools/pose_threshold_study.py` donne 100 % d'accord avec MediaPipe
   au-delà de 100 px d'écart d'épaules, et la source YOLO ne coûte rien.
