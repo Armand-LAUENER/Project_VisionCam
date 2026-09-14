@@ -34,7 +34,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   → N'accepter qu'une liste blanche de caractères, et vérifier que le chemin
   résolu reste bien dans `known_faces/`.
 
-- [ ] **Personnes brièvement « Inconnu » pendant `/rebuild`** — `core/face_recognition.py:114`
+- [x] **Personnes brièvement « Inconnu » pendant `/rebuild`** — `core/face_recognition.py:114`
   `_build_database` vide la base en mémoire sans verrou pendant que la
   reconnaissance continue de la lire. Rien n'empêche non plus deux
   reconstructions en même temps.

@@ -371,7 +371,8 @@
             try {
                 const res = await fetch('/rebuild', { method: 'POST' });
                 const data = await res.json();
-                addLogEntry('✅ ' + data.message, 'success');
+                addLogEntry(data.started ? `✅ ${data.message}` : `❌ ${data.message}`,
+                            data.started ? 'success' : 'danger');
             } catch(e) {
                 addLogEntry('❌ Erreur lors du rebuild', 'danger');
             } finally {

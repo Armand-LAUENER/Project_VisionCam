@@ -189,6 +189,32 @@ class TestCapture:
         _recognizer.enroll_person_average.assert_not_called()
 
 
+class TestRebuild:
+
+    def test_lance_la_reconstruction(self, client):
+        _recognizer.rebuild_database.reset_mock()
+
+        res = client.post('/rebuild')
+
+        assert res.status_code == 202
+        # Le verrou est rendu à la fin du thread de reconstruction.
+        assert visioncam._rebuild_lock.acquire(timeout=2)
+        visioncam._rebuild_lock.release()
+        _recognizer.rebuild_database.assert_called_once()
+
+    def test_reconstruction_concurrente_refusee(self, client):
+        """Deux rebuilds en parallèle se marcheraient dessus : le second est rejeté."""
+        _recognizer.rebuild_database.reset_mock()
+        assert visioncam._rebuild_lock.acquire(blocking=False)
+        try:
+            res = client.post('/rebuild')
+            assert res.status_code == 409
+            assert res.get_json()['started'] is False
+        finally:
+            visioncam._rebuild_lock.release()
+        _recognizer.rebuild_database.assert_not_called()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # /bench/pose — mesure comparative
 # ─────────────────────────────────────────────────────────────────────────────
