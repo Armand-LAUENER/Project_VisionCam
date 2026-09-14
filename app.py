@@ -473,6 +473,9 @@ def capture():
     return jsonify({'success': False, 'message': message}), 422
 
 
+_rebuild_lock = threading.Lock()
+
+
 @app.route('/rebuild', methods=['POST'])
 def rebuild():
     """
@@ -480,14 +483,23 @@ def rebuild():
     Lance le rebuild dans un thread daemon pour ne pas bloquer la réponse HTTP.
 
     Réponse immédiate :
-        202 { started: true, message: str }
+        202 { started: true,  message: str }
+        409 { started: false, message: str }  ← reconstruction déjà en cours
     """
+    # Deux rebuilds en parallèle écriraient le cache chacun de leur côté :
+    # une seule reconstruction à la fois, rendue à la fin du thread.
+    if not _rebuild_lock.acquire(blocking=False):
+        return jsonify({'started': False, 'message': 'Une reconstruction est déjà en cours.'}), 409
+
     def _do_rebuild():
-        logger.info("Rebuild base embeddings demandé via UI...")
-        face_recognizer.rebuild_database()
-        with state.lock:
-            state.total_known = len(face_recognizer.known_names)
-        logger.info("Rebuild terminé : %d entrée(s)", state.total_known)
+        try:
+            logger.info("Rebuild base embeddings demandé via UI...")
+            face_recognizer.rebuild_database()
+            with state.lock:
+                state.total_known = len(face_recognizer.known_names)
+            logger.info("Rebuild terminé : %d entrée(s)", state.total_known)
+        finally:
+            _rebuild_lock.release()
 
     threading.Thread(target=_do_rebuild, daemon=True).start()
     return jsonify({'started': True, 'message': 'Reconstruction lancée en arrière-plan.'}), 202

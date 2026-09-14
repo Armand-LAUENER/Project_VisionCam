@@ -120,13 +120,20 @@ class FaceRecognizer:
         logger.info("%d entrée(s) chargée(s) depuis le cache", len(self.known_names))
 
     def _build_database(self):
-        """Parcourt known_faces/ et calcule l'embedding moyen par personne."""
+        """Parcourt known_faces/ et calcule l'embedding moyen par personne.
+
+        La nouvelle base est construite à part puis remplace l'ancienne d'un
+        seul coup sous _lock : pendant un rebuild, la reconnaissance continue
+        de lire l'ancienne base complète au lieu d'une base vide ou partielle.
+        """
         logger.info("Construction de la base depuis : %s", self.known_faces_dir)
-        self.known_embeddings = []
-        self.known_names = []
+        known_embeddings = []
+        known_names = []
 
         if not os.path.exists(self.known_faces_dir):
             os.makedirs(self.known_faces_dir, exist_ok=True)
+            with self._lock:
+                self.known_embeddings, self.known_names = known_embeddings, known_names
             logger.warning("Dossier known_faces vide, aucune personne enregistrée.")
             return
 
@@ -147,12 +154,14 @@ class FaceRecognizer:
             if embeddings:
                 avg = np.mean(embeddings, axis=0)
                 avg = avg / np.linalg.norm(avg)
-                self.known_embeddings.append(avg)
-                self.known_names.append(person_name)
+                known_embeddings.append(avg)
+                known_names.append(person_name)
                 logger.debug("OK %s : %d image(s) traitée(s)", person_name, len(embeddings))
             else:
                 logger.warning("SKIP %s : aucun embedding valide", person_name)
 
+        with self._lock:
+            self.known_embeddings, self.known_names = known_embeddings, known_names
         self._save_cache()
         logger.info("Base construite : %d entrée(s)", len(self.known_names))
 
