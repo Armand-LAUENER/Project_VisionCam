@@ -167,7 +167,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `USE_LOCAL_CAM` | `True` | Webcam locale si `True`, caméra IP sinon |
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
 | `FLASK_PORT` | `5000` | Port du serveur Flask |
-| `RECOGNITION_THRESHOLD` | `0.65` | Seuil cosinus min pour identifier (0–1) |
+| `RECOGNITION_THRESHOLD` | `0.45` | Similarité cosinus min pour identifier (0–1, plus haut = plus strict) |
 | `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames |
 | `FACE_FRESHNESS_FRAMES` | `30` | Frames avant passage en mode orange [BODY] |
 | `POSE_NOSE_CONF_THRESHOLD` | `0.5` | Confiance minimale d'un keypoint facial |

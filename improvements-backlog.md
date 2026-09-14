@@ -87,7 +87,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   filme de loin. Annoter quelques minutes de vidéo webcam pour régler les
   seuils sur le cas réel.
 
-- [ ] **`RECOGNITION_THRESHOLD` incohérent**
+- [x] **`RECOGNITION_THRESHOLD` incohérent**
   Le README annonce 0.65, `config.py` vaut 0.45, et le commentaire « plus bas =
   plus strict » est faux en similarité cosinus (c'est l'inverse).
 

@@ -56,8 +56,9 @@ ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 # (1280, 1280): détection longue distance, mais ~4x plus lent — éviter en temps réel.
 INSIGHTFACE_DET_SIZE = (640, 640)
 
-# Seuil cosinus minimum pour valider un match (plus bas = plus strict).
-# Typique : 0.45 (strict) — 0.65 (permissif).
+# Similarité cosinus minimale pour valider un match (0.0–1.0).
+# Plus HAUT = plus strict : _identify teste `score >= seuil`.
+# Repères mesurés : voir .env.example.
 RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.45"))
 
 
