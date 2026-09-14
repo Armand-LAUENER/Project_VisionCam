@@ -97,6 +97,7 @@ VisionCam/
 │   ├── face_recognition.py   # FaceRecognizer — InsightFace + enrôlement
 │   ├── face_body_tracker.py  # FaceBodyTracker — orchestrateur YOLO+DeepSORT
 │   ├── tracker_backends.py   # Association : deep_sort_realtime ou deepsort-rs
+│   ├── appearance_embedder.py # Embeddings d'apparence MobileNetV2 (PyTorch / TensorRT)
 │   ├── pose_from_keypoints.py # KeypointPoseEstimator — orientation depuis YOLO
 │   └── pose_estimation.py    # PoseEstimator — MediaPipe
 │
@@ -104,6 +105,8 @@ VisionCam/
 │   ├── bench_tracker.py      # Compare les deux backends (parité + vitesse)
 │   ├── bench_pose.py         # Compare les deux sources d'orientation
 │   ├── bench_yolo.py         # Compare des variantes du modèle YOLO (.pt, TensorRT)
+│   ├── bench_embedder.py     # Compare les embedders d'apparence (vitesse, fidélité)
+│   ├── export_embedder_engine.py # Construit le moteur TensorRT de l'embedder
 │   ├── eval_mot.py           # MOTA / IDF1 sur MOT17, balayage des seuils
 │   ├── pose_threshold_study.py # Choix de POSE_MIN_SHOULDER_DIST_PX
 │   └── webcam_bridge.py      # Webcam Windows → flux MJPEG pour WSL2
@@ -118,6 +121,7 @@ VisionCam/
 ├── tests/                   # Aucun test ne demande de GPU ni de caméra
 │   ├── test_face_body_association.py      # Association visage ↔ corps
 │   ├── test_tracker_backends.py           # Bascule de backend + adaptateur Rust
+│   ├── test_appearance_embedder.py        # Embedder identique à deep_sort_realtime
 │   ├── test_face_recognition_cache.py     # Robustesse du cache d'embeddings
 │   ├── test_identify.py                   # Recherche du meilleur match
 │   ├── test_pose_from_keypoints.py        # Orientation depuis les keypoints
@@ -184,6 +188,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `POSE_NOSE_CONF_THRESHOLD` | `0.5` | Confiance minimale d'un keypoint facial |
 | `POSE_FACE_KP_MIN_VISIBLE` | `1` | Keypoints visibles min pour utiliser le centroïde |
 | `YOLO_MODEL` | `yolov8s-pose.pt` | Modèle YOLO (auto-téléchargé), ou `yolov8s-pose.engine` (TensorRT) |
+| `DEEPSORT_EMBEDDER_ENGINE` | vide | Moteur TensorRT de l'embedder ; vide = PyTorch |
 | `DEEPSORT_MAX_AGE` | `70` | Frames avant suppression d'un track perdu |
 | `FRAME_SKIP` | `2` | Cadence de l'estimation d'orientation |
 | `POSE_SOURCE` | `yolo` | Orientation : `yolo` (keypoints, gratuit) ou `mediapipe` |
@@ -193,9 +198,14 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 
 ## Accélération TensorRT (optionnel)
 
-Le modèle YOLOv8-Pose peut tourner en moteur TensorRT FP16 au lieu de
-PyTorch FP32. Le moteur dépend du GPU et de la version de TensorRT qui l'ont
-construit : il n'est pas versionné, chaque machine construit le sien (~4 min).
+Deux réseaux peuvent tourner en moteur TensorRT FP16 : le détecteur
+YOLOv8-Pose et l'embedder d'apparence MobileNetV2 du tracker. Un moteur dépend
+du GPU et de la version de TensorRT qui l'ont construit : il n'est pas
+versionné (`*.engine` est ignoré), chaque machine construit les siens, et les
+reconstruit après une mise à jour de TensorRT ou du pilote. Sans moteur, le
+pipeline tourne en PyTorch.
+
+### YOLOv8-Pose (~4 min de construction)
 
 ```bash
 # TensorRT et onnxslim font partie du groupe cu121, installé par uv sync
@@ -209,7 +219,7 @@ retirer la ligne.
 large, celle qu'utilise PyTorch sur le flux 1920x1080. Un moteur 640x640
 ajoute un padding qui modifie les détections, sans rapport avec le FP16.
 
-### Résultats mesurés
+#### Résultats mesurés
 
 `uv run -m tools.bench_yolo --images <vidéo ou motif> <modèle de référence> <modèles…>`
 mesure l'étape YOLO telle que le pipeline la paie (`predict` + lecture des
@@ -225,8 +235,52 @@ résultats sur le CPU) et compare les sorties à la référence.
 
 RTX 4060, 1920x1080, 30 images de warm-up. `half=True` sur le `.pt`, sans
 TensorRT, est plus lent que FP32 (0,91x) : le gain vient de TensorRT, pas du
-FP16 seul. Ces temps portent sur l'étape YOLO uniquement ; le tracker (embedder
-MobileNetV2) et la reconnaissance faciale restent inchangés.
+FP16 seul. Ces temps portent sur l'étape YOLO uniquement.
+
+### Embedder d'apparence MobileNetV2 (~1 min de construction)
+
+Le tracker calcule un vecteur d'apparence par personne à chaque image
+(`core/appearance_embedder.py`). Même réseau et mêmes poids que
+`deep_sort_realtime`, mais le lot de crops est normalisé sur le GPU en un seul
+transfert, au lieu de crop par crop sur le CPU.
+
+```bash
+uv run -m tools.export_embedder_engine
+```
+
+Puis `DEEPSORT_EMBEDDER_ENGINE=mobilenetv2-embedder.engine` dans `.env`. Sans
+cette ligne, l'embedder tourne en PyTorch FP16 `channels_last`, déjà plus
+rapide que l'embedder d'origine, pour des pistes identiques.
+
+#### Résultats mesurés
+
+Vitesse et fidélité des vecteurs, sur les crops YOLO de MOT17-04 (300 images,
+7,8 crops/image) : `uv run -m tools.bench_embedder --images <…> --engine <moteur>`.
+L'écart compare les distances cosinus entre crops d'une même image à celles de
+la référence ; le gating d'apparence coupe à 0,2.
+
+| Embedder | Médiane | p95 | Gain | Écart de distance (méd. / max) |
+|:---------|--------:|----:|-----:|-------------------------------:|
+| `deep_sort_realtime` (d'origine) | 13,3 ms | 33,6 ms | — | — |
+| PyTorch, prétraitement GPU + `channels_last` | 9,2 ms | 20,5 ms | ×1,45 | 7e-5 / 4e-4 |
+| TensorRT FP16 | **5,0 ms** | **7,0 ms** | **×2,67** | 3e-3 / 2e-2 |
+
+TensorRT déplace un peu les distances : son effet a donc été mesuré sur le
+tracking lui-même, sur les 7 séquences MOT17 FRCNN d'entraînement (5 316
+images, détections publiques, backend `python`, protocole de
+`tools/eval_mot.py`). Temps = étape tracker complète, embedder + association.
+
+| Embedder | MOTA | IDF1 | Changements d'ID | Étape tracker (méd. / p95) |
+|:---------|-----:|-----:|-----------------:|---------------------------:|
+| `deep_sort_realtime` (d'origine) | 21,7 % | 48,1 % | 862 | 22,4 / 54,9 ms |
+| PyTorch (défaut) | 21,7 % | 48,1 % | 866 | 19,1 / 39,7 ms |
+| TensorRT FP16 | **22,1 %** | **48,1 %** | **838** | **13,7 / 34,8 ms** |
+
+Pas de dégradation d'ensemble avec TensorRT. D'une séquence à l'autre, les
+écarts vont dans les deux sens (IDF1 de −2,4 à +0,5 point) : quelques
+associations à la limite du seuil basculent, sans tendance. Le calcul d'une
+image sur deux, l'autre piste envisagée, n'a pas été retenu : il change
+l'algorithme, là où TensorRT garde le même réseau.
 
 ---
 
@@ -243,9 +297,9 @@ existe en deux implémentations interchangeables, choisies par
 
 Seule l'association passe en Rust. La détection (YOLOv8-Pose), la
 reconnaissance faciale (InsightFace) et l'embedder d'apparence
-(MobileNetV2) restent identiques : le backend Rust réutilise l'embedder de
-`deep_sort_realtime` et ses crops, ce qui rend les deux backends comparables
-à l'identique.
+(MobileNetV2) restent identiques : les deux backends reçoivent les vecteurs du
+même embedder (`core/appearance_embedder.py`), calculés sur les mêmes crops,
+ce qui les rend comparables à l'identique.
 
 ### Installation
 
@@ -279,15 +333,17 @@ exemple `--video ~/datasets/MOT17/train/MOT17-04-FRCNN/img1/%06d.jpg`.
 
 | Séquence | Personnes/frame | `python` (méd. / p95) | `rust` (méd. / p95) | Parité |
 |:---------|:----------------|:----------------------|:--------------------|:-------|
-| MOT17-04 | 7,6 (max 12) | 15,5 / 32,4 ms | 17,2 / 34,3 ms (×0,90) | 350/350 frames identiques |
-| MOT17-09 | 7,5 (max 12) | 16,7 / 34,4 ms | 18,6 / 34,5 ms (×0,90) | 350/350 frames identiques |
+| MOT17-04 | 7,5 (max 12) | 8,0 / 11,2 ms | 10,3 / 14,8 ms (×0,78) | 350/350 frames identiques |
+| MOT17-09 | 7,4 (max 12) | 9,1 / 13,2 ms | 10,7 / 16,7 ms (×0,84) | 350/350 frames identiques |
 
-Temps par frame, 50 frames de warm-up, RTX 4060. Les deux colonnes incluent
-l'embedder MobileNetV2, identique de part et d'autre — c'est lui qui domine le
-temps de tracker. Sur l'association seule, le crate mesure ×5,8 à ×20,6 selon
-la densité (cf. son README), mais ce gain ne se retrouve pas sur l'étape
-complète : **en l'état, le backend `python` est le plus rapide**, et reste le
-défaut.
+Temps par frame, 50 frames de warm-up, RTX 4060, YOLO et embedder en
+TensorRT. Les deux colonnes incluent le même embedder sur les mêmes crops. Sur
+l'association seule, le crate mesure ×5,8 à ×20,6 selon la densité (cf. son
+README), mais ce gain ne se retrouve pas sur l'étape complète : côté `rust`,
+elle inclut aussi la conversion des embeddings en float32 et le passage des
+tableaux vers le crate. **Le backend `python` est le plus rapide**, et reste le
+défaut. L'embedder accéléré a creusé l'écart (×0,90 avec l'embedder
+d'origine) : il pesait sur les deux colonnes à la fois.
 
 Les chiffres publiés auparavant (×1,42 et ×1,20 en faveur de `rust`) ont été
 mesurés avant que les outils fixent `OPENBLAS_NUM_THREADS=1`. Les threads
@@ -363,7 +419,7 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 
 ```bash
 uv run pytest tests/
-# 131 tests — 0 GPU requis, ~5 s
+# 144 tests — 0 GPU requis, ~7 s
 uv run ruff check .
 ```
 

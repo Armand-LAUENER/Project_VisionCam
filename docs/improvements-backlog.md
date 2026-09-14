@@ -67,10 +67,13 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   → Mesuré : ×1,8 à ×2,2 en médiane et p95 de ~33 à ~7-8 ms avec un moteur
   384x640 ; un moteur 640x640 change les détections. Cf. README.
 
-- [ ] **Embedder MobileNetV2 du tracker**
+- [x] **Embedder MobileNetV2 du tracker**
   D'après le README, c'est lui qui domine le temps du tracker (déjà en `half=True`).
   Pistes : TensorRT, ou le calculer une frame sur deux quand l'association par
   IoU n'est pas ambiguë (vérifier MOTA/IDF1 avec `tools/eval_mot.py`).
+  → Fait : prétraitement GPU + `channels_last` par défaut (×1,45), moteur
+  TensorRT FP16 en option (×2,67 sur l'embedder, étape tracker 19,1 → 13,7 ms,
+  MOTA/IDF1 non dégradés sur MOT17). Un calcul sur deux images non retenu.
 
 - [x] **`POSE_SOURCE="yolo"` par défaut** — `config.py:121`
   MediaPipe fait une inférence CPU par personne toutes les `FRAME_SKIP`
