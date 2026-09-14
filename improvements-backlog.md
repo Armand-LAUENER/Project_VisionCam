@@ -27,7 +27,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   `state.bench_frame`, l'image brute. Autre problème : s'il y a plusieurs
   personnes à l'écran, c'est le plus grand visage qui est enregistré.
 
-- [ ] **Écriture de fichiers hors du dossier prévu** — `core/face_recognition.py:233`
+- [x] **Écriture de fichiers hors du dossier prévu** — `core/face_recognition.py:233`
   `name` vient du formulaire sans contrôle : `name=../../x` écrit des JPEG en
   dehors de `known_faces/`. Même problème pour `label` (nom de fichier) en
   mode multitemplate.
