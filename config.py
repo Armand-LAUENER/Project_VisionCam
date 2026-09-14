@@ -40,7 +40,11 @@ CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 
 FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
-DEBUG_MODE = False
+
+# Threads du serveur waitress. Chaque onglet ouvert sur /video en occupe un
+# tant qu'il regarde le flux : avec les 4 threads par défaut de waitress,
+# quatre onglets suffisaient à bloquer /status et l'enrôlement.
+SERVER_THREADS = int(os.getenv("SERVER_THREADS", "16"))
 
 
 # =============================================================================

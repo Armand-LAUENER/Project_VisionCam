@@ -19,7 +19,9 @@ Lancer : pytest tests/test_web_routes.py -v
 
 import concurrent.futures
 import sys
+import threading
 import time
+import urllib.request
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -182,6 +184,60 @@ def _next_chunk_after_publish(gen):
             time.sleep(0.01)
         visioncam._publish_display_frame(np.full((8, 8, 3), 200, dtype=np.uint8))
         return future.result(timeout=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Serveur de production (waitress)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestWaitressServer:
+
+    def test_status_answers_while_streams_are_open(self):
+        """
+        Chaque flux /video garde un thread du serveur. Avec les 4 threads par
+        défaut de waitress, quatre onglets bloquaient /status : le nombre de
+        threads configuré doit laisser répondre les autres routes.
+        """
+        from waitress import create_server
+
+        server = create_server(visioncam.app, host="127.0.0.1", port=0,
+                               threads=visioncam.config.SERVER_THREADS)
+        threading.Thread(target=server.run, daemon=True).start()
+        base = f"http://127.0.0.1:{server.effective_port}"
+
+        # Un flux ne remarque la fermeture de son client qu'en lui envoyant
+        # une image : on publie jusqu'à ce que tous les flux soient refermés.
+        publishing = threading.Event()
+        publishing.set()
+
+        def publish():
+            while publishing.is_set():
+                visioncam._publish_display_frame(np.full((48, 64, 3), 128, dtype=np.uint8))
+                time.sleep(0.02)
+
+        threading.Thread(target=publish, daemon=True).start()
+        streams = []
+        try:
+            for _ in range(4):
+                streams.append(urllib.request.urlopen(f"{base}/video", timeout=5))
+            for stream in streams:
+                assert stream.read(64).startswith(b"--frame")
+
+            with urllib.request.urlopen(f"{base}/status", timeout=5) as res:
+                assert res.status == 200
+        finally:
+            for stream in streams:
+                stream.close()
+            deadline = time.monotonic() + 10
+            while visioncam.state.stream_clients > 0 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            publishing.clear()
+            server.close()
+
+        assert visioncam.state.stream_clients == 0
+
+    def test_enough_threads_for_several_viewers(self):
+        assert visioncam.config.SERVER_THREADS >= 8
 
 
 # ─────────────────────────────────────────────────────────────────────────────

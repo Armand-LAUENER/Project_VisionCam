@@ -17,6 +17,7 @@ dependencies = [
     "scipy==1.17.1",
     "setuptools<82",                   # deep-sort-realtime importe pkg_resources, supprimé en 82
     "ultralytics==8.4.39",             # YOLOv8-Pose
+    "waitress>=3.0",
 ]
 
 # torch vient d'un index PyTorch dédié, choisi par groupe (exclusifs) :
