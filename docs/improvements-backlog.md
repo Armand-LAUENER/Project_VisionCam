@@ -91,6 +91,11 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   `tools/eval_mot.py` sait balayer `DEEPSORT_MAX_COSINE_DISTANCE`, mais MOT17
   filme de loin. Annoter quelques minutes de vidéo webcam pour régler les
   seuils sur le cas réel.
+  - [x] Balayage MOT17 avec validation (`tools/sweep_deepsort.py`) : pas de
+    meilleurs seuils, mais les pistes en roue libre sont maintenant masquées
+    (MOTA 21,5 → 44,2 %, IDF1 48,3 → 54,4 % en validation). Cf. README.
+  - [ ] Séquences webcam annotées (`tools/record_sequence.py`,
+    `tools/annotate_sequence.py`) pour trancher sur `cos=0.15` / `n_init=5`.
 
 - [x] **`RECOGNITION_THRESHOLD` incohérent**
   Le README annonce 0.65, `config.py` vaut 0.45, et le commentaire « plus bas =
