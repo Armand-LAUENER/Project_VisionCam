@@ -1,6 +1,7 @@
 import glob
 import logging
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -12,6 +13,16 @@ import config
 from insightface.app import FaceAnalysis
 
 logger = logging.getLogger(__name__)
+
+# Noms de personne et labels de template : ils deviennent des noms de dossier
+# et de fichier sous known_faces/. Lettres (accents compris), chiffres, '_',
+# '-', espace et point, sans point initial : ni séparateur de chemin, ni '..',
+# ni '#' (séparateur nom#label des entrées multitemplate).
+_SAFE_NAME = re.compile(r"[\w-][\w\-. ]{0,63}")
+
+
+def _is_safe_name(value: str) -> bool:
+    return bool(_SAFE_NAME.fullmatch(value))
 
 
 def _flatten_model_dir(name, root="~/.insightface"):
@@ -229,8 +240,16 @@ class FaceRecognizer:
             dir_name : sous-dossier dans known_faces/ (ex: "Armand#Face")
             images   : liste d'images BGR
             prefix   : préfixe du nom de fichier
+
+        Raises:
+            ValueError : le dossier résolu sort de known_faces/. Les méthodes
+                         d'enrôlement valident le nom avant d'arriver ici ; ce
+                         contrôle couvre un appelant qui ne l'aurait pas fait.
         """
-        person_dir = os.path.join(self.known_faces_dir, dir_name)
+        base_dir = os.path.realpath(self.known_faces_dir)
+        person_dir = os.path.realpath(os.path.join(base_dir, dir_name))
+        if os.path.dirname(person_dir) != base_dir:
+            raise ValueError(f"Dossier d'enrôlement hors de known_faces/ : {dir_name!r}")
         os.makedirs(person_dir, exist_ok=True)
         for idx, img in enumerate(images):
             cv2.imwrite(os.path.join(person_dir, f"{prefix}_{idx:03d}.jpg"), img)
@@ -358,6 +377,9 @@ class FaceRecognizer:
         Returns:
             (success: bool, message: str)
         """
+        if not _is_safe_name(name):
+            return False, f"Nom invalide : {name!r}."
+
         embeddings = self._extract_best_embeddings(frames)
         if not embeddings:
             return False, "Aucun visage détecté dans les images fournies."
@@ -404,6 +426,14 @@ class FaceRecognizer:
         Returns:
             (success: bool, message: str)
         """
+        # Tout valider avant la première écriture : un label refusé en cours de
+        # boucle laisserait un enrôlement à moitié fait.
+        if not _is_safe_name(base_name):
+            return False, f"Nom invalide : {base_name!r}."
+        bad_labels = [label for label in frames_dict if not _is_safe_name(label)]
+        if bad_labels:
+            return False, f"Label(s) invalide(s) : {bad_labels!r}."
+
         enrolled_labels = []
 
         for label, frame in frames_dict.items():
