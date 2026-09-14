@@ -19,6 +19,7 @@ Lancer : pytest tests/test_web_routes.py -v
 
 import concurrent.futures
 import io
+import json
 import sys
 import threading
 import time
@@ -263,7 +264,8 @@ class TestWaitressServer:
         assert visioncam.state.stream_clients == 0
 
     def test_enough_threads_for_several_viewers(self):
-        assert visioncam.config.SERVER_THREADS >= 8
+        """Deux connexions longues par onglet (flux vidéo + événements)."""
+        assert visioncam.config.SERVER_THREADS >= 16
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -497,6 +499,83 @@ class TestCaptureApi:
 
         assert res.status_code == 422 and 'rapprochez' in res.get_json()['message']
         _recognizer.enroll_person_average.assert_not_called()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/events et /api/diagnostics — temps réel et diagnostic
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def fresh_bus(monkeypatch):
+    from core.events import EventBus, StageTimer
+
+    bus = EventBus()
+    monkeypatch.setattr(visioncam, 'events', bus)
+    monkeypatch.setattr(visioncam, 'timings', StageTimer())
+    return bus
+
+
+def _sse_messages(chunks, count):
+    """Les `count` premiers messages `data:` d'un flux SSE, décodés."""
+    messages = []
+    for chunk in chunks:
+        text = chunk.decode() if isinstance(chunk, bytes) else chunk
+        messages += [json.loads(line[len('data: '):]) for line in text.splitlines()
+                     if line.startswith('data: ')]
+        if len(messages) >= count:
+            return messages[:count]
+    return messages
+
+
+class TestEventsStream:
+
+    def test_pousse_l_etat_puis_les_evenements(self, client, fresh_bus, monkeypatch):
+        monkeypatch.setattr(visioncam, 'STATUS_PUSH_INTERVAL', 60)
+        res = client.get('/api/events', buffered=False)
+        chunks = iter(res.response)
+        try:
+            assert next(chunks).startswith(b'retry:')
+            (status,) = _sse_messages(chunks, 1)
+            assert status['type'] == 'status' and 'tracks' in status
+            assert fresh_bus.subscriber_count == 1
+
+            visioncam._publish('arrival', name='Armand')
+            (event,) = _sse_messages(chunks, 1)
+            assert event['type'] == 'arrival' and event['name'] == 'Armand' and event['time']
+        finally:
+            res.close()
+
+        assert fresh_bus.subscriber_count == 0
+        assert res.mimetype == 'text/event-stream'
+
+    def test_les_routes_publient_leurs_evenements(self, client, fresh_bus):
+        subscription = fresh_bus.subscribe()
+        _recognizer.rename_person.return_value = ('ok', 'renommé')
+        _recognizer.delete_person.return_value = ('ok', 'supprimé')
+
+        client.post('/api/people/Alice/rename', json={'new_name': 'Alicia'})
+        client.delete('/api/people/Bob')
+
+        received = [subscription.get_nowait() for _ in range(2)]
+        assert [(e['type'], e['name']) for e in received] == [('renamed', 'Alicia'),
+                                                              ('deleted', 'Bob')]
+        assert received[0]['old_name'] == 'Alice'
+
+
+class TestDiagnostics:
+
+    def test_contrat(self, client, fresh_bus):
+        visioncam.timings.record('detection', 0.006)
+
+        data = client.get('/api/diagnostics').get_json()
+
+        assert set(data) == {'uptime_s', 'fps', 'timings', 'gpu', 'models', 'recognition',
+                             'tracking', 'camera', 'clients'}
+        assert data['timings']['detection']['median_ms'] == 6.0
+        assert data['recognition']['min_face_px'] == visioncam.config.RECOGNITION_MIN_FACE_PX
+        assert data['tracking']['n_init'] == visioncam.config.DEEPSORT_N_INIT
+        assert data['clients'] == {'video': 0, 'events': 0}
+        assert data['gpu'] is None or {'name', 'memory_used_mb', 'memory_total_mb'} <= set(data['gpu'])
 
 
 # ─────────────────────────────────────────────────────────────────────────────

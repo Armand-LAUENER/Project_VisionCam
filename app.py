@@ -8,6 +8,7 @@ import os
 # explicite de l'environnement.
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
+import json
 import logging
 import queue
 import statistics
@@ -20,6 +21,7 @@ import numpy as np
 from flask import Flask, Response, abort, jsonify, render_template, request
 
 import config
+from core.events import EventBus, StageTimer, UnknownWatcher
 from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
 from core.pose_estimation import PoseEstimator
@@ -86,6 +88,16 @@ class AppState:
 
 state = AppState()
 presence_log = PresenceLog(config.PRESENCE_DB_PATH, gap=config.PRESENCE_LOG_GAP_S)
+events = EventBus()
+timings = StageTimer()
+unknown_watcher = UnknownWatcher(config.UNKNOWN_ALERT_S)
+STARTED_AT = time.time()
+
+
+def _publish(event_type, **fields):
+    """Diffuse un événement aux pages ouvertes (/api/events)."""
+    events.publish({'type': event_type, 'time': datetime.now().isoformat(timespec='seconds'),
+                    **fields})
 
 # Queue inter-thread caméra → AI. Taille 2 : on garde toujours la frame la plus fraîche.
 _frame_queue: queue.Queue = queue.Queue(maxsize=2)
@@ -283,20 +295,24 @@ def processing_loop():
 
         frame_count += 1
         fps_counter += 1
+        frame_start = time.perf_counter()
         display_frame = frame.copy()
 
         # ── Pipeline Body-First (YOLO + DeepSORT + InsightFace) ──────────────
         try:
             persons_cache = tracker.update(frame, frame_count)
+            for stage, seconds in tracker.last_timings.items():
+                timings.record(stage, seconds)
         except Exception as e:
             logger.error("Erreur traitement : %s: %s", type(e).__name__, e)
 
         # ── Pose estimation (toutes les FRAME_SKIP frames, sur le crop corps) ─
         if frame_count % config.FRAME_SKIP == 0:
-            pose_cache = {
-                p.track_id: _estimate_pose_safe(frame, p)
-                for p in persons_cache
-            }
+            with timings.measure('pose'):
+                pose_cache = {
+                    p.track_id: _estimate_pose_safe(frame, p)
+                    for p in persons_cache
+                }
 
         # ── Dessin + construction de la liste de présence ────────────────────
         now = time.time()
@@ -331,8 +347,13 @@ def processing_loop():
             for event in presence_log.update({p.name for p in persons_cache}, now):
                 logger.info("Présence : %s %s", event['name'],
                             "arrivé(e)" if event['type'] == 'arrival' else "parti(e)")
+                events.publish(event)
         except Exception as e:
             logger.warning("Historique de présence indisponible : %s: %s", type(e).__name__, e)
+
+        # ── Alerte : personne visible restée inconnue ────────────────────────
+        for track_id in unknown_watcher.update([(p.track_id, p.name) for p in persons_cache], now):
+            _publish('unknown', track_id=track_id)
 
         # ── FPS ──────────────────────────────────────────────────────────────
         elapsed = time.time() - fps_time
@@ -349,7 +370,9 @@ def processing_loop():
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 245, 160), 2)
 
         # ── Mise à jour de l'état global ─────────────────────────────────────
-        _publish_display_frame(display_frame)
+        with timings.measure('encode'):
+            _publish_display_frame(display_frame)
+        timings.record('frame', time.perf_counter() - frame_start)
         with state.lock:
             state.currently_present = present_list
             state.fps = current_fps
@@ -473,6 +496,7 @@ def enroll():
         success, message = face_recognizer.enroll_person_multitemplate(name, frames_dict)
 
     if success:
+        _publish('enrolled', name=name)
         with state.lock:
             state.total_known = len(face_recognizer.known_names)
         return jsonify({'success': True, 'message': message,
@@ -519,6 +543,7 @@ def capture():
     success, message = face_recognizer.enroll_person_average(name, [frame])
 
     if success:
+        _publish('enrolled', name=name)
         with state.lock:
             state.total_known = len(face_recognizer.known_names)
         return jsonify({'success': True, 'message': message,
@@ -552,6 +577,7 @@ def rebuild():
             with state.lock:
                 state.total_known = len(face_recognizer.known_names)
             logger.info("Rebuild terminé : %d entrée(s)", state.total_known)
+            _publish('rebuilt', total_known=state.total_known)
         finally:
             _rebuild_lock.release()
 
@@ -616,6 +642,7 @@ def api_rename_person(name):
     status, message = face_recognizer.rename_person(name, new_name)
     if status == 'ok' and new_name != name:
         presence_log.rename(name, new_name)
+        _publish('renamed', name=new_name, old_name=name)
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
 
 
@@ -627,6 +654,7 @@ def api_delete_person(name):
         # Droit à l'effacement : l'historique de présence part avec la personne.
         presence_log.forget(name)
         _refresh_total_known()
+        _publish('deleted', name=name)
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
 
 
@@ -646,6 +674,8 @@ def api_add_photos(name):
     if not images:
         return jsonify({'success': False, 'message': 'Aucune image lisible (champ "images").'}), 400
     success, message = face_recognizer.enroll_person_average(name, images)
+    if success:
+        _publish('enrolled', name=name)
     _refresh_total_known()
     return jsonify({'success': success, 'message': message,
                     'total_known': state.total_known}), 200 if success else 422
@@ -788,19 +818,116 @@ def status():
     `tracks` ne contient que les personnes visibles sur la dernière image, en
     pixels de cette image : la page les superpose au flux pour cliquer dessus.
     """
+    return jsonify(_status_payload())
+
+
+def _status_payload():
     with state.lock:
         poses = {p['track_id']: p['pose'] for p in state.currently_present}
         tracks = [{'track_id': str(p.track_id), 'name': p.name,
                    'bbox': [int(v) for v in p.body_bbox], 'pose': poses.get(p.track_id)}
                   for p in state.bench_persons]
         frame = state.bench_frame
-        return jsonify({
-            'currently_present': state.currently_present,
+        return {
+            'currently_present': list(state.currently_present),
             'fps': state.fps,
             'total_known': state.total_known,
             'tracks': tracks,
             'frame_size': [frame.shape[1], frame.shape[0]] if frame is not None else None,
-        })
+        }
+
+
+# ══════════════════════════════════════════
+# TEMPS RÉEL ET DIAGNOSTIC
+# ══════════════════════════════════════════
+# Période d'envoi de l'état aux pages abonnées à /api/events.
+STATUS_PUSH_INTERVAL = 0.5
+
+
+@app.route('/api/events')
+def api_events():
+    """
+    Server-Sent Events : un message `data: {json}` par événement.
+
+    - { type: "status", ... }  l'état de /status, toutes les STATUS_PUSH_INTERVAL s
+    - { type: "arrival" | "departure", name, time }  historique des présences
+    - { type: "unknown", track_id, time }  personne restée inconnue UNKNOWN_ALERT_S
+    - { type: "enrolled" | "deleted", name, time }, { type: "renamed", name, old_name, time }
+    - { type: "rebuilt", total_known, time }
+
+    Chaque page abonnée garde un thread du serveur (cf. SERVER_THREADS).
+    """
+    def stream():
+        subscription = events.subscribe()
+        try:
+            # Reconnexion automatique du navigateur après 2 s si le flux coupe.
+            yield 'retry: 2000\n\n'
+            next_status = 0.0
+            while state.running:
+                now = time.monotonic()
+                if now >= next_status:
+                    yield f"data: {json.dumps({'type': 'status', **_status_payload()})}\n\n"
+                    next_status = now + STATUS_PUSH_INTERVAL
+                try:
+                    event = subscription.get(timeout=max(0.0, next_status - time.monotonic()))
+                except queue.Empty:
+                    continue
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            events.unsubscribe(subscription)
+
+    return Response(stream(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@app.route('/api/diagnostics')
+def api_diagnostics():
+    """
+    Réponse : { uptime_s, fps, timings: {étape: {median_ms, p95_ms, samples}},
+                gpu: { name, memory_used_mb, memory_total_mb } | null,
+                models: {...}, recognition: {...}, tracking: {...},
+                camera: {...}, clients: { video, events } }
+    """
+    import torch
+
+    gpu = None
+    if torch.cuda.is_available():
+        free, total = torch.cuda.mem_get_info()
+        gpu = {'name': torch.cuda.get_device_name(0),
+               'memory_used_mb': round((total - free) / 2**20),
+               'memory_total_mb': round(total / 2**20)}
+    with state.lock:
+        fps, video_clients = state.fps, state.stream_clients
+        frame = state.bench_frame
+    return jsonify({
+        'uptime_s': round(time.time() - STARTED_AT),
+        'fps': fps,
+        'timings': timings.summary(),
+        'gpu': gpu,
+        'models': {
+            'detector': config.YOLO_MODEL,
+            'appearance_embedder': config.DEEPSORT_EMBEDDER_ENGINE or 'MobileNetV2 PyTorch',
+            'tracker_backend': config.TRACKER_BACKEND,
+            'face_model': config.INSIGHTFACE_MODEL,
+            'pose_source': config.POSE_SOURCE,
+        },
+        'recognition': {
+            'threshold': config.RECOGNITION_THRESHOLD,
+            'min_face_px': config.RECOGNITION_MIN_FACE_PX,
+            'known_entries': state.total_known,
+        },
+        'tracking': {
+            'max_cosine_distance': config.DEEPSORT_MAX_COSINE_DISTANCE,
+            'max_iou_distance': config.DEEPSORT_MAX_IOU_DISTANCE,
+            'max_age': config.DEEPSORT_MAX_AGE,
+            'n_init': config.DEEPSORT_N_INIT,
+        },
+        'camera': {
+            'source': 'webcam' if config.USE_LOCAL_CAM else config.REMOTE_SOURCE,
+            'frame_size': [frame.shape[1], frame.shape[0]] if frame is not None else None,
+        },
+        'clients': {'video': video_clients, 'events': events.subscriber_count},
+    })
 
 
 # ══════════════════════════════════════════
@@ -861,6 +988,8 @@ def api_capture():
         success, message = face_recognizer.enroll_person_average(name, [crop])
     else:
         success, message = face_recognizer.enroll_person_multitemplate(name, {label: crop})
+    if success:
+        _publish('enrolled', name=name)
     _refresh_total_known()
     code = 200 if success else (400 if message.startswith(('Nom invalide', 'Label')) else 422)
     return jsonify({'success': success, 'message': message,

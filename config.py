@@ -41,10 +41,10 @@ CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
-# Threads du serveur waitress. Chaque onglet ouvert sur /video en occupe un
-# tant qu'il regarde le flux : avec les 4 threads par défaut de waitress,
-# quatre onglets suffisaient à bloquer /status et l'enrôlement.
-SERVER_THREADS = int(os.getenv("SERVER_THREADS", "16"))
+# Threads du serveur waitress. Chaque onglet ouvert en garde deux en
+# permanence (flux /video et événements /api/events) : avec les 4 threads par
+# défaut de waitress, quelques onglets bloquaient /status et l'enrôlement.
+SERVER_THREADS = int(os.getenv("SERVER_THREADS", "32"))
 
 
 # =============================================================================
@@ -242,6 +242,11 @@ PRESENCE_TIMEOUT = 5.0
 # PRESENCE_TIMEOUT, pour qu'une courte sortie du champ ne coupe pas la session.
 PRESENCE_DB_PATH = os.path.join(DATA_DIR, "presence.db")
 PRESENCE_LOG_GAP_S = float(os.getenv("PRESENCE_LOG_GAP_S", "60"))
+
+# Délai (s) après lequel une personne visible restée « Inconnu » est signalée
+# aux pages ouvertes (une seule fois par piste). Une piste neuve n'a pas encore
+# eu le temps d'être reconnue : sans délai, chaque arrivée serait une alerte.
+UNKNOWN_ALERT_S = float(os.getenv("UNKNOWN_ALERT_S", "3"))
 
 
 # =============================================================================

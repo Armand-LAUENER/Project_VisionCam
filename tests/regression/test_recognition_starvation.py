@@ -96,6 +96,17 @@ class TestRecognitionStarvation:
         assert all(len(ids) <= 2 for ids in tracker.submitted)
         assert {tid for ids in tracker.submitted for tid in ids} == {1, 2, 3, 4, 5}
 
+    def test_update_records_stage_timings(self):
+        """La page Diagnostic lit ces durées ; la reconnaissance n'y figure que si elle a tourné."""
+        tracker = make_tracker([make_track(1)], known={})
+
+        tracker.update(FRAME, 1)
+        assert set(tracker.last_timings) == {'detection', 'tracking'}
+
+        tracker.update(FRAME, config.FACE_RECOGNITION_SKIP)
+        assert set(tracker.last_timings) == {'detection', 'tracking', 'recognition'}
+        assert all(v >= 0 for v in tracker.last_timings.values())
+
     def test_new_track_goes_before_tracks_already_tried(self):
         tracks = [make_track(1), make_track(2)]
         tracker = make_tracker(tracks, known={})

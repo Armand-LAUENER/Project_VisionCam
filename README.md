@@ -189,7 +189,8 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
 | `FLASK_PORT` | `5000` | Port du serveur HTTP |
 | `PRESENCE_LOG_GAP_S` | `60` | Absence (s) après laquelle une session de présence se ferme |
-| `SERVER_THREADS` | `16` | Threads waitress ; chaque onglet ouvert sur le flux vidéo en garde un |
+| `SERVER_THREADS` | `32` | Threads waitress ; chaque onglet ouvert en garde deux (flux vidéo + événements) |
+| `UNKNOWN_ALERT_S` | `3` | Délai avant de signaler une personne visible restée inconnue |
 | `RECOGNITION_THRESHOLD` | `0.45` | Similarité cosinus min pour identifier (0–1, plus haut = plus strict) |
 | `RECOGNITION_MIN_FACE_PX` | `40` | Taille min d'un visage pour décider d'un nom ; en dessous, la piste garde le sien |
 | `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames |
@@ -511,6 +512,8 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 | `POST` | `/api/people/<nom>/photos` | Ajouter des photos ; l'embedding est recalculé sur toutes |
 | `GET` | `/api/history` | Sessions de présence (`name`, `from`, `to` en AAAA-MM-JJ, `limit`) |
 | `GET` | `/api/history.csv` | Mêmes filtres, export CSV |
+| `GET` | `/api/events` | Server-Sent Events : état toutes les 0,5 s, arrivées, départs, inconnus, enrôlements |
+| `GET` | `/api/diagnostics` | FPS, temps par étape (médiane/p95), GPU, modèles et réglages actifs |
 
 ---
 
