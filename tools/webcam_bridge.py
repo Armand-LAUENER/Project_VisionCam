@@ -8,8 +8,10 @@ WSL2 n'a aucun accès aux périphériques USB — la webcam n'existe que pour
 Windows. Ce pont la lit côté Windows et la rediffuse en HTTP ; l'application
 la consomme ensuite comme une caméra IP via REMOTE_SOURCE dans .env.
 
-La capture tourne dans un thread dédié qui ne conserve que la dernière frame :
-un client lent ne peut donc pas faire accumuler de retard sur la webcam.
+La capture tourne dans un thread dédié qui encode chaque image une seule fois ;
+les clients reçoivent chaque nouvelle image une fois, et un client lent saute
+des images au lieu d'accumuler du retard. La webcam est ouverte en MJPG pour
+limiter la bande passante USB (cf. CameraStream).
 """
 
 import argparse
@@ -27,11 +29,19 @@ BOUNDARY = "visioncam-frame"
 
 
 class CameraStream:
-    """Lecture continue de la webcam dans un thread, dernière frame disponible."""
+    """Lecture continue de la webcam dans un thread ; chaque image est encodée une fois.
 
-    def __init__(self, index, width, height, fps):
-        backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
-        self.cap = cv2.VideoCapture(index, backend)
+    Les clients attendent l'image suivante (wait_jpeg) au lieu de renvoyer la
+    dernière en boucle. Avant, le flux ré-encodait et renvoyait la même image
+    sans pause : 556 images/s envoyées pour 30 réelles, un cœur du processeur
+    Windows occupé en permanence, et une application qui traitait des doublons.
+    """
+
+    def __init__(self, index, width, height, fps, jpeg_quality=80, capture=None):
+        if capture is None:
+            backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+            capture = cv2.VideoCapture(index, backend)
+        self.cap = capture
         if not self.cap.isOpened():
             raise RuntimeError(
                 f"Impossible d'ouvrir la webcam d'index {index}. "
@@ -39,12 +49,18 @@ class CameraStream:
                 f"ou essaie un autre index (--index 1)."
             )
 
+        # MJPG avant la résolution : DirectShow négocie le format à ce moment.
+        # En non compressé, 1280x720 à 30 i/s sature l'USB 2.0 et peut couper
+        # les autres périphériques du même contrôleur (casque, micro).
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.cap.set(cv2.CAP_PROP_FPS, fps)
+        self.jpeg_quality = jpeg_quality
 
-        self._frame = None
-        self._lock = threading.Lock()
+        self._jpeg = None
+        self._seq = 0
+        self._new_frame = threading.Condition()
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -56,6 +72,15 @@ class CameraStream:
             int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
         )
 
+    @property
+    def fourcc(self):
+        code = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        return "".join(chr((code >> 8 * i) & 0xFF) for i in range(4)).strip() or "?"
+
+    @property
+    def running(self):
+        return self._running
+
     def _loop(self):
         failures = 0
         while self._running:
@@ -65,15 +90,26 @@ class CameraStream:
                 if failures >= 30:
                     logger.error("30 lectures consécutives échouées, arrêt de la capture.")
                     self._running = False
+                    with self._new_frame:
+                        self._new_frame.notify_all()
                 continue
 
             failures = 0
-            with self._lock:
-                self._frame = frame
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+            if not ok:
+                continue
+            with self._new_frame:
+                self._jpeg = buf.tobytes()
+                self._seq += 1
+                self._new_frame.notify_all()
 
-    def read(self):
-        with self._lock:
-            return None if self._frame is None else self._frame.copy()
+    def wait_jpeg(self, last_seq, timeout=2.0):
+        """(numéro, JPEG) de la première image plus récente que last_seq, ou (last_seq, None)."""
+        with self._new_frame:
+            self._new_frame.wait_for(lambda: self._seq != last_seq or not self._running, timeout)
+            if self._seq == last_seq:
+                return last_seq, None
+            return self._seq, self._jpeg
 
     def stop(self):
         self._running = False
@@ -85,15 +121,10 @@ class MJPEGHandler(BaseHTTPRequestHandler):
     """Sert /video (flux MJPEG), /snapshot (une image) et / (page de test)."""
 
     camera = None
-    jpeg_quality = 80
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
         logger.debug("%s - %s", self.client_address[0], fmt % args)
-
-    def _encode(self, frame):
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
-        return buf.tobytes() if ok else None
 
     def do_GET(self):
         if self.path.startswith("/video"):
@@ -118,12 +149,10 @@ class MJPEGHandler(BaseHTTPRequestHandler):
         self.wfile.write(page)
 
     def _serve_snapshot(self):
-        frame = self.camera.read()
-        if frame is None:
+        _, jpeg = self.camera.wait_jpeg(last_seq=-1)
+        if jpeg is None:
             self.send_error(503, "Aucune frame disponible")
             return
-
-        jpeg = self._encode(frame)
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Content-Length", str(len(jpeg)))
@@ -139,16 +168,13 @@ class MJPEGHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         logger.info("Client connecté : %s", self.client_address[0])
+        seq = 0
         try:
-            while True:
-                frame = self.camera.read()
-                if frame is None:
-                    continue
-
-                jpeg = self._encode(frame)
+            while self.camera.running:
+                # Attend une image nouvelle : jamais deux fois la même.
+                seq, jpeg = self.camera.wait_jpeg(seq)
                 if jpeg is None:
                     continue
-
                 self.wfile.write(f"--{BOUNDARY}\r\n".encode())
                 self.wfile.write(b"Content-Type: image/jpeg\r\n")
                 self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode())
@@ -187,12 +213,12 @@ def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-7s | %(message)s")
 
-    camera = CameraStream(args.index, args.width, args.height, args.fps)
+    camera = CameraStream(args.index, args.width, args.height, args.fps, jpeg_quality=args.quality)
     width, height = camera.resolution
-    logger.info("Webcam %d ouverte en %dx%d", args.index, width, height)
+    logger.info("Webcam %d ouverte en %dx%d, format %s, %.0f i/s demandées par le pilote",
+                args.index, width, height, camera.fourcc, camera.cap.get(cv2.CAP_PROP_FPS))
 
     MJPEGHandler.camera = camera
-    MJPEGHandler.jpeg_quality = args.quality
     server = ThreadingHTTPServer((args.host, args.port), MJPEGHandler)
     server.daemon_threads = True
 
