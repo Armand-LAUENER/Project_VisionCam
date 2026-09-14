@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 import threading
+from types import SimpleNamespace
 import cv2
 import numpy as np
 import pickle
@@ -295,6 +296,42 @@ class FaceRecognizer:
             })
 
         return results
+
+    def recognize_center_face(self, crop: np.ndarray) -> dict | None:
+        """
+        Reconnaît uniquement le visage le plus proche du centre d'un crop de tête.
+
+        Le crop est centré sur les keypoints faciaux d'un track : son visage est
+        celui du centre. Dans une scène dense, le crop attrape aussi les visages
+        des voisins (jusqu'à 5 par paire de crops mesurés sur MOT17). Les
+        reconnaître coûtait ~10 ms chacun, et leur nom était attribué au track
+        du crop — un voisin connu pouvait ainsi prêter son identité au mauvais
+        corps. Tous les visages sont détectés, un seul est reconnu.
+
+        Returns:
+            { 'bbox': [x1,y1,x2,y2], 'name': str, 'confidence': float,
+              'embedding': np.ndarray }, ou None si aucun visage.
+        """
+        bboxes, kpss = self.app.det_model.detect(crop, max_num=0, metric='default')
+        if bboxes.shape[0] == 0 or kpss is None:
+            return None
+
+        h, w = crop.shape[:2]
+        centers = (bboxes[:, 0:2] + bboxes[:, 2:4]) / 2
+        idx = int(np.argmin(np.sum((centers - (w / 2, h / 2)) ** 2, axis=1)))
+
+        # ArcFaceONNX.get n'utilise que face.kps et renseigne face.embedding.
+        face = SimpleNamespace(kps=kpss[idx], embedding=None)
+        self.app.models['recognition'].get(crop, face)
+
+        x1, y1, x2, y2 = [int(v) for v in bboxes[idx, 0:4]]
+        name, confidence = self._identify(face.embedding)
+        return {
+            'bbox': [max(0, x1), max(0, y1), min(w, x2), min(h, y2)],
+            'name': name,
+            'confidence': confidence,
+            'embedding': face.embedding,
+        }
 
     # =========================================================================
     # ENRÔLEMENT — Méthode 1 : Averaging L2 (plusieurs photos, même angle)
