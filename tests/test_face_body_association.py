@@ -391,7 +391,7 @@ class TestHeadCropGeometry:
         import numpy as np
 
         crops = []
-        tracker.face_recognizer.detect_and_recognize = lambda crop: crops.append(crop) or []
+        tracker.face_recognizer.recognize_center_face = lambda crop: crops.append(crop)
         frame = np.zeros((*frame_size, 3), dtype=np.uint8)
         tracker._recognize_faces_for_tracks(frame, [track])
         return crops[0] if crops else None

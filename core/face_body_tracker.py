@@ -347,19 +347,24 @@ class FaceBodyTracker:
             head_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
 
             try:
-                crop_faces = self.face_recognizer.detect_and_recognize(head_crop)
+                # Un seul visage par crop : celui du centre, qui est celui du
+                # track. Les visages voisins attrapés par le crop ne doivent
+                # pas recevoir son source_track_id.
+                face = self.face_recognizer.recognize_center_face(head_crop)
             except Exception as e:
                 logger.warning("InsightFace erreur track #%s : %s: %s",
                                track.track_id, type(e).__name__, e)
                 continue
 
-            for face in crop_faces:
-                fx1, fy1, fx2, fy2 = face['bbox']
-                # Remettre les coordonnées du crop à l'échelle de l'image globale
-                face['bbox'] = [fx1 + crop_x1, fy1 + crop_y1, fx2 + crop_x1, fy2 + crop_y1]
-                # Association directe : on sait déjà à quel track ce visage appartient
-                face['source_track_id'] = track.track_id
-                all_faces.append(face)
+            if face is None:
+                continue
+
+            fx1, fy1, fx2, fy2 = face['bbox']
+            # Remettre les coordonnées du crop à l'échelle de l'image globale
+            face['bbox'] = [fx1 + crop_x1, fy1 + crop_y1, fx2 + crop_x1, fy2 + crop_y1]
+            # Association directe : on sait déjà à quel track ce visage appartient
+            face['source_track_id'] = track.track_id
+            all_faces.append(face)
 
         return all_faces
 
