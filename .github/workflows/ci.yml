@@ -27,5 +27,9 @@ jobs:
       - name: Lint
         run: uv run --no-sync ruff check .
 
+      # tests/ui : Chromium headless à la version attendue par playwright (uv.lock).
+      - name: Install browser for UI tests
+        run: uv run --no-sync playwright install --with-deps --only-shell chromium
+
       - name: Test
         run: uv run --no-sync pytest tests/ -q

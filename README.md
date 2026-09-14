@@ -142,6 +142,7 @@ VisionCam/
 │   ├── test_eval_mot.py                   # Outil MOTA / IDF1
 │   ├── test_web_routes.py                 # Page, routes Flask, flux MJPEG
 │   ├── test_annotate_sequence.py          # Logique d'annotation, formats MOT
+│   ├── ui/test_browser.py                 # Pages dans Chromium headless (Playwright)
 │   └── regression/                        # Un fichier par bug corrigé
 │
 ├── known_faces/             # Non inclus (RGPD) — voir section Enrôlement
@@ -566,10 +567,13 @@ Sans session, une page redirige vers `/login` et l'API répond 401. Après 5 éc
 ## Tests
 
 ```bash
+uv run playwright install --only-shell chromium   # une fois, pour tests/ui
 uv run pytest tests/
-# 160 tests — 0 GPU requis, ~5 s
+# 284 tests — 0 GPU requis, ~15 s
 uv run ruff check .
 ```
+
+`tests/ui` ouvre les pages dans Chromium headless : erreurs JavaScript, capture par clic, renommage, historique, affichage sur téléphone. Sans navigateur installé, ces tests sont ignorés en local ; en CI, ils échouent.
 
 ---
 
