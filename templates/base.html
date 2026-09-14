@@ -27,7 +27,7 @@
     {% if not auth_enabled %}
     <div class="banner" role="note">
         Accès non protégé : n'importe qui sur le réseau local peut voir le flux et modifier la base.
-        Définir <span class="mono">ADMIN_PASSWORD_HASH</span> dans <span class="mono">.env</span>.
+        Définir un mot de passe : <span class="mono">uv run python tools/set_password.py</span>.
     </div>
     {% endif %}
 

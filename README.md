@@ -117,6 +117,7 @@ VisionCam/
 │   ├── annotate_sequence.py  # Vérité terrain : pré-remplie, corrigée à la main
 │   ├── convert_chirla.py     # Vidéos CHIRLA → séquences MOT17
 │   ├── pose_threshold_study.py # Choix de POSE_MIN_SHOULDER_DIST_PX
+│   ├── set_password.py       # Mot de passe d'accès → ADMIN_PASSWORD_HASH dans .env
 │   └── webcam_bridge.py      # Webcam Windows → flux MJPEG pour WSL2
 │
 ├── docs/
@@ -507,9 +508,11 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 Définir un mot de passe dans `.env` pour exiger une connexion sur toutes les pages et toute l'API :
 
 ```bash
-uv run python -c "from werkzeug.security import generate_password_hash as h; print(h('mon mot de passe'))"
-# puis dans .env : ADMIN_PASSWORD_HASH=scrypt:32768:8:1$...
+uv run python tools/set_password.py            # saisie masquée, écrit ADMIN_PASSWORD_HASH dans .env
+uv run python tools/set_password.py --remove   # retour à l'accès ouvert
 ```
+
+Seule la ligne `ADMIN_PASSWORD_HASH` est modifiée ; le mot de passe n'apparaît ni à l'écran ni dans l'historique du shell. Redémarrer l'application ensuite.
 
 Sans session, une page redirige vers `/login` et l'API répond 401. Après 5 échecs en 5 minutes depuis une même adresse, les tentatives sont bloquées. Le cookie de session est `HttpOnly` et `SameSite=Lax` ; sa clé de signature est `SECRET_KEY` ou, à défaut, générée au premier lancement dans `data/secret_key`.
 
