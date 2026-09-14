@@ -221,17 +221,26 @@ c'est le seul point de bascule.
 
 `python -m tools.bench_tracker --video <fichier> --frames 400` fait tourner les
 deux backends sur les mêmes détections YOLO, frame par frame, et compare pistes
-et temps.
+et temps. Les séquences MOT17 se passent directement en motif d'images, par
+exemple `--video ~/datasets/MOT17/train/MOT17-04-FRCNN/img1/%06d.jpg`.
 
-| Séquence | Personnes/frame | `python` | `rust` | Parité |
-|:---------|:----------------|:---------|:-------|:-------|
-| MOT17-04 | 3,9 (max 8) | 24,4 ms | 17,2 ms (×1,42) | 350/350 frames identiques |
-| MOT17-09 | 6,1 (max 10) | 31,1 ms | 25,9 ms (×1,20) | 350/350 frames identiques |
+| Séquence | Personnes/frame | `python` (méd. / p95) | `rust` (méd. / p95) | Parité |
+|:---------|:----------------|:----------------------|:--------------------|:-------|
+| MOT17-04 | 7,6 (max 12) | 15,5 / 32,4 ms | 17,2 / 34,3 ms (×0,90) | 350/350 frames identiques |
+| MOT17-09 | 7,5 (max 12) | 16,7 / 34,4 ms | 18,6 / 34,5 ms (×0,90) | 350/350 frames identiques |
 
-Médianes par frame, 50 frames de warm-up. Les deux colonnes incluent
+Temps par frame, 50 frames de warm-up, RTX 4060. Les deux colonnes incluent
 l'embedder MobileNetV2, identique de part et d'autre — c'est lui qui domine le
-temps de tracker, et donc lui qui borne le gain visible ici. Sur l'association
-seule, le crate mesure ×5,8 à ×20,6 selon la densité (cf. son README).
+temps de tracker. Sur l'association seule, le crate mesure ×5,8 à ×20,6 selon
+la densité (cf. son README), mais ce gain ne se retrouve pas sur l'étape
+complète : **en l'état, le backend `python` est le plus rapide**, et reste le
+défaut.
+
+Les chiffres publiés auparavant (×1,42 et ×1,20 en faveur de `rust`) ont été
+mesurés avant que les outils fixent `OPENBLAS_NUM_THREADS=1`. Les threads
+OpenBLAS se disputaient alors le CPU avec torch et ralentissaient surtout le
+backend `python`, qui fait son association en numpy : sa médiane passait à
+21,9 / 29,5 ms et son p95 à 83 / 98 ms sur ces mêmes séquences.
 
 « Parité » = mêmes `track_id` et mêmes boîtes à 1e-3 px, pistes tentatives
 comprises.
