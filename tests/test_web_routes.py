@@ -20,6 +20,7 @@ Lancer : pytest tests/test_web_routes.py -v
 import sys
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +154,39 @@ class TestCapture:
         """Caméra déconnectée : 503, pas un 500."""
         res = client.post('/capture', data={'name': 'Armand'})
         assert res.status_code == 503
+
+    def test_enrole_depuis_la_frame_brute(self, client):
+        """
+        Non-régression : l'enrôlement partait du JPEG streamé, avec les boîtes
+        et les textes dessinés dessus. Il doit partir de la frame brute.
+        """
+        raw = np.full((48, 64, 3), 7, dtype=np.uint8)
+        with visioncam.state.lock:
+            visioncam.state.bench_frame = raw
+            visioncam.state.bench_persons = [MagicMock()]
+            visioncam.state.current_frame = b'jpeg annote'
+        _recognizer.enroll_person_average.reset_mock()
+        _recognizer.enroll_person_average.return_value = (True, 'ok')
+
+        res = client.post('/capture', data={'name': 'Armand'})
+
+        assert res.status_code == 200
+        (name, frames), _ = _recognizer.enroll_person_average.call_args
+        assert name == 'Armand'
+        assert len(frames) == 1 and np.array_equal(frames[0], raw)
+
+    def test_plusieurs_personnes_refuse(self, client):
+        """Deux personnes à l'écran : on ne devine pas laquelle enrôler."""
+        with visioncam.state.lock:
+            visioncam.state.bench_frame = np.zeros((48, 64, 3), dtype=np.uint8)
+            visioncam.state.bench_persons = [MagicMock(), MagicMock()]
+        _recognizer.enroll_person_average.reset_mock()
+
+        res = client.post('/capture', data={'name': 'Armand'})
+
+        assert res.status_code == 409
+        assert res.get_json()['success'] is False
+        _recognizer.enroll_person_average.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -439,21 +439,28 @@ def capture():
         200 { success: true,  message: str, total_known: int }
         400 { success: false, message: str }
         503 { success: false, message: str }  ← pas de frame disponible
+        409 { success: false, message: str }  ← plusieurs personnes à l'écran
         422 { success: false, message: str }  ← aucun visage détecté
     """
     name = request.form.get('name', '').strip()
     if not name:
         return jsonify({'success': False, 'message': 'Champ "name" manquant ou vide.'}), 400
 
+    # Frame brute, pas le JPEG streamé : celui-ci porte les boîtes et les
+    # textes dessinés, et a perdu du détail à la compression.
     with state.lock:
-        frame_bytes = state.current_frame
+        frame = state.bench_frame
+        person_count = len(state.bench_persons)
 
-    if not frame_bytes:
+    if frame is None:
         return jsonify({'success': False, 'message': 'Aucune frame disponible (caméra déconnectée ?)'}), 503
 
-    # Décoder le JPEG actuellement streamé pour en extraire le visage
-    buf = np.frombuffer(frame_bytes, dtype=np.uint8)
-    frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    # L'enrôlement garde le plus grand visage : avec plusieurs personnes, rien
+    # ne garantit que c'est celle qui a donné son nom.
+    if person_count > 1:
+        return jsonify({'success': False,
+                        'message': f'{person_count} personnes à l\'écran : '
+                                   'une seule doit être visible pour la capture.'}), 409
 
     success, message = face_recognizer.enroll_person_average(name, [frame])
 
