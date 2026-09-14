@@ -59,6 +59,11 @@ def main() -> int:
         print(f"{KEY} retiré de {args.env}. Redémarrer l'application.")
         return 0
 
+    if not sys.stdin.isatty():
+        # getpass retomberait sur une saisie en clair, ou échouerait sans terminal.
+        print("Pas de terminal interactif : lancer cette commande dans un vrai terminal "
+              "(pas via un pipe ni le préfixe « ! » de Claude Code).", file=sys.stderr)
+        return 1
     password = getpass.getpass("Nouveau mot de passe : ")
     if len(password) < MIN_LENGTH:
         print(f"Trop court : {MIN_LENGTH} caractères minimum.", file=sys.stderr)
