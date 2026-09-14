@@ -13,7 +13,7 @@
   - Centroïde des keypoints faciaux visibles (nez, yeux, oreilles)
   - Résistant aux lunettes et aux occlusions partielles
   - Fallback automatique sur la bbox corps si aucun keypoint visible
-- **Estimation de pose** — MediaPipe (debout / assis / allongé / autre)
+- **Orientation** — face / profil / dos, depuis les keypoints YOLO déjà calculés (défaut) ou MediaPipe
 - **Tracking par corps** — identité maintenue même quand le visage disparaît
 - **Enrôlement à chaud** — ajout de personnes sans redémarrer l'application
 - **Streaming MJPEG** — flux annoté en direct dans le navigateur
@@ -44,7 +44,7 @@
        │      ├─ centroïde keypoints visibles (lunettes ✓)  │
        │      └─ fallback body-top si dos tourné            │
        │   4. Vote buffer   → anti-flip identité            │
-       │   5. PoseEstimator → 4 classes MediaPipe           │
+       │   5. Orientation   → keypoints YOLO ou MediaPipe   │
        └────────────┬───────────────────────────────────────┘
                     ▼
        ┌────────────────────┐     ┌──────────────────────────┐
@@ -77,7 +77,7 @@
 | Reconnaissance faciale | InsightFace (antelopev2) + ONNX Runtime GPU | 0.7.3 |
 | Détection corps | YOLOv8-Pose (ultralytics) | 8.4 |
 | Tracking | DeepSORT + ReID MobileNet GPU | 1.3.2 |
-| Pose estimation | MediaPipe | 0.10 |
+| Orientation (option) | MediaPipe | 0.10 |
 | Traitement image | OpenCV | 4.13 |
 | GPU | PyTorch CUDA 12.1 | 2.5.1 |
 
@@ -96,21 +96,29 @@ VisionCam/
 │   ├── face_recognition.py   # FaceRecognizer — InsightFace + enrôlement
 │   ├── face_body_tracker.py  # FaceBodyTracker — orchestrateur YOLO+DeepSORT
 │   ├── tracker_backends.py   # Association : deep_sort_realtime ou deepsort-rs
-│   └── pose_estimation.py    # PoseEstimator — MediaPipe 4 classes
+│   ├── pose_from_keypoints.py # KeypointPoseEstimator — orientation depuis YOLO
+│   └── pose_estimation.py    # PoseEstimator — MediaPipe
 │
 ├── tools/
 │   ├── bench_tracker.py      # Compare les deux backends (parité + vitesse)
-│   └── bench_pose.py         # Compare les deux sources d'orientation
+│   ├── bench_pose.py         # Compare les deux sources d'orientation
+│   ├── eval_mot.py           # MOTA / IDF1 sur MOT17, balayage des seuils
+│   ├── pose_threshold_study.py # Choix de POSE_MIN_SHOULDER_DIST_PX
+│   └── webcam_bridge.py      # Webcam Windows → flux MJPEG pour WSL2
 │
 ├── templates/
 │   └── index.html           # UI : stream + liste de présence
 │
-├── tests/
-│   ├── test_face_body_association.py      # 18 tests géométriques (0 GPU)
+├── tests/                   # Aucun test ne demande de GPU ni de caméra
+│   ├── test_face_body_association.py      # Association visage ↔ corps
 │   ├── test_tracker_backends.py           # Bascule de backend + adaptateur Rust
 │   ├── test_face_recognition_cache.py     # Robustesse du cache d'embeddings
-│   └── regression/
-│       └── test_pose_exposed_in_status.py # Tests régression pose
+│   ├── test_identify.py                   # Recherche du meilleur match
+│   ├── test_pose_from_keypoints.py        # Orientation depuis les keypoints
+│   ├── test_pose_keypoint_propagation.py  # Keypoints YOLO → TrackedPerson
+│   ├── test_eval_mot.py                   # Outil MOTA / IDF1
+│   ├── test_web_routes.py                 # Page, routes Flask, flux MJPEG
+│   └── regression/                        # Un fichier par bug corrigé
 │
 ├── known_faces/             # Non inclus (RGPD) — voir section Enrôlement
 └── data/                    # Non inclus — généré au démarrage
@@ -174,7 +182,8 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `POSE_FACE_KP_MIN_VISIBLE` | `1` | Keypoints visibles min pour utiliser le centroïde |
 | `YOLO_MODEL` | `yolov8s-pose.pt` | Modèle YOLO (auto-téléchargé) |
 | `DEEPSORT_MAX_AGE` | `70` | Frames avant suppression d'un track perdu |
-| `FRAME_SKIP` | `2` | Cadence pose estimation |
+| `FRAME_SKIP` | `2` | Cadence de l'estimation d'orientation |
+| `POSE_SOURCE` | `yolo` | Orientation : `yolo` (keypoints, gratuit) ou `mediapipe` |
 | `TRACKER_BACKEND` | `python` | Association de tracks : `python` ou `rust` |
 
 ---
@@ -286,6 +295,8 @@ curl -X POST http://localhost:5000/capture \
 curl -X POST http://localhost:5000/rebuild
 ```
 
+Noms et labels acceptés : lettres (accents compris), chiffres, `_`, `-`, espace et point, sans point initial, 64 caractères max.
+
 Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multitemplate` (un vecteur par angle — plus précis sur les grands changements de pose).
 
 ---
@@ -298,8 +309,9 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 | `GET` | `/video` | Flux MJPEG `multipart/x-mixed-replace` |
 | `GET` | `/status` | `{ currently_present[], fps, total_known }` |
 | `POST` | `/enroll` | Enrôlement depuis fichiers image |
-| `POST` | `/capture` | Enrôlement depuis la frame courante |
-| `POST` | `/rebuild` | Reconstruction base embeddings depuis `known_faces/` |
+| `POST` | `/capture` | Enrôlement depuis la frame courante (409 si plusieurs personnes) |
+| `POST` | `/rebuild` | Reconstruction base embeddings depuis `known_faces/` (409 si déjà en cours) |
+| `POST` | `/bench/pose` | Compare les deux sources d'orientation sur le flux |
 
 ---
 
@@ -307,7 +319,8 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 
 ```bash
 pytest tests/
-# 76 tests — 0 GPU requis, ~0.6 s
+# 131 tests — 0 GPU requis, ~5 s
+ruff check .
 ```
 
 ---

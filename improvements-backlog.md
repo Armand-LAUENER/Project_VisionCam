@@ -93,11 +93,10 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
 
 ## 4. Hygiène du projet
 
-- [ ] **README à jour**
-  Il manque `core/pose_from_keypoints.py`, `tools/eval_mot.py`,
-  `tools/webcam_bridge.py`, `tools/pose_threshold_study.py` et les nouveaux
-  tests dans l'arborescence ; le nombre de tests est à revérifier ;
-  l'installation est encore décrite avec `pip`/`requirements.txt`.
+- [x] **README à jour**
+  Arborescence, nombre de tests, source d'orientation et routes mis à jour.
+  Reste l'installation, encore décrite avec `pip`/`requirements.txt` : à
+  réécrire avec la migration vers uv.
 
 - [ ] **Migration vers uv**
   `pyproject.toml` n'a pas de section `[project]` ; pas de `uv.lock`.
