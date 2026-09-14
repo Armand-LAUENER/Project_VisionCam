@@ -79,6 +79,22 @@ def _embed(embedder, detections: list[tuple], frame: np.ndarray):
     return detections, embedder.predict(crops)
 
 
+def new_deep_sort() -> DeepSort:
+    """deep_sort_realtime réglé par la configuration, sans embedder interne.
+
+    Séparé du backend pour que tools/sweep_deepsort.py rejoue l'association
+    avec exactement ces paramètres, sans recharger d'embedder à chaque essai.
+    """
+    return DeepSort(
+        max_age=config.DEEPSORT_MAX_AGE,
+        n_init=config.DEEPSORT_N_INIT,
+        nn_budget=config.DEEPSORT_NN_BUDGET,
+        max_cosine_distance=config.DEEPSORT_MAX_COSINE_DISTANCE,
+        max_iou_distance=config.DEEPSORT_MAX_IOU_DISTANCE,
+        embedder=None,
+    )
+
+
 class PythonDeepSortBackend:
     """deep_sort_realtime, avec les embeddings calculés en amont."""
 
@@ -87,14 +103,7 @@ class PythonDeepSortBackend:
     def __init__(self) -> None:
         _check_embedder()
         self._embedder = build_embedder()
-        self._tracker = DeepSort(
-            max_age=config.DEEPSORT_MAX_AGE,
-            n_init=config.DEEPSORT_N_INIT,
-            nn_budget=config.DEEPSORT_NN_BUDGET,
-            max_cosine_distance=config.DEEPSORT_MAX_COSINE_DISTANCE,
-            max_iou_distance=config.DEEPSORT_MAX_IOU_DISTANCE,
-            embedder=None,
-        )
+        self._tracker = new_deep_sort()
 
     def update(self, detections: list[tuple], frame: np.ndarray) -> list[TrackLike]:
         detections, embeddings = _embed(self._embedder, detections, frame)
