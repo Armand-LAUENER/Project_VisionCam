@@ -126,8 +126,10 @@ def bootstrap(seq_dir) -> list[Row]:
     from core.tracker_backends import new_deep_sort
     from tools import eval_mot
 
-    # n_init=1 : une personne doit être annotée dès sa première détection,
-    # pas seulement une fois sa piste confirmée.
+    # Toute piste détectée sur l'image est gardée, confirmée ou non : une
+    # personne doit être annotée dès sa première détection. deep_sort_realtime
+    # ne confirme une piste qu'à la mise à jour qui suit sa création, même
+    # avec n_init=1.
     config.DEEPSORT_N_INIT = 1
     tracker = new_deep_sort()
     embedder = build_embedder()
@@ -140,7 +142,7 @@ def bootstrap(seq_dir) -> list[Row]:
             image = cv2.imread(os.path.join(seq_dir, "img1", f"{frame:06d}.jpg"))
             embeds = list(embedder.predict(DeepSort.crop_bb(image, dets)[0]))
         for t in tracker.update_tracks(dets, embeds=embeds):
-            if t.is_confirmed() and t.time_since_update == 0:
+            if t.time_since_update == 0:
                 x1, y1, x2, y2 = (float(v) for v in t.to_ltrb(orig=True))
                 rows.append([frame, int(t.track_id), x1 + 1, y1 + 1, x2 - x1, y2 - y1])
     return rows
