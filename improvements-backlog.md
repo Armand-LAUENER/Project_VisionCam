@@ -41,7 +41,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   → Construire la nouvelle base à part puis la remplacer d'un coup sous
   `_lock`, et refuser une reconstruction si une autre est déjà en cours.
 
-- [ ] **Commentaire contraire au code** — `core/face_body_tracker.py:8-9`
+- [x] **Commentaire contraire au code** — `core/face_body_tracker.py:8-9`
   Il annonce un « skip automatique si nez absent », mais le code retombe sur
   un crop en haut du corps et lance quand même la détection de visage.
   → Soit sauter vraiment ce cas (économise des appels GPU inutiles sur les

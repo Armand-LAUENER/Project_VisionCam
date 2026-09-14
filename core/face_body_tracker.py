@@ -5,8 +5,9 @@ Architecture :
   1. YOLOv8-Pose → détection corps + keypoints squelette COCO (17 pts)
   2. DeepSORT    → tracking corps + ReID apparence (chaque frame)
                    Les keypoints sont transmis via `others` du tuple DeepSORT.
-  3. InsightFace → crop dynamique centré sur le Nez (keypoint 0)
-                   Skip automatique si nez non visible (dos tourné → gain FPS).
+  3. InsightFace → crop dynamique centré sur les keypoints faciaux visibles
+                   (COCO 0-4). Sans aucun keypoint visible, le crop retombe
+                   sur le haut de la bbox corps : InsightFace tourne quand même.
   4. Association → face_center ↔ nose_keypoint (proximité euclidienne)
   5. Persistance → identity_map[track_id] conserve le nom même sans visage visible
 """
@@ -304,13 +305,16 @@ class FaceBodyTracker:
             tracks_to_recognize: list,
     ) -> list[dict]:
         """
-        Pour chaque track, extrait le keypoint Nez depuis track.others et découpe
-        un carré dynamique centré sur ce point pour InsightFace.
+        Pour chaque track, découpe un carré centré sur le centroïde des
+        keypoints faciaux visibles (_face_kps_map) et le soumet à InsightFace.
 
         Avantages vs. crop "60% supérieur" :
           - Fonctionne quelle que soit la distance à la caméra.
-          - Skip automatique si nez absent (dos tourné) → gain FPS immédiat.
           - Crop plus petit et plus précis → InsightFace plus rapide.
+
+        Sans keypoint facial visible (dos tourné, très loin, occulté), le crop
+        est centré sur le haut de la bbox corps. Ce cas n'est pas sauté : un
+        visage petit ou lointain que YOLO ne repère pas reste reconnaissable.
 
         Returns:
             Liste de visages détectés avec bbox remises aux coordonnées globales
