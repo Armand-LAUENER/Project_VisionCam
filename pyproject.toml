@@ -1,3 +1,68 @@
+[project]
+name = "visioncam"
+version = "0.1.0"
+description = "Real-time face recognition and body tracking on a video stream, served over Flask."
+readme = "README.md"
+requires-python = "==3.11.*"
+dependencies = [
+    "deep-sort-realtime==1.3.2",       # DeepSORT + ReID apparence
+    "flask==3.1.3",
+    "insightface==0.7.3",
+    "mediapipe==0.10.21",              # POSE_SOURCE=mediapipe ; impose numpy<2
+    "numpy==1.26.4",
+    "onnxruntime-gpu==1.24.4",         # retombe sur le CPU sans GPU (CI)
+    "opencv-python==4.11.0.86",        # dernière version compatible numpy 1.x
+    "python-dotenv==1.2.2",
+    "scikit-learn==1.8.0",
+    "scipy==1.17.1",
+    "setuptools<82",                   # deep-sort-realtime importe pkg_resources, supprimé en 82
+    "ultralytics==8.4.39",             # YOLOv8-Pose
+]
+
+# torch vient d'un index PyTorch dédié, choisi par groupe (exclusifs) :
+#   uv sync                                    → cu121 + rust + dev (poste GPU)
+#   uv sync --no-group cu121 --group cpu       → torch CPU (CI, machine sans GPU)
+# Des groupes plutôt que des extras : uv run resynchronise l'environnement et
+# retirerait un extra non redemandé, alors que les groupes par défaut restent.
+[dependency-groups]
+cu121 = ["torch==2.5.1", "torchvision==0.20.1"]
+cpu = ["torch==2.5.1", "torchvision==0.20.1"]
+# TRACKER_BACKEND=rust. Pas sur PyPI : construit depuis git, il faut cargo.
+rust = ["deepsort-rs"]
+dev = [
+    "motmetrics==1.4.0",               # tools/eval_mot.py uniquement
+    "mypy",
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+default-groups = ["cu121", "rust", "dev"]
+conflicts = [[{ group = "cu121" }, { group = "cpu" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu121", group = "cu121" },
+    { index = "pytorch-cpu", group = "cpu" },
+]
+torchvision = [
+    { index = "pytorch-cu121", group = "cu121" },
+    { index = "pytorch-cpu", group = "cpu" },
+]
+deepsort-rs = { git = "https://github.com/Armand-LAUENER/deepsort-rs", rev = "8dfd2b337f8cf1f92c9465345dc62844eddc5246" }
+
+# explicit : seuls torch et torchvision sont cherchés sur ces index, jamais
+# les autres paquets (contrairement à --extra-index-url).
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
