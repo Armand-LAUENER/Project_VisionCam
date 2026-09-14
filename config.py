@@ -6,6 +6,7 @@ ne doit être hardcodée ailleurs (ni dans app.py, ni dans core/).
 """
 
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()  # Charge .env sans écraser les variables d'environnement système

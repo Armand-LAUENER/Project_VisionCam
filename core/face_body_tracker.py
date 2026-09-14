@@ -17,11 +17,9 @@ from __future__ import annotations
 import itertools
 import logging
 import math
+from collections import deque
 
 import numpy as np
-from collections import deque
-from typing import Optional
-
 from ultralytics import YOLO
 
 import config
@@ -187,8 +185,8 @@ class FaceBodyTracker:
                 dx, dy, dw, dh = det_bbox
                 dx2, dy2 = dx + dw, dy + dh
 
-                ix1 = max(tx1, dx);  iy1 = max(ty1, dy)
-                ix2 = min(tx2, dx2); iy2 = min(ty2, dy2)
+                ix1, iy1 = max(tx1, dx), max(ty1, dy)
+                ix2, iy2 = min(tx2, dx2), min(ty2, dy2)
                 inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
                 if inter == 0.0:
                     continue
@@ -462,7 +460,7 @@ class FaceBodyTracker:
             self,
             face_bbox: list[int],
             active_tracks: list,
-    ) -> Optional[int]:
+    ) -> int | None:
         """
         Fallback d'association : retourne le track dont le nez est le plus proche
         du centre de la bbox du visage.

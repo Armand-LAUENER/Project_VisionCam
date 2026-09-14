@@ -5,13 +5,14 @@ import re
 import shutil
 import tempfile
 import threading
-from types import SimpleNamespace
 import zipfile
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
-import config
 from insightface.app import FaceAnalysis
+
+import config
 
 logger = logging.getLogger(__name__)
 

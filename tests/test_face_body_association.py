@@ -15,11 +15,11 @@ Lancer : pytest tests/test_face_body_association.py -v
 """
 
 import sys
+from unittest.mock import MagicMock
+
 import pytest
 
 import config
-from unittest.mock import MagicMock
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Injection des dépendances lourdes dans sys.modules avant tout import
@@ -41,7 +41,6 @@ if 'core.face_body_tracker' in sys.modules:
     del sys.modules['core.face_body_tracker']
 
 from core.face_body_tracker import FaceBodyTracker  # noqa: E402
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -306,7 +305,6 @@ class TestFaceFreshness:
 
     def test_last_face_frame_minus_one_when_no_identity(self, tracker_no_gpu):
         """Track sans identité → TrackedPerson.last_face_frame == -1 (sentinelle)."""
-        from core.face_body_tracker import TrackedPerson
         track = make_track(track_id=99, ltrb=[0, 0, 100, 200])
 
         results = tracker_no_gpu._build_results([track])
