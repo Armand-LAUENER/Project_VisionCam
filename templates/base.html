@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}VisionCam{% endblock %} — VisionCam</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body data-page="{{ page }}">
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('index') }}">Vision<span>Cam</span></a>
+        <nav class="nav" aria-label="Navigation principale">
+            <a href="{{ url_for('index') }}" {% if page == 'live' %}aria-current="page"{% endif %}>Live</a>
+            <a href="{{ url_for('people_page') }}" {% if page == 'people' %}aria-current="page"{% endif %}>Personnes</a>
+            <a href="{{ url_for('history_page') }}" {% if page == 'history' %}aria-current="page"{% endif %}>Historique</a>
+            <a href="{{ url_for('diagnostics_page') }}" {% if page == 'diagnostics' %}aria-current="page"{% endif %}>Diagnostic</a>
+        </nav>
+        <span class="spacer"></span>
+        <span id="livePill" class="live-pill" role="status" aria-live="polite">Hors ligne</span>
+        <button id="notifyBtn" class="small hide-mobile" type="button" title="Notifications du navigateur (arrivées, inconnus)">Alertes</button>
+        {% if auth_enabled %}
+        <form method="post" action="{{ url_for('logout') }}">
+            <button class="small" type="submit">Déconnexion</button>
+        </form>
+        {% endif %}
+    </header>
+    {% if not auth_enabled %}
+    <div class="banner" role="note">
+        Accès non protégé : n'importe qui sur le réseau local peut voir le flux et modifier la base.
+        Définir <span class="mono">ADMIN_PASSWORD_HASH</span> dans <span class="mono">.env</span>.
+    </div>
+    {% endif %}
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

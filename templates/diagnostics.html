@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Diagnostic{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>Diagnostic</h1>
+        <p class="muted" id="diagSummary" style="margin: 4px 0 0;"></p>
+    </div>
+</div>
+
+<div class="diag-grid">
+    <section class="panel">
+        <h2>Temps par étape</h2>
+        <p class="muted" style="margin: 0 0 8px; font-size: .85rem;">Médiane et 95e centile sur les dernières images.</p>
+        <div id="timings"></div>
+    </section>
+
+    <section class="panel">
+        <h2>Matériel et modèles</h2>
+        <dl class="kv" id="hardware"></dl>
+    </section>
+
+    <section class="panel">
+        <h2>Réglages</h2>
+        <dl class="kv" id="settings"></dl>
+    </section>
+
+    <section class="panel">
+        <h2>Comparer les sources d'orientation</h2>
+        <p class="muted" style="margin: 0 0 12px; font-size: .85rem;">
+            Mesure Mediapipe et keypoints YOLO sur les personnes à l'écran. Restez dans le champ pendant la mesure.
+        </p>
+        <form id="benchForm" class="row">
+            <div class="field">
+                <label for="benchSamples">Échantillons</label>
+                <input id="benchSamples" name="samples" type="number" min="5" max="200" value="30" style="width: 100px;">
+            </div>
+            <button type="submit" id="benchBtn" class="primary">Lancer la mesure</button>
+        </form>
+        <dl class="kv" id="benchResult" style="margin-top: 12px;"></dl>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/diagnostics.js') }}"></script>
+{% endblock %}

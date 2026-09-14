@@ -318,7 +318,9 @@ def processing_loop():
         frame_count += 1
         fps_counter += 1
         frame_start = time.perf_counter()
-        display_frame = frame.copy()
+        # Sans annotations, la frame brute part telle quelle dans le flux : ni
+        # copie ni dessin (l'interface web dessine ses boîtes elle-même).
+        display_frame = frame.copy() if config.MJPEG_ANNOTATE else frame
 
         # ── Pipeline Body-First (YOLO + DeepSORT + InsightFace) ──────────────
         try:
@@ -343,7 +345,8 @@ def processing_loop():
 
         for person in persons_cache:
             pose = pose_cache.get(person.track_id)
-            _draw_person(display_frame, person, pose, frame_count)
+            if config.MJPEG_ANNOTATE:
+                _draw_person(display_frame, person, pose, frame_count)
             entry = {
                 'name': person.name,
                 'track_id': person.track_id,
@@ -386,10 +389,11 @@ def processing_loop():
         else:
             current_fps = state.fps
 
-        cv2.putText(display_frame, f"FPS: {current_fps:.1f}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 212, 255), 2)
-        cv2.putText(display_frame, f"Personnes: {len(present_list)}",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 245, 160), 2)
+        if config.MJPEG_ANNOTATE:
+            cv2.putText(display_frame, f"FPS: {current_fps:.1f}",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 212, 255), 2)
+            cv2.putText(display_frame, f"Personnes: {len(present_list)}",
+                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 245, 160), 2)
 
         # ── Mise à jour de l'état global ─────────────────────────────────────
         with timings.measure('encode'):
@@ -551,7 +555,26 @@ def logout():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return _page('live.html', 'live')
+
+
+def _page(template, page):
+    return render_template(template, page=page, auth_enabled=auth_enabled())
+
+
+@app.route('/people')
+def people_page():
+    return _page('people.html', 'people')
+
+
+@app.route('/history')
+def history_page():
+    return _page('history.html', 'history')
+
+
+@app.route('/diagnostics')
+def diagnostics_page():
+    return _page('diagnostics.html', 'diagnostics')
 
 
 @app.route('/video')

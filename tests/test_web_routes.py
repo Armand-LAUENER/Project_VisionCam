@@ -20,6 +20,8 @@ Lancer : pytest tests/test_web_routes.py -v
 import concurrent.futures
 import io
 import json
+import pathlib
+import re
 import sys
 import threading
 import time
@@ -92,37 +94,66 @@ def reset_state():
 # La page HTML
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestPageHTML:
+PAGES = {'/': 'live', '/people': 'people', '/history': 'history', '/diagnostics': 'diagnostics'}
+STATIC_JS = pathlib.Path(visioncam.__file__).parent / 'static' / 'js'
 
-    def test_la_page_se_rend(self, client):
-        res = client.get('/')
-        assert res.status_code == 200
-        assert res.mimetype == 'text/html'
+
+def _ids_used_by(script):
+    return set(re.findall(r"getElementById\('([^']+)'\)", (STATIC_JS / script).read_text()))
+
+
+class TestPages:
+
+    @pytest.mark.parametrize("path, page", PAGES.items())
+    def test_chaque_page_se_rend_avec_son_module(self, client, path, page):
+        res = client.get(path)
+
+        assert res.status_code == 200 and res.mimetype == 'text/html'
+        html = res.data.decode()
+        assert f'src="/static/js/{page}.js"' in html and 'type="module"' in html
+        assert f'href="{path}" aria-current="page"' in html
+
+    @pytest.mark.parametrize("path, page", PAGES.items())
+    def test_chaque_id_utilise_par_le_js_existe(self, client, path, page):
+        """Un id renommé dans le HTML casse la page sans erreur visible côté serveur."""
+        html = client.get(path).data.decode()
+        ids = set(re.findall(r'id="([^"]+)"', html))
+
+        missing = (_ids_used_by(f'{page}.js') | _ids_used_by('common.js')) - ids
+        assert not missing, f"ids absents de {path} : {sorted(missing)}"
+
+    @pytest.mark.parametrize("path", [*PAGES, '/login'])
+    def test_aucune_ressource_externe(self, client, monkeypatch, path):
+        """L'interface doit fonctionner hors ligne, sur un réseau local sans internet."""
+        if path == '/login':
+            monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD', 'x')
+        html = client.get(path).data.decode()
+
+        assert not re.search(r'(src|href)="(https?:)?//', html)
+
+    def test_les_fichiers_statiques_sont_servis(self, client):
+        assert client.get('/static/css/app.css').mimetype == 'text/css'
+        for script in STATIC_JS.glob('*.js'):
+            res = client.get(f'/static/js/{script.name}')
+            assert res.status_code == 200 and 'javascript' in res.mimetype
 
     def test_le_flux_video_est_reference(self, client):
         """Sans cette source, la page s'affiche mais reste noire."""
-        assert b'/video' in client.get('/').data
+        assert 'src="/video"' in client.get('/').data.decode()
 
-    def test_les_conteneurs_dynamiques_sont_presents(self, client):
-        """Chaque id est manipulé par le JS ; en supprimer un casse la page en silence."""
-        html = client.get('/').data
-        for element_id in (b'presentList', b'eventLog', b'statusText',
-                           b'benchBtn', b'benchResult', b'benchSamples'):
-            assert b'id="' + element_id + b'"' in html
+    def test_bandeau_quand_l_acces_n_est_pas_protege(self, client, monkeypatch):
+        assert 'Accès non protégé' in client.get('/').data.decode()
 
-    def test_le_panneau_de_mesure_est_cable(self, client):
-        html = client.get('/').data
-        assert b'runPoseBench()' in html          # le bouton appelle bien la fonction
-        assert b'function runPoseBench' in html   # et la fonction est définie
-
-    def test_le_js_est_dans_le_script_principal(self, client):
-        """
-        Non-régression : runPoseBench doit vivre dans le script du corps de page,
-        pas dans le bloc de configuration Tailwind de l'en-tête.
-        """
+        monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD', 'x')
+        with client.session_transaction() as session:
+            session['authenticated'] = True
         html = client.get('/').data.decode()
-        assert html.index('function runPoseBench') > html.index('cdn.tailwindcss.com')
-        assert html.index('function runPoseBench') > html.rindex('<body')
+        assert 'Accès non protégé' not in html and 'Déconnexion' in html
+
+    def test_les_noms_ne_sont_jamais_injectes_en_html(self):
+        """Les noms viennent des utilisateurs : textContent/nœuds texte, jamais innerHTML."""
+        for script in STATIC_JS.glob('*.js'):
+            assert 'innerHTML' not in script.read_text(), script.name
 
 
 # ─────────────────────────────────────────────────────────────────────────────
