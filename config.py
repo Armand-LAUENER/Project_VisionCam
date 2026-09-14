@@ -48,8 +48,8 @@ SERVER_THREADS = int(os.getenv("SERVER_THREADS", "32"))
 
 # Accès protégé. Si l'un des deux est défini, toutes les pages et l'API
 # demandent une connexion ; sinon l'accès reste ouvert à tout le réseau local.
-# ADMIN_PASSWORD_HASH (préféré) se génère avec :
-#   uv run python -c "from werkzeug.security import generate_password_hash as h; print(h('mot de passe'))"
+# ADMIN_PASSWORD_HASH (préféré) s'écrit dans .env avec :
+#   uv run python tools/set_password.py
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 # Clé de signature des cookies de session. Vide : générée au premier lancement
