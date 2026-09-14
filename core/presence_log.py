@@ -10,6 +10,10 @@ enregistrées.
 au plus toutes les `flush_interval` secondes. Au démarrage, les sessions
 restées ouvertes par un arrêt brutal sont fermées à leur dernière heure vue.
 
+Conservation limitée : avec `retention` (secondes), les sessions terminées
+depuis plus longtemps sont supprimées au premier passage, puis au plus une
+fois par `purge_interval`.
+
 Les horodatages sont stockés en secondes epoch et rendus en heure locale.
 """
 
@@ -46,11 +50,15 @@ def _iso(timestamp: float | None) -> str | None:
 
 class PresenceLog:
     def __init__(self, db_path: str, gap: float = 60.0, flush_interval: float = 10.0,
-                 clock=time.time) -> None:
+                 clock=time.time, retention: float | None = None,
+                 purge_interval: float = 3600.0) -> None:
         self.db_path = db_path
         self.gap = gap
         self.flush_interval = flush_interval
+        self.retention = retention
+        self.purge_interval = purge_interval
         self._clock = clock
+        self._last_purge: float | None = None
         self._lock = threading.Lock()
         self._ready = False
         # { nom: [id de session, dernière vue, dernière vue écrite] }
@@ -86,6 +94,9 @@ class PresenceLog:
     def update(self, names, now: float | None = None) -> list[dict]:
         """Enregistre les noms vus à cet instant ; retourne arrivées et départs."""
         now = self._clock() if now is None else now
+        if self.retention and (self._last_purge is None
+                               or now - self._last_purge >= self.purge_interval):
+            self.purge(now)
         seen = {n for n in names if n and n != UNKNOWN}
         events = []
         with self._lock:
@@ -158,6 +169,26 @@ class PresenceLog:
             finally:
                 conn.close()
             self._open.pop(name, None)
+        return deleted
+
+    def purge(self, now: float | None = None) -> int:
+        """Supprime les sessions terminées depuis plus de `retention` secondes.
+
+        Une session en cours n'est jamais supprimée, même commencée avant la limite.
+        """
+        now = self._clock() if now is None else now
+        with self._lock:
+            self._last_purge = now
+            if not self.retention:
+                return 0
+            conn = self._connect()
+            try:
+                deleted = conn.execute(
+                    "DELETE FROM sessions WHERE departed IS NOT NULL AND departed < ?",
+                    (now - self.retention,)).rowcount
+                conn.commit()
+            finally:
+                conn.close()
         return deleted
 
     # ─────────────────────────────────────────────────────────────────────
