@@ -19,6 +19,12 @@ sont des absences de référence.
 recalculer les inférences.
 """
 
+import os
+
+# Avant numpy : sans ça, les threads OpenBLAS se disputent le CPU avec torch
+# et ralentissent le pipeline (cf. app.py).
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import argparse
 import csv
 import sys

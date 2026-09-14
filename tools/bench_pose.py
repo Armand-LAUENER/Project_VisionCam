@@ -18,6 +18,12 @@ comparaison ne dépend pas d'un aléa de détection entre deux exécutions.
     python tools/bench_pose.py --frames 200
 """
 
+import os
+
+# Avant numpy : sans ça, les threads OpenBLAS se disputent le CPU avec torch
+# et faussent les temps mesurés (cf. app.py).
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import argparse
 import statistics
 import sys

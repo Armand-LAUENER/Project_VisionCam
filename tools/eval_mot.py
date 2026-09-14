@@ -20,9 +20,14 @@ comparables au classement en ligne ; les écarts entre variantes, si — toutes
 passent par le même filtre.
 """
 
+import os
+
+# Avant numpy : sans ça, les threads OpenBLAS se disputent le CPU avec torch
+# et ralentissent l'association (cf. app.py).
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 import argparse
 import configparser
-import os
 import sys
 import time
 
