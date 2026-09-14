@@ -60,6 +60,14 @@ def client():
 
 
 @pytest.fixture(autouse=True)
+def auth_disabled(monkeypatch):
+    """Accès ouvert par défaut, quoi que contienne le .env de la machine."""
+    monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD', '')
+    monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD_HASH', '')
+    visioncam._login_failures.clear()
+
+
+@pytest.fixture(autouse=True)
 def isolated_presence_log(monkeypatch, tmp_path):
     """Jamais la vraie data/presence.db : une base temporaire par test."""
     from core.presence_log import PresenceLog
@@ -115,6 +123,100 @@ class TestPageHTML:
         html = client.get('/').data.decode()
         assert html.index('function runPoseBench') > html.index('cdn.tailwindcss.com')
         assert html.index('function runPoseBench') > html.rindex('<body')
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Accès protégé
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestAuth:
+
+    @pytest.fixture
+    def password(self, monkeypatch):
+        monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD', 'secret-visioncam')
+        return 'secret-visioncam'
+
+    def test_sans_mot_de_passe_l_acces_reste_ouvert(self, client):
+        assert client.get('/status').status_code == 200
+        assert client.get('/login').status_code == 302
+
+    def test_page_redirige_vers_la_connexion(self, client, password):
+        res = client.get('/?tab=live', headers={'Accept': 'text/html'})
+
+        assert res.status_code == 302
+        assert res.headers['Location'].startswith('/login?next=')
+
+    @pytest.mark.parametrize("method, path", [
+        ('get', '/status'), ('get', '/video'), ('get', '/api/people'), ('get', '/api/events'),
+        ('get', '/api/history.csv'), ('delete', '/api/people/Alice'), ('post', '/api/capture'),
+        ('post', '/enroll'), ('post', '/rebuild'),
+    ])
+    def test_api_repond_401_sans_session(self, client, password, method, path):
+        res = getattr(client, method)(path, headers={'Accept': 'text/html'})
+
+        assert res.status_code == 401
+        assert res.get_json()['success'] is False
+
+    def test_connexion_puis_deconnexion(self, client, password):
+        res = client.post('/login?next=/api/people', data={'password': password})
+        assert res.status_code == 302 and res.headers['Location'] == '/api/people'
+        assert client.get('/status').status_code == 200
+
+        client.post('/logout')
+
+        assert client.get('/status').status_code == 401
+
+    def test_mauvais_mot_de_passe(self, client, password):
+        res = client.post('/login', data={'password': 'faux'})
+
+        assert res.status_code == 401
+        assert 'incorrect' in res.data.decode()
+        assert client.get('/status').status_code == 401
+
+    def test_hash_prefere_au_mot_de_passe_en_clair(self, client, monkeypatch):
+        from werkzeug.security import generate_password_hash
+
+        monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD_HASH', generate_password_hash('haché'))
+        monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD', 'clair')
+
+        assert client.post('/login', data={'password': 'clair'}).status_code == 401
+        assert client.post('/login', data={'password': 'haché'}).status_code == 302
+
+    def test_blocage_apres_trop_d_echecs(self, client, password, monkeypatch):
+        monkeypatch.setattr(visioncam.config, 'LOGIN_MAX_FAILURES', 3)
+        for _ in range(3):
+            client.post('/login', data={'password': 'faux'})
+
+        res = client.post('/login', data={'password': password})
+
+        assert res.status_code == 429
+        assert client.get('/status').status_code == 401
+
+    @pytest.mark.parametrize("target", ['https://evil.example', '//evil.example', '/\\evil.example'])
+    def test_pas_de_redirection_vers_un_autre_site(self, client, password, target):
+        res = client.post('/login', query_string={'next': target}, data={'password': password})
+
+        assert res.status_code == 302 and res.headers['Location'] == '/'
+
+    def test_cookie_de_session_protege(self, client, password):
+        res = client.post('/login', data={'password': password})
+
+        cookie = res.headers['Set-Cookie']
+        assert 'HttpOnly' in cookie and 'SameSite=Lax' in cookie
+
+    def test_cle_de_session_conservee_sur_disque(self, monkeypatch, tmp_path):
+        path = tmp_path / 'data' / 'secret_key'
+        monkeypatch.setattr(visioncam.config, 'SECRET_KEY', '')
+        monkeypatch.setattr(visioncam.config, 'SECRET_KEY_PATH', str(path))
+        monkeypatch.setattr(visioncam.app, 'secret_key', 'cle-en-memoire')
+
+        visioncam._persist_secret_key()
+        assert path.read_text() == 'cle-en-memoire'
+        assert oct(path.stat().st_mode & 0o777) == '0o600'
+
+        monkeypatch.setattr(visioncam.app, 'secret_key', 'autre')
+        visioncam._persist_secret_key()
+        assert visioncam.app.secret_key == 'cle-en-memoire'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -569,7 +671,7 @@ class TestDiagnostics:
 
         data = client.get('/api/diagnostics').get_json()
 
-        assert set(data) == {'uptime_s', 'fps', 'timings', 'gpu', 'models', 'recognition',
+        assert set(data) == {'auth_enabled', 'uptime_s', 'fps', 'timings', 'gpu', 'models', 'recognition',
                              'tracking', 'camera', 'clients'}
         assert data['timings']['detection']['median_ms'] == 6.0
         assert data['recognition']['min_face_px'] == visioncam.config.RECOGNITION_MIN_FACE_PX

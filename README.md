@@ -189,6 +189,8 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
 | `FLASK_PORT` | `5000` | Port du serveur HTTP |
 | `PRESENCE_LOG_GAP_S` | `60` | Absence (s) après laquelle une session de présence se ferme |
+| `ADMIN_PASSWORD_HASH` / `ADMIN_PASSWORD` | vide | Mot de passe exigé pour tout l'accès ; vide = accès ouvert au réseau local |
+| `SESSION_DAYS` | `7` | Durée d'une session de connexion |
 | `SERVER_THREADS` | `32` | Threads waitress ; chaque onglet ouvert en garde deux (flux vidéo + événements) |
 | `UNKNOWN_ALERT_S` | `3` | Délai avant de signaler une personne visible restée inconnue |
 | `RECOGNITION_THRESHOLD` | `0.45` | Similarité cosinus min pour identifier (0–1, plus haut = plus strict) |
@@ -493,11 +495,26 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 
 ---
 
+## Accès protégé
+
+Définir un mot de passe dans `.env` pour exiger une connexion sur toutes les pages et toute l'API :
+
+```bash
+uv run python -c "from werkzeug.security import generate_password_hash as h; print(h('mon mot de passe'))"
+# puis dans .env : ADMIN_PASSWORD_HASH=scrypt:32768:8:1$...
+```
+
+Sans session, une page redirige vers `/login` et l'API répond 401. Après 5 échecs en 5 minutes depuis une même adresse, les tentatives sont bloquées. Le cookie de session est `HttpOnly` et `SameSite=Lax` ; sa clé de signature est `SECRET_KEY` ou, à défaut, générée au premier lancement dans `data/secret_key`.
+
+---
+
 ## Endpoints API
 
 | Méthode | Chemin | Description |
 |:--------|:-------|:------------|
 | `GET` | `/` | Interface web (stream + liste de présence) |
+| `GET` `POST` | `/login` | Connexion, si un mot de passe est configuré |
+| `POST` | `/logout` | Déconnexion |
 | `GET` | `/video` | Flux MJPEG `multipart/x-mixed-replace` |
 | `GET` | `/status` | `{ currently_present[], fps, total_known, tracks[], frame_size }` — `tracks` : boîtes des personnes visibles |
 | `POST` | `/api/capture` | Enrôle la personne cliquée (`{name, track_id, label?}`), label `Face`/`ProfilG`/`ProfilD` en mode guidé |
@@ -531,7 +548,7 @@ uv run ruff check .
 
 - La reconnaissance est optimale avec 3-5 photos minimum par personne, prises sous angles variés
 - DeepSORT peut inverser des IDs lors de croisements serrés (corrigé au frame suivant par la reconnaissance)
-- Pas d'authentification sur les endpoints — conçu pour usage en LAN uniquement
+- Sans `ADMIN_PASSWORD_HASH` ni `ADMIN_PASSWORD`, l'accès est ouvert à tout le réseau local (un avertissement s'affiche au démarrage). Le serveur parle HTTP : sur un réseau non maîtrisé, le placer derrière un proxy HTTPS
 - CPU fallback disponible mais déconseillé en temps réel (InsightFace seul : ~200 ms/face)
 
 ---

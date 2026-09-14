@@ -46,6 +46,21 @@ FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 # défaut de waitress, quelques onglets bloquaient /status et l'enrôlement.
 SERVER_THREADS = int(os.getenv("SERVER_THREADS", "32"))
 
+# Accès protégé. Si l'un des deux est défini, toutes les pages et l'API
+# demandent une connexion ; sinon l'accès reste ouvert à tout le réseau local.
+# ADMIN_PASSWORD_HASH (préféré) se génère avec :
+#   uv run python -c "from werkzeug.security import generate_password_hash as h; print(h('mot de passe'))"
+ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+# Clé de signature des cookies de session. Vide : générée au premier lancement
+# et conservée dans data/secret_key, pour que les sessions survivent à un redémarrage.
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+SECRET_KEY_PATH = os.path.join(DATA_DIR, "secret_key")
+SESSION_DAYS = int(os.getenv("SESSION_DAYS", "7"))
+# Tentatives de connexion échouées tolérées par adresse avant blocage temporaire.
+LOGIN_MAX_FAILURES = 5
+LOGIN_FAILURE_WINDOW_S = 300
+
 
 # =============================================================================
 # INSIGHTFACE (reconnaissance faciale)

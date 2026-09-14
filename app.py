@@ -8,17 +8,31 @@ import os
 # explicite de l'environnement.
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
+import hmac
 import json
 import logging
 import queue
+import secrets
 import statistics
 import threading
 import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
 import cv2
 import numpy as np
-from flask import Flask, Response, abort, jsonify, render_template, request
+from flask import (
+    Flask,
+    Response,
+    abort,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from werkzeug.security import check_password_hash
 
 import config
 from core.events import EventBus, StageTimer, UnknownWatcher
@@ -36,6 +50,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+# Clé en mémoire par défaut : _persist_secret_key() la remplace au lancement
+# réel, sans que l'import (les tests) n'écrive quoi que ce soit sur disque.
+app.secret_key = config.SECRET_KEY or secrets.token_hex(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=config.SESSION_DAYS),
+)
 
 # ══════════════════════════════════════════
 # INITIALISATION DES MODULES
@@ -435,6 +457,96 @@ def generate_frames():
         # Déconnexion du navigateur : Flask ferme le générateur.
         with state.lock:
             state.stream_clients -= 1
+
+
+# ══════════════════════════════════════════
+# ACCÈS PROTÉGÉ
+# ══════════════════════════════════════════
+# Échecs de connexion récents par adresse : { ip: deque[horodatages] }.
+_login_failures: dict = defaultdict(deque)
+_login_failures_lock = threading.Lock()
+# Accessibles sans session : la page de connexion et ses ressources.
+_PUBLIC_ENDPOINTS = {'login', 'logout', 'static'}
+
+
+def auth_enabled():
+    return bool(config.ADMIN_PASSWORD_HASH or config.ADMIN_PASSWORD)
+
+
+def _password_ok(candidate):
+    if config.ADMIN_PASSWORD_HASH:
+        return check_password_hash(config.ADMIN_PASSWORD_HASH, candidate)
+    return hmac.compare_digest(candidate.encode(), config.ADMIN_PASSWORD.encode())
+
+
+def _safe_next(target):
+    """Chemin interne uniquement : pas de redirection vers un autre site."""
+    if target and target.startswith('/') and not target.startswith('//') and '\\' not in target:
+        return target
+    return url_for('index')
+
+
+def _persist_secret_key():
+    """Clé de session stable entre deux lancements (data/secret_key, droits 600)."""
+    if config.SECRET_KEY:
+        return
+    path = config.SECRET_KEY_PATH
+    if os.path.exists(path):
+        with open(path) as f:
+            app.secret_key = f.read().strip()
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(app.secret_key)
+
+
+@app.before_request
+def require_login():
+    if not auth_enabled() or session.get('authenticated') or request.endpoint in _PUBLIC_ENDPOINTS:
+        return None
+    wants_page = request.method == 'GET' and request.accept_mimetypes.accept_html \
+        and not request.path.startswith(('/api/', '/status', '/video'))
+    if wants_page:
+        return redirect(url_for('login', next=request.full_path.rstrip('?')))
+    return jsonify({'success': False, 'message': 'Connexion requise.'}), 401
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if not auth_enabled():
+        return redirect(url_for('index'))
+    error, status_code = None, 200
+    if request.method == 'POST':
+        ip = request.remote_addr or '?'
+        now = time.time()
+        with _login_failures_lock:
+            failures = _login_failures[ip]
+            while failures and now - failures[0] > config.LOGIN_FAILURE_WINDOW_S:
+                failures.popleft()
+            blocked = len(failures) >= config.LOGIN_MAX_FAILURES
+        if blocked:
+            error, status_code = 'Trop de tentatives : réessayez dans quelques minutes.', 429
+        elif _password_ok(request.form.get('password', '')):
+            with _login_failures_lock:
+                _login_failures.pop(ip, None)
+            session.clear()
+            session.permanent = True
+            session['authenticated'] = True
+            logger.info("Connexion réussie depuis %s", ip)
+            return redirect(_safe_next(request.args.get('next')))
+        else:
+            with _login_failures_lock:
+                _login_failures[ip].append(now)
+            logger.warning("Échec de connexion depuis %s", ip)
+            error, status_code = 'Mot de passe incorrect.', 401
+    return render_template('login.html', error=error), status_code
+
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return redirect(url_for('login') if auth_enabled() else url_for('index'))
 
 
 @app.route('/')
@@ -900,6 +1012,7 @@ def api_diagnostics():
         fps, video_clients = state.fps, state.stream_clients
         frame = state.bench_frame
     return jsonify({
+        'auth_enabled': auth_enabled(),
         'uptime_s': round(time.time() - STARTED_AT),
         'fps': fps,
         'timings': timings.summary(),
@@ -1053,6 +1166,10 @@ if __name__ == '__main__':
     process_thread = threading.Thread(target=processing_loop, daemon=True)
     camera_thread.start()
     process_thread.start()
+    _persist_secret_key()
+    if not auth_enabled():
+        logger.warning("Accès NON protégé : définir ADMIN_PASSWORD_HASH ou ADMIN_PASSWORD "
+                       "dans .env pour exiger une connexion.")
     logger.info("Démarrage sur http://%s:%d (waitress, %d threads)",
                 config.FLASK_HOST, config.FLASK_PORT, config.SERVER_THREADS)
 
