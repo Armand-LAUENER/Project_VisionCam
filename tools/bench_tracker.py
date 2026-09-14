@@ -184,12 +184,14 @@ def main():
     if len(medians) == 2:
         python_ms, rust_ms = (medians[n] * 1e3 for n in backends)
         print(
-            f"\n  Gain sur l'étape tracker : {python_ms:.3f} ms → {rust_ms:.3f} ms"
-            f"  ({python_ms - rust_ms:+.3f} ms, ×{python_ms / rust_ms:.2f})"
+            f"\n  Étape tracker, python → rust : {python_ms:.3f} ms → {rust_ms:.3f} ms"
+            f"  ({python_ms - rust_ms:+.3f} ms gagnés, ×{python_ms / rust_ms:.2f})"
         )
         print(
-            "  Les deux chiffres incluent l'embedder MobileNetV2, identique de part\n"
-            "  et d'autre : l'écart mesuré vient entièrement de l'association."
+            "  Les deux chiffres incluent le même embedder MobileNetV2 sur les mêmes\n"
+            "  crops. L'écart ne mesure pas pour autant l'association seule : côté\n"
+            "  rust, il inclut aussi la conversion des embeddings en float32 et le\n"
+            "  passage des tableaux vers le crate."
         )
 
 
