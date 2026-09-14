@@ -419,6 +419,10 @@ class FaceBodyTracker:
                 continue
 
             fx1, fy1, fx2, fy2 = face['bbox']
+            # Trop petit, l'embedding ne sépare plus les personnes : mieux vaut
+            # ne rien décider que risquer un mauvais nom (cf. config).
+            if min(fx2 - fx1, fy2 - fy1) < config.RECOGNITION_MIN_FACE_PX:
+                continue
             # Remettre les coordonnées du crop à l'échelle de l'image globale
             face['bbox'] = [fx1 + crop_x1, fy1 + crop_y1, fx2 + crop_x1, fy2 + crop_y1]
             # Association directe : on sait déjà à quel track ce visage appartient

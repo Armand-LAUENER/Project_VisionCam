@@ -62,8 +62,17 @@ INSIGHTFACE_DET_SIZE = (640, 640)
 
 # Similarité cosinus minimale pour valider un match (0.0–1.0).
 # Plus HAUT = plus strict : _identify teste `score >= seuil`.
-# Repères mesurés : voir .env.example.
+# Mesuré avec tools/recognition_threshold_study.py sur CHIRLA (enrôlement en
+# juin-juillet, reconnaissance en décembre) : sur les visages d'au moins 40 px,
+# aucun mauvais nom entre 0,45 et 0,75, et 96 % de bons noms à 0,45 au-delà de
+# 56 px. Les erreurs viennent des petits visages, d'où le seuil suivant.
 RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.45"))
+
+# Taille minimale (côté le plus court, px) d'un visage pour décider d'un nom.
+# Même étude, seuil 0,45 : 1,7 % de mauvais noms sur tous les visages (35 px
+# en médiane), 0,0 % dès 40 px. Un visage plus petit ne change pas le nom de
+# la piste, qui reste celui qu'elle avait.
+RECOGNITION_MIN_FACE_PX = int(os.getenv("RECOGNITION_MIN_FACE_PX", "40"))
 
 
 # =============================================================================

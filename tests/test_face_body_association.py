@@ -315,6 +315,32 @@ class TestIdentityUpdateStrategy:
 # Tests : logique de fraîcheur du visage (FACE_FRESHNESS_FRAMES)
 # ─────────────────────────────────────────────────────────────────────────────
 
+class TestMinimumFaceSize:
+    """
+    Un visage trop petit ne doit décider d'aucun nom : sur CHIRLA, 1,7 % de
+    mauvais noms sur des visages de 35 px, aucun dès 40 px (cf. config).
+    """
+
+    @staticmethod
+    def run(tracker, face_side):
+        track = make_track(track_id=1, ltrb=[100, 50, 300, 450])
+        tracker._face_kps_map[1] = [(200.0, 100.0, 0.9)] * 5
+        tracker.face_recognizer.recognize_center_face.return_value = {
+            'name': 'Armand', 'confidence': 0.9, 'bbox': [10, 10, 10 + face_side, 10 + face_side],
+        }
+        frame = __import__('numpy').zeros((720, 1280, 3), dtype='uint8')
+        return tracker._recognize_faces_for_tracks(frame, [track])
+
+    def test_small_face_is_ignored(self, tracker_no_gpu, monkeypatch):
+        monkeypatch.setattr(config, 'RECOGNITION_MIN_FACE_PX', 40)
+        assert self.run(tracker_no_gpu, face_side=39) == []
+
+    def test_face_at_the_minimum_is_kept(self, tracker_no_gpu, monkeypatch):
+        monkeypatch.setattr(config, 'RECOGNITION_MIN_FACE_PX', 40)
+        faces = self.run(tracker_no_gpu, face_side=40)
+        assert [f['name'] for f in faces] == ['Armand']
+
+
 class TestFaceFreshness:
 
     def test_last_face_frame_updated_on_association(self, tracker_no_gpu):
