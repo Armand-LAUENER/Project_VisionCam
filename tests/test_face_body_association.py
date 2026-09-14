@@ -63,7 +63,7 @@ def make_track(track_id: int, ltrb: list[float],
 def make_face(name: str, confidence: float, bbox: list[int],
               source_track_id: int | None = None) -> dict:
     """
-    Simule un résultat de FaceRecognizer.detect_and_recognize()
+    Simule un résultat de FaceRecognizer.recognize_center_face()
     enrichi par _recognize_faces_for_tracks (source_track_id obligatoire
     pour le chemin nominal d'association directe).
     """
