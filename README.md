@@ -114,7 +114,7 @@ VisionCam/
 │
 ├── known_faces/             # Non inclus (RGPD) — voir section Enrôlement
 └── data/                    # Non inclus — généré au démarrage
-    └── embeddings.pkl       # Cache des embeddings (reconstructible)
+    └── embeddings.npz       # Cache des embeddings (reconstructible)
 ```
 
 ---
@@ -262,7 +262,7 @@ known_faces/
     └── bob.jpg
 ```
 
-Supprimer `data/embeddings.pkl` pour forcer la reconstruction, puis relancer.
+Supprimer `data/embeddings.npz` pour forcer la reconstruction, puis relancer.
 
 ### Option 2 — API REST (à chaud, sans redémarrer)
 

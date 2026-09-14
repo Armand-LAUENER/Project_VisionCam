@@ -6,9 +6,10 @@ import shutil
 import tempfile
 import threading
 from types import SimpleNamespace
+import zipfile
+
 import cv2
 import numpy as np
-import pickle
 import config
 from insightface.app import FaceAnalysis
 
@@ -47,7 +48,7 @@ def _flatten_model_dir(name, root="~/.insightface"):
 
 
 class FaceRecognizer:
-    def __init__(self, known_faces_dir="known_faces", threshold=0.45, cache_path="data/embeddings.pkl"):
+    def __init__(self, known_faces_dir="known_faces", threshold=0.45, cache_path="data/embeddings.npz"):
         self.known_faces_dir = known_faces_dir
         self.threshold = threshold
         self.cache_path = cache_path
@@ -94,6 +95,10 @@ class FaceRecognizer:
         Un cache illisible est traité comme absent : il est entièrement
         reconstructible depuis known_faces/, il n'y a donc aucune raison
         d'empêcher le démarrage pour ça.
+
+        Format .npz lu avec allow_pickle=False : contrairement à pickle, un
+        fichier altéré ne peut pas exécuter de code au chargement, il est
+        seulement refusé.
         """
         os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
 
@@ -103,11 +108,12 @@ class FaceRecognizer:
 
         logger.info("Chargement du cache : %s", self.cache_path)
         try:
-            with open(self.cache_path, 'rb') as f:
-                data = pickle.load(f)
-            embeddings, names = data['embeddings'], data['names']
-        except (EOFError, pickle.UnpicklingError, KeyError, TypeError, AttributeError,
-                ImportError, OSError) as e:
+            with np.load(self.cache_path, allow_pickle=False) as data:
+                names = [str(name) for name in data['names']]
+                embeddings = list(data['embeddings'])
+            if len(names) != len(embeddings):
+                raise ValueError(f"{len(names)} nom(s) pour {len(embeddings)} embedding(s)")
+        except (EOFError, ValueError, KeyError, OSError, zipfile.BadZipFile) as e:
             logger.warning(
                 "Cache illisible (%s: %s) — reconstruction depuis %s",
                 type(e).__name__, e, self.known_faces_dir,
@@ -181,11 +187,14 @@ class FaceRecognizer:
         directory = os.path.dirname(self.cache_path) or '.'
         fd, tmp_path = tempfile.mkstemp(dir=directory, suffix='.tmp')
         try:
+            if self.known_embeddings:
+                embeddings = np.stack(self.known_embeddings)
+            else:
+                embeddings = np.empty((0, 0), dtype=np.float32)
             with os.fdopen(fd, 'wb') as f:
-                pickle.dump({
-                    'embeddings': self.known_embeddings,
-                    'names': self.known_names
-                }, f)
+                # Sur un objet fichier, savez n'ajoute pas d'extension au nom.
+                np.savez(f, names=np.array(self.known_names, dtype=str),
+                         embeddings=embeddings)
             os.replace(tmp_path, self.cache_path)
         except BaseException:
             if os.path.exists(tmp_path):

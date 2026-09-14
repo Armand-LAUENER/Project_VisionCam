@@ -27,7 +27,7 @@ IMAGE = np.zeros((32, 32, 3), dtype=np.uint8)
 
 def make_recognizer(tmp_path):
     recognizer = object.__new__(FaceRecognizer)
-    recognizer.cache_path = str(tmp_path / "data" / "embeddings.pkl")
+    recognizer.cache_path = str(tmp_path / "data" / "embeddings.npz")
     recognizer.known_faces_dir = str(tmp_path / "known_faces")
     os.makedirs(recognizer.known_faces_dir)
     os.makedirs(os.path.dirname(recognizer.cache_path))
