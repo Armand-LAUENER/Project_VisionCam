@@ -58,6 +58,14 @@ def client():
 
 
 @pytest.fixture(autouse=True)
+def isolated_presence_log(monkeypatch, tmp_path):
+    """Jamais la vraie data/presence.db : une base temporaire par test."""
+    from core.presence_log import PresenceLog
+
+    monkeypatch.setattr(visioncam, "presence_log", PresenceLog(str(tmp_path / "presence-test.db")))
+
+
+@pytest.fixture(autouse=True)
 def reset_state():
     """Repart d'un état vierge : aucune frame, aucune personne suivie."""
     with visioncam.state.lock:
@@ -396,6 +404,67 @@ class TestPeopleApi:
                           data={'images': [(io.BytesIO(b'pas une image'), 'a.jpg')]},
                           content_type='multipart/form-data')
         assert res.status_code == 400
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/history — historique des présences
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def history(monkeypatch, tmp_path):
+    from datetime import datetime as dt
+
+    from core.presence_log import PresenceLog
+
+    log = PresenceLog(str(tmp_path / "presence.db"), gap=60)
+    t0 = dt(2026, 9, 14, 9, 0, 0).timestamp()
+    for offset, names in [(0, ["Alice"]), (30, ["Alice"]), (200, []),
+                          (86400, ["Bob"]), (86460, ["Bob"]), (86600, [])]:
+        log.update(names, now=t0 + offset)
+    monkeypatch.setattr(visioncam, "presence_log", log)
+    return log
+
+
+class TestHistoryApi:
+
+    def test_liste_et_noms(self, client, history):
+        data = client.get('/api/history').get_json()
+
+        assert [s['name'] for s in data['sessions']] == ['Bob', 'Alice']
+        assert data['names'] == ['Alice', 'Bob']
+        assert data['sessions'][1]['duration_s'] == 30
+
+    def test_filtre_par_personne_et_jour(self, client, history):
+        assert [s['name'] for s in
+                client.get('/api/history?name=Alice').get_json()['sessions']] == ['Alice']
+        one_day = client.get('/api/history?from=2026-09-15&to=2026-09-15').get_json()['sessions']
+        assert [s['name'] for s in one_day] == ['Bob']
+
+    def test_filtres_invalides(self, client, history):
+        assert client.get('/api/history?from=14/09/2026').status_code == 400
+        assert client.get('/api/history?limit=beaucoup').status_code == 400
+
+    def test_export_csv(self, client, history):
+        res = client.get('/api/history.csv?name=Bob')
+
+        assert res.status_code == 200 and res.mimetype == 'text/csv'
+        assert 'attachment' in res.headers['Content-Disposition']
+        lines = res.data.decode().strip().splitlines()
+        assert lines[0].startswith('nom,') and len(lines) == 2 and lines[1].startswith('Bob,')
+
+    def test_supprimer_une_personne_efface_son_historique(self, client, history):
+        _recognizer.delete_person.return_value = ('ok', 'supprimé')
+
+        client.delete('/api/people/Alice')
+
+        assert [s['name'] for s in history.sessions()] == ['Bob']
+
+    def test_renommer_une_personne_renomme_son_historique(self, client, history):
+        _recognizer.rename_person.return_value = ('ok', 'renommé')
+
+        client.post('/api/people/Alice/rename', json={'new_name': 'Alicia'})
+
+        assert history.names() == ['Alicia', 'Bob']
 
 
 # ─────────────────────────────────────────────────────────────────────────────
