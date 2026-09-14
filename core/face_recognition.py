@@ -280,17 +280,15 @@ class FaceRecognizer:
             if not self.known_embeddings:
                 return "Inconnu", 0.0
             names = list(self.known_names)
-            embeddings = list(self.known_embeddings)
+            # Une matrice (N, 512) : un seul produit au lieu d'une boucle Python.
+            known = np.stack(self.known_embeddings)
 
-        embedding_norm = embedding / np.linalg.norm(embedding)
-        best_name = "Inconnu"
-        best_score = 0.0
-
-        for i, known_emb in enumerate(embeddings):
-            score = float(np.dot(embedding_norm, known_emb))
-            if score > best_score:
-                best_score = score
-                best_name = names[i] if score >= self.threshold else "Inconnu"
+        scores = known @ (embedding / np.linalg.norm(embedding))
+        best = int(np.argmax(scores))
+        best_score = float(scores[best])
+        if best_score <= 0.0:
+            return "Inconnu", 0.0
+        best_name = names[best] if best_score >= self.threshold else "Inconnu"
 
         # Nettoyer le suffixe multi-template avant de retourner
         clean_name = best_name.split('#')[0] if '#' in best_name else best_name
