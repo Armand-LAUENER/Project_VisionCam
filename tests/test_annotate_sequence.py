@@ -113,6 +113,14 @@ class TestFilesAreReadableByTheEvaluation:
         # motmetrics ramène les boîtes en base 0 au chargement.
         assert gt.loc[(1, 3), "X"] == 10.0
 
+    def test_frame_path_handles_six_and_eight_digit_names(self, tmp_path):
+        (tmp_path / "img1").mkdir()
+        (tmp_path / "img1" / "000007.jpg").write_bytes(b"")
+        (tmp_path / "img1" / "00000009.jpg").write_bytes(b"")
+
+        assert eval_mot.frame_path(str(tmp_path), 7).endswith("img1/000007.jpg")
+        assert eval_mot.frame_path(str(tmp_path), 9).endswith("img1/00000009.jpg")
+
     def test_seqinfo_gives_the_sequence_length(self, tmp_path):
         write_seqinfo(str(tmp_path / "seqinfo.ini"), "essai", 15, 42, 1920, 1080)
 

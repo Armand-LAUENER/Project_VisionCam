@@ -139,7 +139,7 @@ def bootstrap(seq_dir) -> list[Row]:
         dets = [d for d in detections.get(frame, []) if d[0][2] > 0 and d[0][3] > 0]
         embeds = []
         if dets:
-            image = cv2.imread(os.path.join(seq_dir, "img1", f"{frame:06d}.jpg"))
+            image = cv2.imread(eval_mot.frame_path(seq_dir, frame))
             embeds = list(embedder.predict(DeepSort.crop_bb(image, dets)[0]))
         for t in tracker.update_tracks(dets, embeds=embeds):
             if t.time_since_update == 0:
@@ -217,7 +217,7 @@ def main():
         frame = state["frame"]
         if frame not in image_cache:
             image_cache.clear()
-            image_cache[frame] = cv2.imread(os.path.join(seq_dir, "img1", f"{frame:06d}.jpg"))
+            image_cache[frame] = cv2.imread(eval_mot.frame_path(seq_dir, frame))
         cv2.imshow(window, render(image_cache[frame], rows, frame, last_frame,
                                   state["selected"], state["typed"], state["dirty"]))
         key = cv2.waitKey(50) & 0xFF

@@ -57,6 +57,16 @@ def load_public_detections(seq_dir, min_conf):
     return by_frame
 
 
+def frame_path(seq_dir, frame_id):
+    """Chemin d'une image : MOT17 numérote sur 6 chiffres, DanceTrack sur 8."""
+    img_dir = os.path.join(seq_dir, "img1")
+    for width in (6, 8):
+        path = os.path.join(img_dir, f"{frame_id:0{width}d}.jpg")
+        if os.path.exists(path):
+            return path
+    return os.path.join(img_dir, f"{frame_id:06d}.jpg")
+
+
 def sequence_length(seq_dir):
     ini = os.path.join(seq_dir, "seqinfo.ini")
     if os.path.exists(ini):
@@ -77,11 +87,10 @@ def run_variant(seq_dir, backend_name, nn_budget, n_frames, min_conf, overrides)
 
     tracker = build_body_tracker()
     detections = load_public_detections(seq_dir, min_conf)
-    img_dir = os.path.join(seq_dir, "img1")
 
     rows, durations = [], []
     for frame_id in range(1, n_frames + 1):
-        frame = cv2.imread(os.path.join(img_dir, f"{frame_id:06d}.jpg"))
+        frame = cv2.imread(frame_path(seq_dir, frame_id))
         if frame is None:
             break
         start = time.perf_counter()

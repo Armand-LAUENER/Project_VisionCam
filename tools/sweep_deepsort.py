@@ -78,7 +78,7 @@ def load_sequence(seq_dir, embedder):
         dets = [d for d in detections.get(frame_id, []) if d[0][2] > 0 and d[0][3] > 0]
         embeds = []
         if dets:
-            image = cv2.imread(os.path.join(seq_dir, "img1", f"{frame_id:06d}.jpg"))
+            image = cv2.imread(eval_mot.frame_path(seq_dir, frame_id))
             embeds = list(embedder.predict(DeepSort.crop_bb(image, dets)[0]))
         frames.append((frame_id, dets, embeds))
     return {"frames": frames,
