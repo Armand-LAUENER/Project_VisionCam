@@ -17,7 +17,9 @@ de suite à l'écran.
 Lancer : pytest tests/test_web_routes.py -v
 """
 
+import concurrent.futures
 import sys
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -58,6 +60,7 @@ def reset_state():
         visioncam.state.bench_frame = None
         visioncam.state.bench_persons = []
         visioncam.state.current_frame = None
+        visioncam.state.stream_clients = 0
         visioncam.state.currently_present = []
         visioncam.state.fps = 0.0
     yield
@@ -122,6 +125,63 @@ class TestStatus:
         data = client.get('/status').get_json()
         assert data['fps'] == 24.5
         assert data['currently_present'][0]['name'] == 'Armand_Lauener'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /video — flux MJPEG
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _next_chunk(gen, timeout):
+    """next(gen) dans un thread : None si rien n'arrive avant `timeout`."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(next, gen)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            # Débloque le générateur pour que le thread se termine.
+            visioncam._publish_display_frame(np.zeros((8, 8, 3), dtype=np.uint8))
+            future.result(timeout=2)
+            return None
+
+
+class TestVideoStream:
+
+    def test_pas_d_encodage_sans_client(self):
+        """Personne ne regarde : la frame n'est pas encodée."""
+        with visioncam.state.lock:
+            visioncam.state.stream_clients = 0
+        visioncam._publish_display_frame(np.zeros((8, 8, 3), dtype=np.uint8))
+
+        assert visioncam.state.current_frame is None
+
+    def test_n_envoie_que_les_nouvelles_frames(self, monkeypatch):
+        """
+        Non-régression : le générateur renvoyait la même frame à MJPEG_FPS_LIMIT
+        tant que le pipeline n'en publiait pas de nouvelle.
+        """
+        monkeypatch.setattr(visioncam.config, 'MJPEG_FPS_LIMIT', 1000)
+        gen = visioncam.generate_frames()
+        try:
+            first = _next_chunk_after_publish(gen)
+            assert first.startswith(b'--frame')
+            assert visioncam.state.stream_clients == 1
+
+            assert _next_chunk(gen, timeout=0.3) is None
+        finally:
+            gen.close()
+
+        assert visioncam.state.stream_clients == 0
+
+
+def _next_chunk_after_publish(gen):
+    """Le générateur s'enregistre au premier next() : publier juste après."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(next, gen)
+        deadline = time.monotonic() + 2
+        while visioncam.state.stream_clients == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        visioncam._publish_display_frame(np.full((8, 8, 3), 200, dtype=np.uint8))
+        return future.result(timeout=2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

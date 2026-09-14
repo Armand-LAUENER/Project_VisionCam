@@ -64,6 +64,10 @@ logger.info("Modules chargés")
 class AppState:
     def __init__(self):
         self.lock = threading.Lock()
+        # Réveille les flux MJPEG à chaque nouvelle frame (partage self.lock).
+        self.frame_ready = threading.Condition(self.lock)
+        self.frame_seq = 0
+        self.stream_clients = 0
         self.current_frame = None
         self.currently_present = []
         self.fps = 0.0
@@ -332,11 +336,8 @@ def processing_loop():
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 245, 160), 2)
 
         # ── Mise à jour de l'état global ─────────────────────────────────────
+        _publish_display_frame(display_frame)
         with state.lock:
-            _, buffer = cv2.imencode(
-                '.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, config.MJPEG_QUALITY]
-            )
-            state.current_frame = buffer.tobytes()
             state.currently_present = present_list
             state.fps = current_fps
             state.bench_frame = frame
@@ -349,15 +350,55 @@ def processing_loop():
 # ══════════════════════════════════════════
 # ROUTES FLASK
 # ══════════════════════════════════════════
+def _publish_display_frame(display_frame):
+    """
+    Encode la frame annotée pour le flux MJPEG et réveille les clients.
+
+    L'encodage JPEG (plusieurs ms en 1080p) se fait hors de state.lock, que
+    /status et les autres routes attendaient sinon à chaque frame. Sans
+    client connecté, rien n'est encodé : /capture et /bench/pose lisent la
+    frame brute, pas ce JPEG.
+    """
+    with state.lock:
+        if state.stream_clients == 0:
+            return
+    _, buffer = cv2.imencode(
+        '.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, config.MJPEG_QUALITY]
+    )
+    with state.frame_ready:
+        state.current_frame = buffer.tobytes()
+        state.frame_seq += 1
+        state.frame_ready.notify_all()
+
+
 def generate_frames():
+    """
+    Flux MJPEG : n'envoie une frame que lorsqu'elle est nouvelle.
+
+    Renvoyer la dernière frame à cadence fixe dupliquait l'image dès que le
+    pipeline tournait moins vite que MJPEG_FPS_LIMIT. MJPEG_FPS_LIMIT reste un
+    plafond, pour les clients lents.
+    """
     interval = 1.0 / max(1, config.MJPEG_FPS_LIMIT)
-    while True:
-        with state.lock:
-            frame = state.current_frame
-        if frame:
+    with state.lock:
+        state.stream_clients += 1
+        last_seq = state.frame_seq
+    try:
+        while True:
+            with state.frame_ready:
+                state.frame_ready.wait_for(lambda: state.frame_seq != last_seq, timeout=1.0)
+                if state.frame_seq == last_seq:
+                    continue
+                last_seq = state.frame_seq
+                frame = state.current_frame
+            sent_at = time.monotonic()
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        time.sleep(interval)
+            time.sleep(max(0.0, interval - (time.monotonic() - sent_at)))
+    finally:
+        # Déconnexion du navigateur : Flask ferme le générateur.
+        with state.lock:
+            state.stream_clients -= 1
 
 
 @app.route('/')

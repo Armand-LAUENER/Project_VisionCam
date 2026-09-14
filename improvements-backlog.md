@@ -49,12 +49,12 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
 
 ## 2. Performances
 
-- [ ] **Encodage JPEG hors du verrou** — `app.py:335`
+- [x] **Encodage JPEG hors du verrou** — `app.py:335`
   `cv2.imencode` en 1080p s'exécute alors que `state.lock` est tenu, à chaque frame :
   `/status` et le flux vidéo attendent la fin de l'encodage. Encoder avant, ne
   prendre le verrou que pour l'affectation.
 
-- [ ] **Flux vidéo : n'envoyer que les nouvelles frames** — `app.py:352`
+- [x] **Flux vidéo : n'envoyer que les nouvelles frames** — `app.py:352`
   `generate_frames` renvoie la même frame à 30 FPS, et le pipeline encode
   même sans client connecté. Utiliser un `threading.Condition` ou un compteur de frames ;
   n'encoder que si au moins un client écoute.
