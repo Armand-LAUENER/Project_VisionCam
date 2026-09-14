@@ -322,6 +322,39 @@ class FaceBodyTracker:
     # Étape 3 — Reconnaissance faciale par crop dynamique centré sur le Nez
     # ─────────────────────────────────────────────────────────────────────────
 
+    @classmethod
+    def head_crop_box(cls, frame_shape, body_ltrb, face_kps) -> tuple[int, int, int, int] | None:
+        """Carré (x1, y1, x2, y2) centré sur la tête d'une personne, ou None s'il est trop petit.
+
+        Centre : centroïde des keypoints faciaux COCO 0-4 visibles (nez, yeux,
+        oreilles), résistant aux lunettes et aux occlusions partielles — un
+        keypoint suffit. Sans keypoint visible (dos tourné, très loin, occulté),
+        la tête est estimée depuis le haut de la boîte du corps.
+
+        Partagé par la reconnaissance et la capture d'enrôlement : les deux
+        voient le même visage de la même personne.
+        """
+        h_img, w_img = frame_shape[:2]
+        bx1, by1, bx2, by2 = [int(v) for v in body_ltrb]
+        body_height = max(1, by2 - by1)
+
+        visible: list[tuple[float, float]] = []
+        if face_kps:
+            visible = [(x, y) for x, y, c in face_kps[:5] if c >= config.POSE_NOSE_CONF_THRESHOLD]
+        if visible and len(visible) >= config.POSE_FACE_KP_MIN_VISIBLE:
+            cx = int(sum(x for x, y in visible) / len(visible))
+            cy = int(sum(y for x, y in visible) / len(visible))
+        else:
+            visible = []
+            cx, cy = (bx1 + bx2) // 2, by1 + int(body_height * 0.15)
+
+        half = cls._crop_half_size(visible, body_height)
+        x1, y1 = max(0, cx - half), max(0, cy - half)
+        x2, y2 = min(w_img, cx + half), min(h_img, cy + half)
+        if x2 - x1 < 20 or y2 - y1 < 20:
+            return None
+        return x1, y1, x2, y2
+
     @staticmethod
     def _crop_half_size(visible_face_kps: list, body_height: int) -> int:
         """Demi-taille du crop tête soumis à InsightFace.
@@ -364,44 +397,13 @@ class FaceBodyTracker:
             et `source_track_id` indiquant le track d'origine.
         """
         all_faces = []
-        h_img, w_img = frame.shape[:2]
 
         for track in tracks_to_recognize:
-            bx1, by1, bx2, by2 = [int(v) for v in track.to_ltrb()]
-            body_height = max(1, by2 - by1)
-
-            # Centroïde des keypoints faciaux COCO 0-4 visibles (nez, yeux, oreilles).
-            # Résistant aux lunettes et aux occlusions partielles : 1 keypoint suffit.
-            crop_center = None
-            visible: list[tuple[float, float]] = []
-            face_kps = self._face_kps_map.get(track.track_id)
-            if face_kps:
-                visible = [(x, y) for x, y, c in face_kps if c >= config.POSE_NOSE_CONF_THRESHOLD]
-                if len(visible) >= config.POSE_FACE_KP_MIN_VISIBLE:
-                    cx = int(sum(x for x, y in visible) / len(visible))
-                    cy = int(sum(y for x, y in visible) / len(visible))
-                    crop_center = (cx, cy)
-                    if len(visible) < 5:
-                        logger.debug("track #%s : %d/5 keypoints faciaux visibles → centroïde",
-                                     track.track_id, len(visible))
-
-            # Fallback : aucun keypoint visible (personne de dos, très loin, très occulté)
-            # → on estime la position de la tête depuis le haut de la bbox corps.
-            if crop_center is None:
-                cx = (bx1 + bx2) // 2
-                cy = by1 + int(body_height * 0.15)
-                crop_center = (cx, cy)
-                logger.debug("track #%s : aucun keypoint facial → fallback body-top", track.track_id)
-
-            cx, cy = crop_center
-            half = self._crop_half_size(visible, body_height)
-            crop_x1 = max(0, cx - half)
-            crop_y1 = max(0, cy - half)
-            crop_x2 = min(w_img, cx + half)
-            crop_y2 = min(h_img, cy + half)
-
-            if crop_x2 - crop_x1 < 20 or crop_y2 - crop_y1 < 20:
+            box = self.head_crop_box(frame.shape, track.to_ltrb(),
+                                     self._face_kps_map.get(track.track_id))
+            if box is None:
                 continue
+            crop_x1, crop_y1, crop_x2, crop_y2 = box
 
             head_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
 

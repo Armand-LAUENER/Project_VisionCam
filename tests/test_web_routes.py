@@ -22,6 +22,7 @@ import io
 import sys
 import threading
 import time
+import types
 import urllib.request
 from unittest.mock import MagicMock
 
@@ -124,7 +125,22 @@ class TestStatus:
     def test_contrat_json(self, client):
         res = client.get('/status')
         assert res.status_code == 200
-        assert set(res.get_json()) == {'currently_present', 'fps', 'total_known'}
+        assert set(res.get_json()) == {'currently_present', 'fps', 'total_known',
+                                       'tracks', 'frame_size'}
+
+    def test_boites_des_personnes_visibles(self, client):
+        with visioncam.state.lock:
+            visioncam.state.bench_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            visioncam.state.bench_persons = [_person('3', [10.4, 20, 110, 320], name='Armand')]
+            visioncam.state.currently_present = [{'name': 'Armand', 'track_id': '3',
+                                                  'confidence': 0.8, 'pose': 'Face',
+                                                  'last_face_frame': 1}]
+
+        data = client.get('/status').get_json()
+
+        assert data['frame_size'] == [1280, 720]
+        assert data['tracks'] == [{'track_id': '3', 'name': 'Armand',
+                                   'bbox': [10, 20, 110, 320], 'pose': 'Face'}]
 
     def test_reflete_les_personnes_presentes(self, client):
         with visioncam.state.lock:
@@ -404,6 +420,83 @@ class TestPeopleApi:
                           data={'images': [(io.BytesIO(b'pas une image'), 'a.jpg')]},
                           content_type='multipart/form-data')
         assert res.status_code == 400
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /api/capture — enrôlement d'une personne désignée dans le flux
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _person(track_id, bbox, name='Inconnu'):
+    return types.SimpleNamespace(track_id=track_id, body_bbox=bbox, name=name,
+                                 pose_kps=[(60.0, 50.0, 0.9)] * 7)
+
+
+@pytest.fixture
+def capture_scene(monkeypatch):
+    """Deux personnes visibles ; le recadrage de tête et le visage sont simulés."""
+    frame = np.arange(720 * 1280 * 3, dtype=np.uint32).reshape(720, 1280, 3).astype(np.uint8)
+    with visioncam.state.lock:
+        visioncam.state.bench_frame = frame
+        visioncam.state.bench_persons = [_person('1', [0, 0, 200, 600]),
+                                         _person('2', [600, 0, 800, 600])]
+    head_crop = MagicMock(return_value=(100, 50, 300, 250))
+    monkeypatch.setattr(visioncam.FaceBodyTracker, 'head_crop_box', head_crop)
+    for method in ('recognize_center_face', 'enroll_person_average',
+                   'enroll_person_multitemplate'):
+        getattr(_recognizer, method).reset_mock()
+    _recognizer.recognize_center_face.return_value = {'name': 'Inconnu', 'confidence': 0.0,
+                                                      'bbox': [40, 40, 160, 160]}
+    _recognizer.enroll_person_average.return_value = (True, 'ok')
+    _recognizer.enroll_person_multitemplate.return_value = (True, 'ok')
+    return frame, head_crop
+
+
+class TestCaptureApi:
+
+    def test_enrole_le_recadrage_de_la_personne_cliquee(self, client, capture_scene):
+        frame, head_crop = capture_scene
+
+        res = client.post('/api/capture', json={'name': 'Armand', 'track_id': '2'})
+
+        assert res.status_code == 200
+        _, body_bbox, _ = head_crop.call_args[0]
+        assert body_bbox == [600, 0, 800, 600]
+        name, (crop,) = _recognizer.enroll_person_average.call_args[0]
+        assert name == 'Armand'
+        np.testing.assert_array_equal(crop, frame[50:250, 100:300])
+
+    def test_mode_guide_enrole_un_template_par_angle(self, client, capture_scene):
+        res = client.post('/api/capture', json={'name': 'Armand', 'track_id': '1',
+                                                'label': 'ProfilG'})
+
+        assert res.status_code == 200
+        name, templates = _recognizer.enroll_person_multitemplate.call_args[0]
+        assert name == 'Armand' and list(templates) == ['ProfilG']
+        _recognizer.enroll_person_average.assert_not_called()
+
+    @pytest.mark.parametrize("body", [{}, {'name': 'Armand'}, {'track_id': '1'},
+                                      {'name': 'Armand', 'track_id': '1', 'label': 'Dos'}])
+    def test_champs_invalides(self, client, capture_scene, body):
+        assert client.post('/api/capture', json=body).status_code == 400
+
+    def test_personne_plus_visible(self, client, capture_scene):
+        assert client.post('/api/capture', json={'name': 'Armand', 'track_id': '9'}).status_code == 404
+
+    def test_aucun_visage(self, client, capture_scene):
+        _recognizer.recognize_center_face.return_value = None
+
+        assert client.post('/api/capture', json={'name': 'Armand', 'track_id': '1'}).status_code == 422
+        _recognizer.enroll_person_average.assert_not_called()
+
+    def test_visage_trop_petit(self, client, capture_scene, monkeypatch):
+        monkeypatch.setattr(visioncam.config, 'RECOGNITION_MIN_FACE_PX', 40)
+        _recognizer.recognize_center_face.return_value = {'name': 'Inconnu', 'confidence': 0.0,
+                                                          'bbox': [40, 40, 119, 160]}
+
+        res = client.post('/api/capture', json={'name': 'Armand', 'track_id': '1'})
+
+        assert res.status_code == 422 and 'rapprochez' in res.get_json()['message']
+        _recognizer.enroll_person_average.assert_not_called()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
