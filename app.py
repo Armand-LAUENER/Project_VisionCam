@@ -419,7 +419,7 @@ def _publish_display_frame(display_frame):
 
     L'encodage JPEG (plusieurs ms en 1080p) se fait hors de state.lock, que
     /status et les autres routes attendaient sinon à chaque frame. Sans
-    client connecté, rien n'est encodé : /capture et /bench/pose lisent la
+    client connecté, rien n'est encodé : /api/capture et /bench/pose lisent la
     frame brute, pas ce JPEG.
     """
     with state.lock:
@@ -582,110 +582,6 @@ def diagnostics_page():
 def video_feed():
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
-
-
-@app.route('/enroll', methods=['POST'])
-def enroll():
-    """
-    Enrôle une personne à chaud sans redémarrer l'application.
-
-    Entrée (multipart/form-data) :
-        name   : str — identifiant de la personne (ex: "Armand_Lauener")
-        method : 'average' (défaut) | 'multitemplate'
-        images : fichier(s) image JPG/PNG
-
-    Réponse :
-        200 { success: true,  message: str, total_known: int }
-        400 { success: false, message: str }
-        422 { success: false, message: str }  ← aucun visage trouvé
-    """
-    name = request.form.get('name', '').strip()
-    if not name:
-        return jsonify({'success': False, 'message': 'Champ "name" manquant ou vide.'}), 400
-
-    method = request.form.get('method', 'average').strip().lower()
-    if method not in ('average', 'multitemplate'):
-        return jsonify({'success': False,
-                        'message': 'Champ "method" invalide : attendu "average" ou "multitemplate".'}), 400
-
-    files = request.files.getlist('images')
-    if not files:
-        return jsonify({'success': False, 'message': 'Aucune image fournie (champ "images").'}), 400
-
-    decoded = []
-    for f in files:
-        buf = np.frombuffer(f.read(), dtype=np.uint8)
-        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-        if img is None:
-            continue
-        label = os.path.splitext(f.filename)[0] if f.filename else f"img{len(decoded)}"
-        decoded.append((label, img))
-
-    if not decoded:
-        return jsonify({'success': False, 'message': 'Impossible de décoder les images reçues.'}), 400
-
-    if method == 'average':
-        images = [img for _, img in decoded]
-        success, message = face_recognizer.enroll_person_average(name, images)
-    else:
-        frames_dict = {label: img for label, img in decoded}
-        success, message = face_recognizer.enroll_person_multitemplate(name, frames_dict)
-
-    if success:
-        _publish('enrolled', name=name)
-        with state.lock:
-            state.total_known = len(face_recognizer.known_names)
-        return jsonify({'success': True, 'message': message,
-                        'total_known': state.total_known}), 200
-
-    return jsonify({'success': False, 'message': message}), 422
-
-
-@app.route('/capture', methods=['POST'])
-def capture():
-    """
-    Enrôle une personne depuis la frame courante du flux caméra.
-
-    Entrée (multipart/form-data) :
-        name : str — identifiant de la personne
-
-    Réponse :
-        200 { success: true,  message: str, total_known: int }
-        400 { success: false, message: str }
-        503 { success: false, message: str }  ← pas de frame disponible
-        409 { success: false, message: str }  ← plusieurs personnes à l'écran
-        422 { success: false, message: str }  ← aucun visage détecté
-    """
-    name = request.form.get('name', '').strip()
-    if not name:
-        return jsonify({'success': False, 'message': 'Champ "name" manquant ou vide.'}), 400
-
-    # Frame brute, pas le JPEG streamé : celui-ci porte les boîtes et les
-    # textes dessinés, et a perdu du détail à la compression.
-    with state.lock:
-        frame = state.bench_frame
-        person_count = len(state.bench_persons)
-
-    if frame is None:
-        return jsonify({'success': False, 'message': 'Aucune frame disponible (caméra déconnectée ?)'}), 503
-
-    # L'enrôlement garde le plus grand visage : avec plusieurs personnes, rien
-    # ne garantit que c'est celle qui a donné son nom.
-    if person_count > 1:
-        return jsonify({'success': False,
-                        'message': f'{person_count} personnes à l\'écran : '
-                                   'une seule doit être visible pour la capture.'}), 409
-
-    success, message = face_recognizer.enroll_person_average(name, [frame])
-
-    if success:
-        _publish('enrolled', name=name)
-        with state.lock:
-            state.total_known = len(face_recognizer.known_names)
-        return jsonify({'success': True, 'message': message,
-                        'total_known': state.total_known}), 200
-
-    return jsonify({'success': False, 'message': message}), 422
 
 
 _rebuild_lock = threading.Lock()

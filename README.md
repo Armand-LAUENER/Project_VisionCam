@@ -52,8 +52,8 @@
        │  current_frame     │     │  GET  /                  │
        │  currently_present │     │  GET  /video  (MJPEG)    │
        └────────────────────┘     │  GET  /status (JSON)     │
-                                  │  POST /enroll            │
-                                  │  POST /capture           │
+                                  │  POST /api/capture       │
+                                  │  POST /api/people/…      │
                                   │  POST /rebuild           │
                                   └──────────────────────────┘
 ```
@@ -474,21 +474,25 @@ known_faces/
 
 Supprimer `data/embeddings.npz` pour forcer la reconstruction, puis relancer.
 
-### Option 2 — API REST (à chaud, sans redémarrer)
+### Option 2 — Interface web (à chaud, sans redémarrer)
 
-**Depuis des fichiers :**
+- **Live** : cliquer sur une personne, saisir son nom. Le mode guidé enregistre face, profil gauche et profil droit.
+- **Personnes** : ajouter des photos, renommer, supprimer, reconstruire la base.
+
+### Option 3 — API REST
+
+**Depuis des fichiers** (crée la personne si besoin) :
 ```bash
-curl -X POST http://localhost:5000/enroll \
-  -F "name=Alice" \
-  -F "method=average" \
+curl -X POST http://localhost:5000/api/people/Alice/photos \
   -F "images=@photo1.jpg" \
   -F "images=@photo2.jpg"
 ```
 
-**Depuis la frame courante du flux caméra :**
+**Depuis le flux caméra** (`track_id` : identifiant de piste visible dans `GET /status`) :
 ```bash
-curl -X POST http://localhost:5000/capture \
-  -F "name=Alice"
+curl -X POST http://localhost:5000/api/capture \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "track_id": 3}'
 ```
 
 **Reconstruire la base depuis `known_faces/` :**
@@ -496,11 +500,13 @@ curl -X POST http://localhost:5000/capture \
 curl -X POST http://localhost:5000/rebuild
 ```
 
+Avec un mot de passe configuré, ajouter un cookie de session : `curl -c jar -d password=… http://localhost:5000/login`, puis `-b jar` sur chaque appel.
+
 Noms et labels acceptés : lettres (accents compris), chiffres, `_`, `-`, espace et point, sans point initial, 64 caractères max.
 
 Réenrôler une personne ajoute les nouvelles photos aux anciennes : l'embedding est la moyenne de toutes ses photos, comme après une reconstruction.
 
-Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multitemplate` (un vecteur par angle — plus précis sur les grands changements de pose).
+Le mode guidé de la page Live garde un vecteur par angle (face, profils) : plus précis sur les grands changements de pose qu'un embedding moyen.
 
 ---
 
@@ -529,8 +535,6 @@ Sans session, une page redirige vers `/login` et l'API répond 401. Après 5 éc
 | `GET` | `/video` | Flux MJPEG `multipart/x-mixed-replace` |
 | `GET` | `/status` | `{ currently_present[], fps, total_known, tracks[], frame_size }` — `tracks` : boîtes des personnes visibles |
 | `POST` | `/api/capture` | Enrôle la personne cliquée (`{name, track_id, label?}`), label `Face`/`ProfilG`/`ProfilD` en mode guidé |
-| `POST` | `/enroll` | Enrôlement depuis fichiers image |
-| `POST` | `/capture` | Enrôlement depuis la frame courante (409 si plusieurs personnes) |
 | `POST` | `/rebuild` | Reconstruction base embeddings depuis `known_faces/` (409 si déjà en cours) |
 | `POST` | `/bench/pose` | Compare les deux sources d'orientation sur le flux |
 | `GET` | `/api/people` | Personnes connues : photos, labels multitemplate, miniature |
