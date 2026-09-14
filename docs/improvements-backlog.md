@@ -8,6 +8,7 @@ estimations, à confirmer au bench avant de retenir quoi que ce soit.
 
 Déjà explorés à la session précédente, donc absents d'ici : `det_size` 320 pour
 InsightFace (la config est restée à 640) et le traitement groupé des visages pour la reconnaissance.
+`det_size` a depuis été remesuré sur les crops de tête de l'application : cf. section 5.
 
 ---
 
@@ -126,6 +127,37 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   `SERVER_THREADS=16` : chaque flux MJPEG ouvert garde un thread.
   - [x] Cache d'embeddings en `pickle` → `.npz` (le chargement d'un `pickle`
     altéré peut exécuter du code).
+
+## 5. Deuxième passe (2026-09-15)
+
+- [x] **Mot de passe sur la machine** — `tools/set_password.py` : saisie
+  masquée, seule la ligne `ADMIN_PASSWORD_HASH` de `.env` est écrite.
+  Reste à le lancer sur la machine.
+
+- [x] **Durée de conservation de l'historique** — `PRESENCE_RETENTION_DAYS=30` :
+  les sessions terminées depuis plus longtemps sont supprimées au démarrage
+  puis toutes les heures ; une session en cours n'est jamais supprimée.
+
+- [x] **Anciennes routes `/enroll` et `/capture` retirées** — remplacées par
+  `/api/people/<nom>/photos` et `/api/capture`, qui enrôlent la personne
+  désignée et non le plus grand visage. `/rebuild` reste (page Personnes).
+
+- [x] **Reconnaissance faciale plus légère** — `tools/bench_face.py` sur CHIRLA :
+  SCRFD 640 → 320 (les crops de tête, 250 px en médiane, étaient agrandis et
+  les visages trop gros ratés) et TensorRT FP16 (`INSIGHTFACE_TENSORRT`).
+  Par crop 19,5 → 5,5 ms ; bons noms 410 → 489, mauvais 16 → 18, « Inconnu »
+  180 → 100. Réutiliser les keypoints YOLO à la place de SCRFD n'a pas été
+  tenté : YOLO n'a pas les coins de la bouche qu'attend l'alignement ArcFace.
+
+- [x] **Lancement** — `scripts/visioncam.sh start|stop|status|logs` : pont
+  webcam Windows puis application, arrêt propre (SIGTERM, sessions fermées).
+  Pas de démarrage automatique avec Windows, par choix.
+
+- [x] **Tests de l'interface en CI** — `tests/ui` : pages dans Chromium
+  headless (Playwright), erreurs JavaScript, capture par clic, renommage,
+  historique, largeur téléphone.
+
+- [ ] **Séquences webcam annotées** — cf. section 3, à enregistrer sur la machine.
 
 ---
 
