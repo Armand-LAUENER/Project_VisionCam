@@ -8,18 +8,19 @@ import os
 # explicite de l'environnement.
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
-from flask import Flask, render_template, Response, jsonify, request
-import cv2
 import logging
-import numpy as np
 import queue
 import statistics
 import threading
 import time
 
+import cv2
+import numpy as np
+from flask import Flask, Response, jsonify, render_template, request
+
 import config
-from core.face_recognition import FaceRecognizer
 from core.face_body_tracker import FaceBodyTracker
+from core.face_recognition import FaceRecognizer
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
 
