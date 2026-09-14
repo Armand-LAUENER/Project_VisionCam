@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Live{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <h1>Live</h1>
+    <div class="stats" style="flex: 1; max-width: 640px;">
+        <div class="stat"><div class="value" id="statFps">—</div><div class="label">images/s</div></div>
+        <div class="stat"><div class="value" id="statVisible">0</div><div class="label">à l'écran</div></div>
+        <div class="stat"><div class="value" id="statNamed">0</div><div class="label">reconnues</div></div>
+        <div class="stat"><div class="value" id="statKnown">0</div><div class="label">en base</div></div>
+    </div>
+</div>
+
+<div class="live-layout">
+    <section>
+        <div class="video-wrap">
+            <img id="video" src="{{ url_for('video_feed') }}" alt="Flux de la caméra">
+            <canvas id="overlay" aria-label="Cliquer sur une personne pour l'enrôler"></canvas>
+        </div>
+        <p class="video-hint muted">Cliquez sur une personne pour l'enrôler, même si d'autres sont à l'écran.</p>
+    </section>
+
+    <aside class="grid">
+        <section class="panel">
+            <h2>Présents</h2>
+            <ul id="presentList" class="list"></ul>
+            <p id="presentEmpty" class="empty">Personne pour l'instant.</p>
+        </section>
+        <section class="panel">
+            <h2>Événements</h2>
+            <ul id="eventFeed" class="list feed" aria-live="polite"></ul>
+            <p id="eventEmpty" class="empty">Les arrivées, départs et enrôlements s'afficheront ici.</p>
+        </section>
+    </aside>
+</div>
+
+<dialog id="captureDialog" aria-labelledby="captureTitle">
+    <form method="dialog" id="captureForm">
+        <h2 id="captureTitle">Enrôler cette personne</h2>
+        <p class="muted" id="captureTarget"></p>
+        <div class="field">
+            <label for="captureName">Nom</label>
+            <input id="captureName" list="knownNames" autocomplete="off" required maxlength="64"
+                   placeholder="ex. Armand">
+            <datalist id="knownNames"></datalist>
+        </div>
+        <fieldset class="segmented" style="border: 0; padding: 0; margin: 0;">
+            <legend class="muted" style="margin-bottom: 6px;">Mode</legend>
+            <label><input type="radio" name="mode" value="photo" checked> Une photo</label>
+            <label><input type="radio" name="mode" value="guided"> Guidé (3 angles)</label>
+        </fieldset>
+        <div id="guided" hidden>
+            <p class="muted" style="margin: 0 0 8px;">Orientation détectée : <strong id="livePose">—</strong></p>
+            <div class="steps">
+                <button type="button" data-label="Face">Face</button>
+                <button type="button" data-label="ProfilG">Profil gauche</button>
+                <button type="button" data-label="ProfilD">Profil droit</button>
+            </div>
+        </div>
+        <div class="dialog-actions">
+            <button type="button" id="captureCancel">Fermer</button>
+            <button type="submit" class="primary" id="captureSubmit">Capturer</button>
+        </div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/live.js') }}"></script>
+{% endblock %}

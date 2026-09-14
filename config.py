@@ -241,6 +241,11 @@ DISPLAY_HEIGHT = 1080
 # Qualité JPEG du flux MJPEG (0-100). Plus haut = plus net, plus de bande passante.
 MJPEG_QUALITY = 75
 
+# Boîtes et textes dessinés dans le flux MJPEG lui-même. Désactivé par défaut :
+# l'interface web dessine ses propres boîtes, cliquables, par-dessus la vidéo.
+# À activer pour regarder /video dans un lecteur MJPEG externe.
+MJPEG_ANNOTATE = os.getenv("MJPEG_ANNOTATE", "false").lower() == "true"
+
 # FPS max du flux envoyé au navigateur.
 MJPEG_FPS_LIMIT = 30
 

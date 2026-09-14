@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Historique{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>Historique des présences</h1>
+        <p class="muted" id="historySummary" style="margin: 4px 0 0;"></p>
+    </div>
+    <a class="button" id="csvLink" href="{{ url_for('api_history_csv') }}" download>Exporter en CSV</a>
+</div>
+
+<form id="filters" class="panel row" style="margin-bottom: 16px;">
+    <div class="field">
+        <label for="filterName">Personne</label>
+        <select id="filterName" name="name"><option value="">Toutes</option></select>
+    </div>
+    <div class="field">
+        <label for="filterFrom">Du</label>
+        <input id="filterFrom" name="from" type="date">
+    </div>
+    <div class="field">
+        <label for="filterTo">Au</label>
+        <input id="filterTo" name="to" type="date">
+    </div>
+    <button type="submit" class="primary">Filtrer</button>
+    <button type="reset">Réinitialiser</button>
+</form>
+
+<div class="panel table-wrap">
+    <table>
+        <thead>
+            <tr><th>Personne</th><th>Arrivée</th><th>Départ</th><th>Durée</th></tr>
+        </thead>
+        <tbody id="sessions"></tbody>
+    </table>
+    <p id="historyEmpty" class="empty" hidden>Aucune présence pour ces filtres.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/history.js') }}"></script>
+{% endblock %}

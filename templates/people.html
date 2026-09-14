@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Personnes{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>Personnes</h1>
+        <p class="muted" id="peopleCount" style="margin: 4px 0 0;"></p>
+    </div>
+    <div class="row">
+        <button type="button" id="addBtn" class="primary">+ Nouvelle personne</button>
+        <button type="button" id="rebuildBtn" title="Recalculer toute la base depuis known_faces/">Reconstruire la base</button>
+    </div>
+</div>
+
+<div id="cards" class="cards" aria-live="polite"></div>
+<p id="peopleEmpty" class="empty panel" hidden>
+    Aucune personne enrôlée. Ajoutez des photos ici, ou cliquez sur une personne dans la page Live.
+</p>
+
+<dialog id="renameDialog" aria-labelledby="renameTitle">
+    <form method="dialog" id="renameForm">
+        <h2 id="renameTitle">Renommer</h2>
+        <div class="field">
+            <label for="renameInput">Nouveau nom</label>
+            <input id="renameInput" required maxlength="64" autocomplete="off">
+        </div>
+        <p class="muted" style="margin: 0;">Les photos et l'historique de présence suivent le nouveau nom.</p>
+        <div class="dialog-actions">
+            <button type="button" data-close>Annuler</button>
+            <button type="submit" class="primary">Renommer</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="deleteDialog" aria-labelledby="deleteTitle">
+    <form method="dialog" id="deleteForm">
+        <h2 id="deleteTitle">Supprimer <span id="deleteName"></span> ?</h2>
+        <p style="margin: 0;">Ses photos, son empreinte faciale et tout son historique de présence seront
+            effacés définitivement.</p>
+        <div class="dialog-actions">
+            <button type="button" data-close>Annuler</button>
+            <button type="submit" class="danger">Supprimer définitivement</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog id="photosDialog" aria-labelledby="photosTitle">
+    <form method="dialog" id="photosForm">
+        <h2 id="photosTitle">Ajouter des photos</h2>
+        <div class="field">
+            <label for="photosName">Nom</label>
+            <input id="photosName" required maxlength="64" autocomplete="off" placeholder="ex. Armand">
+        </div>
+        <div class="field">
+            <label for="photosFiles">Photos du visage (3 à 5, angles variés)</label>
+            <input id="photosFiles" type="file" accept="image/*" multiple required>
+        </div>
+        <div class="dialog-actions">
+            <button type="button" data-close>Annuler</button>
+            <button type="submit" class="primary">Envoyer</button>
+        </div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/people.js') }}"></script>
+{% endblock %}

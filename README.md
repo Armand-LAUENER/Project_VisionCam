@@ -16,7 +16,7 @@
 - **Orientation** — face / profil / dos, depuis les keypoints YOLO déjà calculés (défaut) ou MediaPipe
 - **Tracking par corps** — identité maintenue même quand le visage disparaît
 - **Enrôlement à chaud** — ajout de personnes sans redémarrer l'application
-- **Streaming MJPEG** — flux annoté en direct dans le navigateur
+- **Interface web** — pages Live (boîtes cliquables pour enrôler), Personnes, Historique et Diagnostic ; temps réel par Server-Sent Events, alertes du navigateur, utilisable sur téléphone et hors ligne
 - **Reconnexion automatique** — backoff exponentiel 1 s → 30 s pour les caméras IP
 
 ---
@@ -60,11 +60,15 @@
 
 ### Feedback visuel
 
+Boîtes dessinées par la page Live par-dessus la vidéo :
+
 | Couleur | Signification |
 |:--------|:--------------|
-| **Vert** | Visage reconnu récemment (< `FACE_FRESHNESS_FRAMES`) |
-| **Orange** `[BODY]` | Identité connue, tracking corps seul |
+| **Vert** | Personne reconnue (nom · orientation) |
 | **Bleu** | Personne inconnue |
+| **Blanc** | Personne sélectionnée pour l'enrôlement |
+
+Avec `MJPEG_ANNOTATE=true`, le flux `/video` porte aussi ses propres boîtes : vert (visage reconnu récemment), orange `[BODY]` (identité connue, tracking corps seul), bleu (inconnu).
 
 ---
 
@@ -119,8 +123,10 @@ VisionCam/
 │   ├── improvements-backlog.md  # Optimisations et améliorations restantes
 │   └── roadmap-rust-tracker.md  # Roadmap (terminée) du backend Rust
 │
-├── templates/
-│   └── index.html           # UI : stream + liste de présence
+├── templates/               # Pages : base, live, people, history, diagnostics, login
+├── static/
+│   ├── css/app.css          # Thème unique, sans CDN (fonctionne hors ligne)
+│   └── js/                  # Un module par page + common.js (API, temps réel, alertes)
 │
 ├── tests/                   # Aucun test ne demande de GPU ni de caméra
 │   ├── test_face_body_association.py      # Association visage ↔ corps
@@ -196,6 +202,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `RECOGNITION_THRESHOLD` | `0.45` | Similarité cosinus min pour identifier (0–1, plus haut = plus strict) |
 | `RECOGNITION_MIN_FACE_PX` | `40` | Taille min d'un visage pour décider d'un nom ; en dessous, la piste garde le sien |
 | `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames |
+| `MJPEG_ANNOTATE` | `false` | Boîtes dessinées dans le flux MJPEG lui-même (l'interface dessine les siennes) |
 | `FACE_FRESHNESS_FRAMES` | `30` | Frames avant passage en mode orange [BODY] |
 | `POSE_NOSE_CONF_THRESHOLD` | `0.5` | Confiance minimale d'un keypoint facial |
 | `POSE_FACE_KP_MIN_VISIBLE` | `1` | Keypoints visibles min pour utiliser le centroïde |
