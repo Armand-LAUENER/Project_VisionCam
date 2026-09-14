@@ -8,6 +8,10 @@ Windows si USE_LOCAL_CAM=false) ou une vidéo, puis écrit :
     <sortie>/det/det.txt         détections YOLO (config.YOLO_MODEL), format MOT
     <sortie>/seqinfo.ini         nom, cadence, taille, nombre d'images
 
+`--detect-only <séquence>` ne fait que (re)générer `det/det.txt` pour une
+séquence existante, par exemple un jeu de données qui n'a pas de détections
+publiques (DanceTrack).
+
 La vérité terrain (`gt/gt.txt`) se construit ensuite avec
 tools/annotate_sequence.py, puis la séquence se passe à tools/sweep_deepsort.py.
 
@@ -74,16 +78,17 @@ def capture(source, seconds, fps, img_dir):
     return count, *size
 
 
-def detect(img_dir, count, det_path):
+def detect(seq_dir, count, det_path):
     """Détections YOLO au format MOT : pixels en base 1, comme les det.txt de MOT17."""
     from ultralytics import YOLO
 
     from core.face_body_tracker import FaceBodyTracker
+    from tools.eval_mot import frame_path
 
     yolo = YOLO(config.YOLO_MODEL, task="pose")
     with open(det_path, "w") as out:
         for frame_id in range(1, count + 1):
-            image = cv2.imread(os.path.join(img_dir, f"{frame_id:06d}.jpg"))
+            image = cv2.imread(frame_path(seq_dir, frame_id))
             for result in yolo.predict(image, classes=[0], conf=config.YOLO_CONF_THRESHOLD,
                                        device=0, verbose=False):
                 for (left, top, width, height), conf, *_ in FaceBodyTracker._parse_result(result):
@@ -104,12 +109,25 @@ def write_seqinfo(path, name, fps, count, width, height):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--output", required=True, help="dossier de la séquence à créer")
+    parser.add_argument("--output", help="dossier de la séquence à créer")
+    parser.add_argument("--detect-only", nargs="+", metavar="SEQUENCE",
+                        help="générer det/det.txt pour des séquences existantes")
     parser.add_argument("--seconds", type=int, default=90)
     parser.add_argument("--fps", type=int, default=15,
                         help="cadence enregistrée ; proche de celle du pipeline")
     parser.add_argument("--video", help="fichier vidéo au lieu de la caméra configurée")
     args = parser.parse_args()
+
+    if args.detect_only:
+        from tools.eval_mot import sequence_length
+
+        for seq_dir in (os.path.expanduser(p) for p in args.detect_only):
+            os.makedirs(os.path.join(seq_dir, "det"), exist_ok=True)
+            detect(seq_dir, sequence_length(seq_dir), os.path.join(seq_dir, "det", "det.txt"))
+            print(f"Détections écrites : {seq_dir}/det/det.txt", flush=True)
+        return
+    if not args.output:
+        parser.error("--output est requis pour enregistrer une séquence")
 
     output = os.path.expanduser(args.output)
     img_dir = os.path.join(output, "img1")
@@ -125,7 +143,7 @@ def main():
     write_seqinfo(os.path.join(output, "seqinfo.ini"), os.path.basename(output.rstrip("/")),
                   args.fps, count, width, height)
     print(f"{count} images {width}x{height}. Détections YOLO…")
-    detect(img_dir, count, os.path.join(output, "det", "det.txt"))
+    detect(output, count, os.path.join(output, "det", "det.txt"))
     print(f"Séquence prête : {output}\n"
           f"Étape suivante : uv run -m tools.annotate_sequence {output}")
 
