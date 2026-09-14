@@ -16,15 +16,26 @@ import sys
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 sys.modules.setdefault('ultralytics', MagicMock())
-sys.modules.setdefault('deep_sort_realtime', MagicMock())
-sys.modules.setdefault('deep_sort_realtime.deepsort_tracker', MagicMock())
 sys.modules.setdefault('insightface', MagicMock())
 sys.modules.setdefault('insightface.app', MagicMock())
 
 import config  # noqa: E402
 from core.face_body_tracker import FaceBodyTracker  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_body_tracker(monkeypatch):
+    """Ni DeepSORT ni son embedder : aucun test de ce fichier ne s'en sert.
+
+    Remplacé le temps du test plutôt que dans sys.modules : un faux
+    deep_sort_realtime y resterait pour les fichiers de test suivants
+    (cf. commit cadc2a7).
+    """
+    monkeypatch.setattr("core.face_body_tracker.build_body_tracker", MagicMock)
+
 
 FRAME = np.zeros((720, 1280, 3), dtype=np.uint8)
 

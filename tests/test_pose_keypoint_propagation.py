@@ -25,15 +25,22 @@ _mock_ultralytics = MagicMock()
 _mock_ultralytics.YOLO = MagicMock(return_value=MagicMock())
 sys.modules.setdefault('ultralytics', _mock_ultralytics)
 
-_mock_deepsort_module = MagicMock()
-_mock_deepsort_module.DeepSort = MagicMock(return_value=MagicMock())
-sys.modules.setdefault('deep_sort_realtime', MagicMock())
-sys.modules.setdefault('deep_sort_realtime.deepsort_tracker', _mock_deepsort_module)
-
 sys.modules.setdefault('insightface', MagicMock())
 sys.modules.setdefault('insightface.app', MagicMock())
 
 from core.face_body_tracker import FaceBodyTracker  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_body_tracker(monkeypatch):
+    """Ni DeepSORT ni son embedder : aucun test de ce fichier ne s'en sert.
+
+    Remplacé le temps du test plutôt que dans sys.modules : un faux
+    deep_sort_realtime y resterait pour les fichiers de test suivants
+    (cf. commit cadc2a7).
+    """
+    monkeypatch.setattr("core.face_body_tracker.build_body_tracker", MagicMock)
+
 
 # 7 keypoints COCO : nez, 2 yeux, 2 oreilles, 2 épaules
 KPS_7 = [(100.0, 50.0, 0.9), (105.0, 45.0, 0.8), (95.0, 45.0, 0.8),
