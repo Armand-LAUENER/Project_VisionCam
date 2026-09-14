@@ -72,7 +72,12 @@ FRAME_SKIP = 2
 
 # DeepSORT — tracker de corps pour le pipeline Body-First.
 DEEPSORT_MAX_AGE = 70           # Frames avant suppression d'un track perdu.
-DEEPSORT_N_INIT = 3             # Confirmations minimales avant qu'un track soit actif.
+# Confirmations minimales avant qu'un track soit actif. 5 plutôt que 3 (défaut
+# du papier) : mesuré sur trois jeux de données en validation (MOT17,
+# DanceTrack, CHIRLA ; cf. README, section Réglage du tracking), les
+# changements d'identité baissent de 10 à 17 % pour un IDF1 inchangé à ±1,6
+# point. Coût : une nouvelle personne apparaît 2 images plus tard.
+DEEPSORT_N_INIT = 5
 DEEPSORT_EMBEDDER = "mobilenet" # Embedder d'apparence pour la ReID (vêtements).
 DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 
@@ -91,14 +96,11 @@ DEEPSORT_EMBEDDER_ENGINE = os.getenv("DEEPSORT_EMBEDDER_ENGINE", "")
 DEEPSORT_NN_BUDGET = 100
 
 # Seuils d'association : les défauts de deep_sort_realtime, repris du papier.
-# Balayés avec tools/sweep_deepsort.py sur MOT17 (réglage sur 05, 09, 11 ;
-# validation sur 02, 04, 10, 13) : aucune combinaison ne fait mieux sur les
-# séquences de validation une fois les pistes en roue libre masquées (cf.
-# FaceBodyTracker.update), et max_age y devient presque indifférent. cos=0.15
-# et n_init=5 réduisent les changements d'identité (523 → 348) au prix de
-# l'IDF1 (54,5 → 52,3 %) : à vérifier sur une séquence webcam annotée
-# (tools/record_sequence.py, tools/annotate_sequence.py), plus proche de
-# VisionCam que MOT17, qui filme de loin.
+# Balayés avec tools/sweep_deepsort.py sur MOT17, DanceTrack et CHIRLA, en
+# validation : le meilleur seuil cosinus dépend de la scène (0,15 sur MOT17,
+# 0,25-0,3 sur DanceTrack et CHIRLA) et 0,15 perd 2 à 10 points d'IDF1 hors de
+# MOT17 ; 0,2 reste le compromis. max_age=150 gagne sur DanceTrack et CHIRLA
+# mais perd 1 point d'IDF1 sur MOT17 : 70 est conservé.
 #   distance cosinus : au-delà, l'apparence est jugée trop différente
 #   distance IoU     : au-delà, le recouvrement est jugé insuffisant
 DEEPSORT_MAX_COSINE_DISTANCE = 0.2

@@ -94,8 +94,11 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   - [x] Balayage MOT17 avec validation (`tools/sweep_deepsort.py`) : pas de
     meilleurs seuils, mais les pistes en roue libre sont maintenant masquées
     (MOTA 21,5 → 44,2 %, IDF1 48,3 → 54,4 % en validation). Cf. README.
+  - [x] Validation sur CHIRLA (bureau, 30 i/s) et DanceTrack : `n_init=5`
+    retenu (−10 à −17 % de changements d'identité sur les trois jeux),
+    `cos=0.15` et `max_age=150` écartés. Cf. README.
   - [ ] Séquences webcam annotées (`tools/record_sequence.py`,
-    `tools/annotate_sequence.py`) pour trancher sur `cos=0.15` / `n_init=5`.
+    `tools/annotate_sequence.py`) : dernière vérification sur le cas réel.
 
 - [x] **`RECOGNITION_THRESHOLD` incohérent**
   Le README annonce 0.65, `config.py` vaut 0.45, et le commentaire « plus bas =
