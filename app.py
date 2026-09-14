@@ -1,8 +1,17 @@
+import os
+
+# OpenBLAS ne lit cette variable qu'au chargement de numpy : elle doit précéder
+# tous les imports. Ses threads se disputaient le CPU avec torch et
+# onnxruntime pour des matrices trop petites pour en profiter (distances
+# cosinus de DeepSORT) : sur MOT17-04, l'association passait de 2 à 24 ms et le
+# prétraitement des crops de 3 à 23 ms. setdefault laisse la main à un réglage
+# explicite de l'environnement.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 from flask import Flask, render_template, Response, jsonify, request
 import cv2
 import logging
 import numpy as np
-import os
 import queue
 import statistics
 import threading
