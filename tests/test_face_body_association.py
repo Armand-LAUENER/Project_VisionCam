@@ -315,6 +315,40 @@ class TestIdentityUpdateStrategy:
 # Tests : logique de fraîcheur du visage (FACE_FRESHNESS_FRAMES)
 # ─────────────────────────────────────────────────────────────────────────────
 
+class TestHeadCropBox:
+    """Recadrage de tête partagé par la reconnaissance et la capture d'enrôlement."""
+
+    SHAPE = (720, 1280, 3)
+
+    def test_centred_on_visible_face_keypoints(self):
+        kps = [(600.0, 200.0, 0.9), (620.0, 190.0, 0.9), (580.0, 190.0, 0.9),
+               (640.0, 200.0, 0.1), (560.0, 200.0, 0.1)]
+
+        x1, y1, x2, y2 = FaceBodyTracker.head_crop_box(self.SHAPE, [500, 150, 700, 700], kps)
+
+        assert ((x1 + x2) // 2, (y1 + y2) // 2) == (600, 193)
+        assert x2 - x1 == y2 - y1
+
+    def test_falls_back_on_the_top_of_the_body(self):
+        # Assez bas dans l'image pour que le carré ne soit pas rogné.
+        x1, y1, x2, y2 = FaceBodyTracker.head_crop_box(self.SHAPE, [500, 400, 700, 700], None)
+
+        assert (x1 + x2) // 2 == 600 and (y1 + y2) // 2 == 400 + int(300 * 0.15)
+
+    def test_clipped_to_the_frame(self):
+        box = FaceBodyTracker.head_crop_box(self.SHAPE, [0, 0, 100, 400], [(5.0, 5.0, 0.9)] * 5)
+
+        assert box[0] == 0 and box[1] == 0
+
+    def test_uses_only_the_five_face_keypoints_of_pose_keypoints(self):
+        """TrackedPerson.pose_kps a 7 points : les épaules ne déplacent pas la tête."""
+        face = [(600.0, 200.0, 0.9)] * 5
+        shoulders = [(450.0, 400.0, 0.9), (750.0, 400.0, 0.9)]
+
+        assert (FaceBodyTracker.head_crop_box(self.SHAPE, [500, 150, 700, 700], face + shoulders)
+                == FaceBodyTracker.head_crop_box(self.SHAPE, [500, 150, 700, 700], face))
+
+
 class TestMinimumFaceSize:
     """
     Un visage trop petit ne doit décider d'aucun nom : sur CHIRLA, 1,7 % de

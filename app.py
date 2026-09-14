@@ -778,17 +778,95 @@ def bench_pose():
 
 @app.route('/status')
 def status():
+    """
+    État courant.
+
+    Réponse : { currently_present[], fps, total_known,
+                tracks: [{ track_id, name, bbox: [x1, y1, x2, y2], pose }],
+                frame_size: [largeur, hauteur] | null }
+
+    `tracks` ne contient que les personnes visibles sur la dernière image, en
+    pixels de cette image : la page les superpose au flux pour cliquer dessus.
+    """
     with state.lock:
+        poses = {p['track_id']: p['pose'] for p in state.currently_present}
+        tracks = [{'track_id': str(p.track_id), 'name': p.name,
+                   'bbox': [int(v) for v in p.body_bbox], 'pose': poses.get(p.track_id)}
+                  for p in state.bench_persons]
+        frame = state.bench_frame
         return jsonify({
             'currently_present': state.currently_present,
             'fps': state.fps,
             'total_known': state.total_known,
+            'tracks': tracks,
+            'frame_size': [frame.shape[1], frame.shape[0]] if frame is not None else None,
         })
 
 
 # ══════════════════════════════════════════
-# LANCEMENT
+# CAPTURE D'UNE PERSONNE DU FLUX
 # ══════════════════════════════════════════
+# Poses du mode guidé : un template par angle (enroll_person_multitemplate).
+CAPTURE_LABELS = ('Face', 'ProfilG', 'ProfilD')
+
+
+@app.route('/api/capture', methods=['POST'])
+def api_capture():
+    """
+    Enrôle la personne désignée dans le flux (clic sur sa boîte).
+
+    Entrée (JSON) : { name, track_id, label? } — label ∈ CAPTURE_LABELS pour le
+    mode guidé (un template par angle), absent pour ajouter une photo.
+
+    Réponse : 200 | 400 champ invalide | 404 personne plus visible
+              | 422 aucun visage, ou visage trop petit — { success, message, total_known }
+    """
+    body = request.get_json(silent=True) or {}
+    name = str(body.get('name', '')).strip()
+    track_id = str(body.get('track_id', '')).strip()
+    label = body.get('label')
+    if not name or not track_id:
+        return jsonify({'success': False, 'message': 'Champs "name" et "track_id" requis.'}), 400
+    if label is not None and label not in CAPTURE_LABELS:
+        return jsonify({'success': False,
+                        'message': f'Label invalide : attendu {", ".join(CAPTURE_LABELS)}.'}), 400
+
+    with state.lock:
+        frame = state.bench_frame
+        person = next((p for p in state.bench_persons if str(p.track_id) == track_id), None)
+    if frame is None or person is None:
+        return jsonify({'success': False,
+                        'message': "Cette personne n'est plus visible : cliquez à nouveau."}), 404
+
+    box = FaceBodyTracker.head_crop_box(frame.shape, person.body_bbox, person.pose_kps)
+    if box is None:
+        return jsonify({'success': False, 'message': 'Personne trop petite dans l\'image.'}), 422
+    x1, y1, x2, y2 = box
+    crop = frame[y1:y2, x1:x2].copy()
+
+    # Même visage que celui que la reconnaissance verra : le plus proche du
+    # centre du recadrage de tête.
+    face = face_recognizer.recognize_center_face(crop)
+    if face is None:
+        return jsonify({'success': False,
+                        'message': 'Aucun visage détecté : la personne doit regarder vers la caméra.'}), 422
+    fx1, fy1, fx2, fy2 = face['bbox']
+    min_side = 2 * config.RECOGNITION_MIN_FACE_PX
+    if min(fx2 - fx1, fy2 - fy1) < min_side:
+        return jsonify({'success': False,
+                        'message': f'Visage trop petit ({min(fx2 - fx1, fy2 - fy1)} px, '
+                                   f'{min_side} px minimum) : rapprochez-vous de la caméra.'}), 422
+
+    if label is None:
+        success, message = face_recognizer.enroll_person_average(name, [crop])
+    else:
+        success, message = face_recognizer.enroll_person_multitemplate(name, {label: crop})
+    _refresh_total_known()
+    code = 200 if success else (400 if message.startswith(('Nom invalide', 'Label')) else 422)
+    return jsonify({'success': success, 'message': message,
+                    'total_known': state.total_known}), code
+
+
 # ══════════════════════════════════════════
 # HISTORIQUE DES PRÉSENCES
 # ══════════════════════════════════════════
@@ -838,6 +916,9 @@ def api_history_csv():
                     headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 
 
+# ══════════════════════════════════════════
+# LANCEMENT
+# ══════════════════════════════════════════
 if __name__ == '__main__':
     camera_thread = threading.Thread(target=camera_loop, daemon=True)
     process_thread = threading.Thread(target=processing_loop, daemon=True)

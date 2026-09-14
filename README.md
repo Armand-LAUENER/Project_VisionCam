@@ -498,7 +498,8 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 |:--------|:-------|:------------|
 | `GET` | `/` | Interface web (stream + liste de présence) |
 | `GET` | `/video` | Flux MJPEG `multipart/x-mixed-replace` |
-| `GET` | `/status` | `{ currently_present[], fps, total_known }` |
+| `GET` | `/status` | `{ currently_present[], fps, total_known, tracks[], frame_size }` — `tracks` : boîtes des personnes visibles |
+| `POST` | `/api/capture` | Enrôle la personne cliquée (`{name, track_id, label?}`), label `Face`/`ProfilG`/`ProfilD` en mode guidé |
 | `POST` | `/enroll` | Enrôlement depuis fichiers image |
 | `POST` | `/capture` | Enrôlement depuis la frame courante (409 si plusieurs personnes) |
 | `POST` | `/rebuild` | Reconstruction base embeddings depuis `known_faces/` (409 si déjà en cours) |
