@@ -85,6 +85,28 @@ def tracker_no_gpu():
     yield t
 
 
+class TestYoloModelLoading:
+
+    def test_missing_engine_explains_how_to_build_it(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(config, 'YOLO_MODEL', str(tmp_path / 'yolov8s-pose.engine'))
+
+        with pytest.raises(FileNotFoundError, match='yolo export'):
+            FaceBodyTracker(MagicMock())
+
+    def test_existing_engine_is_loaded(self, monkeypatch, tmp_path):
+        engine = tmp_path / 'yolov8s-pose.engine'
+        engine.write_bytes(b'')
+        monkeypatch.setattr(config, 'YOLO_MODEL', str(engine))
+
+        FaceBodyTracker(MagicMock())
+
+    def test_missing_pt_is_left_to_ultralytics(self, monkeypatch):
+        """Un .pt absent est auto-téléchargé par ultralytics : pas d'erreur ici."""
+        monkeypatch.setattr(config, 'YOLO_MODEL', 'absent-pose.pt')
+
+        FaceBodyTracker(MagicMock())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tests : _find_containing_track  (fallback nose-proximity)
 # ─────────────────────────────────────────────────────────────────────────────
