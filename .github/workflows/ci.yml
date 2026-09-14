@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # opencv-python (non headless) charge libGL et libglib à l'import.
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # Pas de GPU sur le runner : torch CPU au lieu de cu121. deepsort-rs est
+      # construit depuis git avec le cargo préinstallé sur l'image Ubuntu.
+      - name: Install dependencies
+        run: uv sync --locked --no-group cu121 --group cpu
+
+      - name: Lint
+        run: uv run --no-sync ruff check .
+
+      - name: Test
+        run: uv run --no-sync pytest tests/ -q
