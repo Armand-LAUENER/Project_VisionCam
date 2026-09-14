@@ -33,7 +33,7 @@ def make_recognizer(tmp_path, people):
     """Recognizer avec Bob en base, et `people` ({nom: embedding}) sur disque."""
     recognizer = object.__new__(FaceRecognizer)
     recognizer.threshold = 0.45
-    recognizer.cache_path = str(tmp_path / "data" / "embeddings.pkl")
+    recognizer.cache_path = str(tmp_path / "data" / "embeddings.npz")
     recognizer.known_faces_dir = str(tmp_path / "known_faces")
     os.makedirs(os.path.dirname(recognizer.cache_path))
     recognizer.known_embeddings = [BOB]

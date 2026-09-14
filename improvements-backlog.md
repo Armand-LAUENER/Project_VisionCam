@@ -107,8 +107,10 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   demandent pas de GPU.
 
 - [ ] **Déploiement**
-  Serveur de dev Flask (`app.run`) → waitress ou gunicorn. Cache d'embeddings
-  en `pickle` → `.npz` (le chargement d'un `pickle` altéré peut exécuter du code).
+  Serveur de dev Flask (`app.run`) → waitress ou gunicorn (nouvelle dépendance,
+  à valider).
+  - [x] Cache d'embeddings en `pickle` → `.npz` (le chargement d'un `pickle`
+    altéré peut exécuter du code).
 
 ---
 
