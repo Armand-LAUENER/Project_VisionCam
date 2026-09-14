@@ -108,6 +108,9 @@ VisionCam/
 │   ├── bench_embedder.py     # Compare les embedders d'apparence (vitesse, fidélité)
 │   ├── export_embedder_engine.py # Construit le moteur TensorRT de l'embedder
 │   ├── eval_mot.py           # MOTA / IDF1 sur MOT17, balayage des seuils
+│   ├── sweep_deepsort.py     # Réglage des seuils DeepSORT avec validation
+│   ├── record_sequence.py    # Enregistre une séquence webcam au format MOT17
+│   ├── annotate_sequence.py  # Vérité terrain : pré-remplie, corrigée à la main
 │   ├── pose_threshold_study.py # Choix de POSE_MIN_SHOULDER_DIST_PX
 │   └── webcam_bridge.py      # Webcam Windows → flux MJPEG pour WSL2
 │
@@ -128,6 +131,7 @@ VisionCam/
 │   ├── test_pose_keypoint_propagation.py  # Keypoints YOLO → TrackedPerson
 │   ├── test_eval_mot.py                   # Outil MOTA / IDF1
 │   ├── test_web_routes.py                 # Page, routes Flask, flux MJPEG
+│   ├── test_annotate_sequence.py          # Logique d'annotation, formats MOT
 │   └── regression/                        # Un fichier par bug corrigé
 │
 ├── known_faces/             # Non inclus (RGPD) — voir section Enrôlement
@@ -284,6 +288,53 @@ l'algorithme, là où TensorRT garde le même réseau.
 
 ---
 
+## Réglage du tracking
+
+### Pistes en roue libre
+
+Quand une personne est occultée ou sort du champ, DeepSORT garde sa piste
+jusqu'à `DEEPSORT_MAX_AGE` images, avec une boîte prédite par le filtre de
+Kalman. `FaceBodyTracker` garde l'identité de ces pistes en mémoire, mais ne
+les affiche pas et ne les soumet pas à la reconnaissance faciale : seules les
+pistes appariées à une détection YOLO de l'image courante le sont
+(appariement un-pour-un par IoU). Avant, les boîtes fantômes restaient à
+l'écran et leur crop visage, qui montrait l'obstacle, partait à InsightFace.
+
+### Seuils DeepSORT
+
+`tools/sweep_deepsort.py` balaie `max_cosine_distance`, `max_iou_distance`,
+`max_age` et `n_init` sur des séquences de réglage, puis rejoue la meilleure
+combinaison sur des séquences de validation qu'elle n'a jamais vues. Les
+séquences MOT17 FRCNN les plus proches de VisionCam (05, 09, 11 : peu de
+monde, filmé de près) servent au réglage, les quatre autres à la validation.
+
+Résultats sur la validation (02, 04, 10, 13 ; détections publiques) :
+
+| Pistes en roue libre | Seuils (cos / iou / age / init) | MOTA | IDF1 | Changements d'ID | FP |
+|:---------------------|:--------------------------------|-----:|-----:|-----------------:|---:|
+| affichées (avant) | 0.2 / 0.7 / 70 / 3 (actuels) | 21,5 % | 48,3 % | 715 | 31 865 |
+| affichées | 0.15 / 0.3 / 30 / 5 (meilleurs) | 39,2 % | 50,5 % | 310 | 12 407 |
+| **masquées** | **0.2 / 0.7 / 70 / 3 (actuels)** | **44,2 %** | **54,4 %** | 550 | 6 471 |
+| masquées | 0.15 / 0.5 / 70 / 5 (meilleurs) | 43,9 % | 52,3 % | 348 | 5 568 |
+
+Le gain vient de masquer les pistes en roue libre, pas des seuils. Une fois
+les fantômes masqués, les seuils réglés gagnent sur les séquences de réglage
+(IDF1 62,5 % contre 54,9 %) mais perdent sur la validation : les seuils
+actuels sont conservés, et `max_age` (70, 150 ou 300) n'y change presque
+rien. `cos=0.15` et `n_init=5` restent candidats : ils réduisent les
+changements d'identité d'un tiers, au prix de 2 points d'IDF1.
+
+Réserve : MOT17 filme des foules de loin. Pour valider sur le cas réel :
+
+```bash
+uv run -m tools.record_sequence --seconds 90 --output ~/datasets/visioncam/scene-01
+uv run -m tools.annotate_sequence ~/datasets/visioncam/scene-01   # corriger les identités
+uv run -m tools.sweep_deepsort --only-updated --tune ~/datasets/visioncam/scene-01 \
+    --grid cos=0.15,0.2 init=3,5 --validate ~/datasets/visioncam/scene-02
+```
+
+---
+
 ## Tracker Rust (optionnel)
 
 L'association de tracks — filtre de Kalman, matching cascade, passage IoU —
@@ -419,7 +470,7 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 
 ```bash
 uv run pytest tests/
-# 144 tests — 0 GPU requis, ~7 s
+# 160 tests — 0 GPU requis, ~5 s
 uv run ruff check .
 ```
 

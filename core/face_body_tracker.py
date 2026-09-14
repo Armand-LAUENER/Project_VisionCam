@@ -36,6 +36,41 @@ YOLO_ENGINE_EXPORT_COMMAND = (
 )
 
 
+# IoU minimale pour qu'une piste soit considérée comme détectée sur l'image.
+TRACK_DETECTION_MIN_IOU = 0.3
+
+
+def match_tracks_to_detections(track_boxes: list, detection_boxes: list,
+                               min_iou: float = TRACK_DETECTION_MIN_IOU) -> dict[int, int]:
+    """Appariement un-pour-un piste → détection, par IoU décroissante.
+
+    `track_boxes` en (x1, y1, x2, y2), `detection_boxes` en (x, y, w, h).
+    Retourne {indice de piste: indice de détection}. Une détection ne sert
+    qu'une piste : sa vraie piste (IoU proche de 1) l'emporte sur une piste en
+    roue libre dont la boîte prédite la chevauche. Une piste absente du
+    résultat n'a pas été détectée sur cette image.
+    """
+    pairs = []
+    for i, (tx1, ty1, tx2, ty2) in enumerate(track_boxes):
+        for j, (dx, dy, dw, dh) in enumerate(detection_boxes):
+            iw = min(tx2, dx + dw) - max(tx1, dx)
+            ih = min(ty2, dy + dh) - max(ty1, dy)
+            if iw <= 0 or ih <= 0:
+                continue
+            inter = iw * ih
+            union = (tx2 - tx1) * (ty2 - ty1) + dw * dh - inter
+            iou = inter / union if union > 0 else 0.0
+            if iou > min_iou:
+                pairs.append((iou, i, j))
+    matches: dict[int, int] = {}
+    used_detections = set()
+    for _iou, i, j in sorted(pairs, reverse=True):
+        if i not in matches and j not in used_detections:
+            matches[i] = j
+            used_detections.add(j)
+    return matches
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Structures de données
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,13 +171,21 @@ class FaceBodyTracker:
         # Étape 2b : Mise à jour du nose_map par IoU matching YOLO↔tracks
         # track.others n'est pas fiable dans DeepSORT 1.3.x → on maintient
         # notre propre dict { track_id: (nx, ny, nc) }.
-        self._update_nose_map(active_tracks, body_detections)
+        visible_ids = self._update_nose_map(active_tracks, body_detections)
+
+        # Une piste confirmée mais non détectée sur cette image est en roue
+        # libre (personne occultée ou sortie) : sa boîte n'est qu'une
+        # prédiction. Elle garde son identité en mémoire jusqu'à max_age, mais
+        # n'est ni affichée ni soumise à la reconnaissance, dont le crop
+        # montrerait l'obstacle. Mesuré sur MOT17 (validation, cf. README) :
+        # MOTA 21,5 → 44,2 %, IDF1 48,3 → 54,4 %.
+        visible_tracks = [t for t in active_tracks if t.track_id in visible_ids]
 
         # Étapes 3 & 4 : Reconnaissance faciale intelligente (cadencée)
-        if frame_count % config.FACE_RECOGNITION_SKIP == 0 and active_tracks:
+        if frame_count % config.FACE_RECOGNITION_SKIP == 0 and visible_tracks:
 
             tracks_to_recognize = []
-            for track in active_tracks:
+            for track in visible_tracks:
                 identity = self._identity_map.get(track.track_id, {})
                 name = identity.get('name', 'Inconnu')
                 last_face_frame = identity.get('last_face_frame', -1)
@@ -161,12 +204,13 @@ class FaceBodyTracker:
 
             if tracks_to_recognize:
                 faces = self._recognize_faces_for_tracks(frame, tracks_to_recognize)
-                self._associate_faces_to_tracks(active_tracks, faces, frame_count)
+                self._associate_faces_to_tracks(visible_tracks, faces, frame_count)
 
         # Étape 5 : Construire les résultats
-        results = self._build_results(active_tracks)
+        results = self._build_results(visible_tracks)
 
-        # Nettoyage : purger les entrées des tracks disparus
+        # Nettoyage : purger les entrées des tracks disparus. Les pistes en
+        # roue libre restent : leur identité doit survivre à l'occlusion.
         active_ids = {t.track_id for t in active_tracks}
         self._identity_map = {tid: v for tid, v in self._identity_map.items() if tid in active_ids}
         self._vote_buffer  = {tid: v for tid, v in self._vote_buffer.items()  if tid in active_ids}
@@ -180,53 +224,40 @@ class FaceBodyTracker:
     # Étape 2b — Mise à jour du nose_map (bypass track.others)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _update_nose_map(self, active_tracks: list, body_detections: list) -> None:
+    def _update_nose_map(self, active_tracks: list, body_detections: list) -> set:
         """
-        Associe chaque track confirmé à la détection YOLO la plus proche (IoU)
-        et met à jour self._nose_map[track_id] avec le keypoint nez correspondant.
+        Associe chaque track confirmé à sa détection YOLO (IoU, un-pour-un) et
+        met à jour ses keypoints. Retourne les identifiants des tracks
+        détectés sur cette image.
 
         Nécessaire car track.others n'est pas propagé de façon fiable par
-        deep_sort_realtime 1.3.x pour les tracks confirmés.
+        deep_sort_realtime 1.3.x pour les tracks confirmés. L'appariement
+        un-pour-un empêche une piste en roue libre de récupérer les keypoints
+        de la personne dont sa boîte prédite chevauche la détection.
         """
-        for track in active_tracks:
-            tx1, ty1, tx2, ty2 = track.to_ltrb()
-            best_iou = 0.0
-            best_nose = None
-            best_face_kps = None
-            best_pose_kps = None
-
-            for det_bbox, _conf, _cls, det_others in body_detections:
-                dx, dy, dw, dh = det_bbox
-                dx2, dy2 = dx + dw, dy + dh
-
-                ix1, iy1 = max(tx1, dx), max(ty1, dy)
-                ix2, iy2 = min(tx2, dx2), min(ty2, dy2)
-                inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-                if inter == 0.0:
-                    continue
-                union = (tx2 - tx1) * (ty2 - ty1) + dw * dh - inter
-                iou = inter / union if union > 0.0 else 0.0
-
-                if iou > best_iou:
-                    best_iou = iou
-                    best_nose = det_others.get('nose')
-                    best_face_kps = det_others.get('face_kps')
-                    best_pose_kps = det_others.get('pose_kps')
-
-            if best_iou > 0.3:
-                if best_nose is not None:
-                    self._nose_map[track.track_id] = best_nose
-                if best_face_kps is not None:
-                    self._face_kps_map[track.track_id] = best_face_kps
-                if best_pose_kps is not None:
-                    self._pose_kps_map[track.track_id] = best_pose_kps
-            # Si pas de match : on conserve les valeurs précédentes (track coasté)
+        matches = match_tracks_to_detections(
+            [track.to_ltrb() for track in active_tracks],
+            [det_bbox for det_bbox, *_ in body_detections],
+        )
+        visible_ids = set()
+        for track_index, det_index in matches.items():
+            track_id = active_tracks[track_index].track_id
+            det_others = body_detections[det_index][3]
+            visible_ids.add(track_id)
+            if det_others.get('nose') is not None:
+                self._nose_map[track_id] = det_others['nose']
+            if det_others.get('face_kps') is not None:
+                self._face_kps_map[track_id] = det_others['face_kps']
+            if det_others.get('pose_kps') is not None:
+                self._pose_kps_map[track_id] = det_others['pose_kps']
+        # Sans match, un track garde ses keypoints précédents (roue libre).
 
         # Purger les tracks disparus
         active_ids = {t.track_id for t in active_tracks}
         self._nose_map    = {tid: v for tid, v in self._nose_map.items()    if tid in active_ids}
         self._face_kps_map = {tid: v for tid, v in self._face_kps_map.items() if tid in active_ids}
         self._pose_kps_map = {tid: v for tid, v in self._pose_kps_map.items() if tid in active_ids}
+        return visible_ids
 
     # ─────────────────────────────────────────────────────────────────────────
     # Étape 1 — Détection YOLO-Pose

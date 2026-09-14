@@ -90,10 +90,15 @@ DEEPSORT_EMBEDDER_ENGINE = os.getenv("DEEPSORT_EMBEDDER_ENGINE", "")
 # 100 est la valeur du papier Wojke et al. 2017 et le défaut du crate.
 DEEPSORT_NN_BUDGET = 100
 
-# Seuils d'association. Ce sont les défauts de deep_sort_realtime, repris du
-# papier ; ils n'ont jamais été réglés pour VisionCam, où les personnes sont
-# vues de beaucoup plus près que dans MOT17. tools/eval_mot.py sait les
-# balayer, c'est la manière de les choisir sur mesure plutôt qu'au jugé.
+# Seuils d'association : les défauts de deep_sort_realtime, repris du papier.
+# Balayés avec tools/sweep_deepsort.py sur MOT17 (réglage sur 05, 09, 11 ;
+# validation sur 02, 04, 10, 13) : aucune combinaison ne fait mieux sur les
+# séquences de validation une fois les pistes en roue libre masquées (cf.
+# FaceBodyTracker.update), et max_age y devient presque indifférent. cos=0.15
+# et n_init=5 réduisent les changements d'identité (523 → 348) au prix de
+# l'IDF1 (54,5 → 52,3 %) : à vérifier sur une séquence webcam annotée
+# (tools/record_sequence.py, tools/annotate_sequence.py), plus proche de
+# VisionCam que MOT17, qui filme de loin.
 #   distance cosinus : au-delà, l'apparence est jugée trop différente
 #   distance IoU     : au-delà, le recouvrement est jugé insuffisant
 DEEPSORT_MAX_COSINE_DISTANCE = 0.2

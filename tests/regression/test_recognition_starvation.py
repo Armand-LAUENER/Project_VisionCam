@@ -51,7 +51,12 @@ def make_track(track_id):
 def make_tracker(tracks, known):
     """Tracker dont InsightFace reconnaît `known` ({track_id: nom}) et rien d'autre."""
     tracker = FaceBodyTracker(MagicMock())
-    tracker._detect_bodies = lambda frame: []
+    # Une détection sur chaque piste : seules les pistes détectées sur l'image
+    # sont soumises à la reconnaissance.
+    tracker._detect_bodies = lambda frame: [
+        ([x1, y1, x2 - x1, y2 - y1], 0.9, 'person', {})
+        for x1, y1, x2, y2 in (t.to_ltrb() for t in tracks)
+    ]
     tracker.body_tracker = MagicMock()
     tracker.body_tracker.update.return_value = tracks
     tracker.submitted = []
