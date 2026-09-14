@@ -84,10 +84,11 @@ class PoseEstimator:
         ear_diff = abs(left_ear_vis - right_ear_vis)
 
         if ear_diff > 0.4:
+            # Nom du côté du visage montré : oreille gauche visible → profil gauche.
             if left_ear_vis > right_ear_vis:
-                return "Profil droit"  # On voit l'oreille gauche → tourné vers la droite
-            else:
                 return "Profil gauche"
+            else:
+                return "Profil droit"
 
         # Légère rotation basée sur l'offset du nez
         offset_ratio = nose_offset / shoulder_dist
@@ -95,9 +96,9 @@ class PoseEstimator:
         if abs(offset_ratio) < 0.15:
             return "Face"
         elif offset_ratio > 0.15:
-            return "Profil gauche"
-        else:
             return "Profil droit"
+        else:
+            return "Profil gauche"
 
     def release(self):
         """Libère les ressources."""
