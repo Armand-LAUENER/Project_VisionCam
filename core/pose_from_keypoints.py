@@ -101,10 +101,11 @@ class KeypointPoseEstimator:
             return "Dos"
 
         # Une oreille nettement plus sûre que l'autre → profil marqué.
+        # Le profil porte le nom du côté du visage montré à la caméra : oreille
+        # gauche (anatomique) visible → profil gauche.
         ear_diff = abs(left_ear_conf - right_ear_conf)
         if ear_diff > config.POSE_EAR_DIFF_THRESHOLD:
-            # Oreille gauche (anatomique) visible → la personne est tournée vers sa droite.
-            return "Profil droit" if left_ear_conf > right_ear_conf else "Profil gauche"
+            return "Profil gauche" if left_ear_conf > right_ear_conf else "Profil droit"
 
         # Sinon, décalage du nez par rapport au centre des épaules.
         shoulder_center_x = (left_sh_x + right_sh_x) / 2
@@ -112,7 +113,9 @@ class KeypointPoseEstimator:
 
         if abs(offset_ratio) < config.POSE_OFFSET_RATIO_THRESHOLD:
             return "Face"
-        return "Profil gauche" if offset_ratio > 0 else "Profil droit"
+        # Nez vers les x croissants (droite de l'image, caméra non miroir) : la
+        # personne tourne la tête vers sa gauche et montre son côté droit.
+        return "Profil droit" if offset_ratio > 0 else "Profil gauche"
 
     def release(self):
         """Aucune ressource à libérer — présent pour la parité d'interface."""

@@ -51,23 +51,23 @@ class TestClassification:
     def test_nez_centre_donne_face(self, estimator):
         assert estimator.estimate(make_kps()) == "Face"
 
-    def test_oreille_gauche_seule_visible_donne_profil_droit(self, estimator):
-        """Voir l'oreille gauche (anatomique) = personne tournée vers sa droite."""
+    def test_oreille_gauche_seule_visible_donne_profil_gauche(self, estimator):
+        """Le profil porte le nom du côté du visage montré : oreille gauche (anatomique) → gauche."""
         kps = make_kps(left_ear=(115.0, 45.0, 0.9), right_ear=(85.0, 45.0, 0.1))
-        assert estimator.estimate(kps) == "Profil droit"
-
-    def test_oreille_droite_seule_visible_donne_profil_gauche(self, estimator):
-        kps = make_kps(left_ear=(115.0, 45.0, 0.1), right_ear=(85.0, 45.0, 0.9))
         assert estimator.estimate(kps) == "Profil gauche"
 
-    def test_nez_decale_vers_les_x_croissants_donne_profil_gauche(self, estimator):
+    def test_oreille_droite_seule_visible_donne_profil_droit(self, estimator):
+        kps = make_kps(left_ear=(115.0, 45.0, 0.1), right_ear=(85.0, 45.0, 0.9))
+        assert estimator.estimate(kps) == "Profil droit"
+
+    def test_nez_decale_vers_les_x_croissants_donne_profil_droit(self, estimator):
         """Oreilles à égalité : c'est l'offset du nez qui tranche. ratio = +0.25."""
         kps = make_kps(nose=(120.0, 50.0, 0.9))
-        assert estimator.estimate(kps) == "Profil gauche"
-
-    def test_nez_decale_vers_les_x_decroissants_donne_profil_droit(self, estimator):
-        kps = make_kps(nose=(80.0, 50.0, 0.9))
         assert estimator.estimate(kps) == "Profil droit"
+
+    def test_nez_decale_vers_les_x_decroissants_donne_profil_gauche(self, estimator):
+        kps = make_kps(nose=(80.0, 50.0, 0.9))
+        assert estimator.estimate(kps) == "Profil gauche"
 
     def test_offset_sous_le_seuil_reste_face(self, estimator):
         """ratio = 8/80 = 0.10, sous POSE_OFFSET_RATIO_THRESHOLD (0.15)."""
@@ -150,14 +150,14 @@ class TestSeuilsConfigurables:
 
     def test_seuil_offset_pilote_le_verdict(self, estimator, monkeypatch):
         kps = make_kps(nose=(120.0, 50.0, 0.9))     # ratio = 0.25
-        assert estimator.estimate(kps) == "Profil gauche"
+        assert estimator.estimate(kps) == "Profil droit"
 
         monkeypatch.setattr(config, "POSE_OFFSET_RATIO_THRESHOLD", 0.30)
         assert estimator.estimate(kps) == "Face"
 
     def test_seuil_ecart_oreilles_pilote_le_verdict(self, estimator, monkeypatch):
         kps = make_kps(left_ear=(115.0, 45.0, 0.9), right_ear=(85.0, 45.0, 0.4))
-        assert estimator.estimate(kps) == "Profil droit"   # écart 0.5 > 0.4
+        assert estimator.estimate(kps) == "Profil gauche"  # écart 0.5 > 0.4
 
         monkeypatch.setattr(config, "POSE_EAR_DIFF_THRESHOLD", 0.6)
         assert estimator.estimate(kps) == "Face"           # écart passe sous le seuil
