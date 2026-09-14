@@ -33,6 +33,29 @@ _IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
 OK, INVALID, NOT_FOUND, CONFLICT, NO_FACE = "ok", "invalid", "not_found", "conflict", "no_face"
 
 
+def _onnx_providers() -> list:
+    """Providers onnxruntime d'InsightFace : TensorRT FP16 si configuré, sinon CUDA."""
+    if not config.INSIGHTFACE_TENSORRT:
+        return list(config.ONNX_PROVIDERS)
+    import onnxruntime as ort
+    import tensorrt  # noqa: F401 — charge libnvinfer, que le provider TensorRT ne trouve pas seul
+
+    # Sans le préchargement des bibliothèques CUDA de pip, onnxruntime retombait sur le CPU.
+    ort.preload_dlls()
+    os.makedirs(config.TRT_CACHE_DIR, exist_ok=True)
+    return [('TensorrtExecutionProvider', {
+        'trt_fp16_enable': True,
+        'trt_engine_cache_enable': True,
+        'trt_engine_cache_path': config.TRT_CACHE_DIR,
+    }), *config.ONNX_PROVIDERS]
+
+
+def _embedding_settings() -> str:
+    """Réglages dont dépendent les embeddings : un cache calculé avec d'autres est reconstruit."""
+    width, height = config.INSIGHTFACE_DET_SIZE
+    return f"{config.INSIGHTFACE_MODEL} det={width}x{height}"
+
+
 def _flatten_model_dir(name, root="~/.insightface"):
     """Remonte les .onnx d'un pack de modèles extrait dans un sous-dossier homonyme.
 
@@ -92,7 +115,7 @@ class FaceRecognizer:
         return FaceAnalysis(
             name=config.INSIGHTFACE_MODEL,
             allowed_modules=['detection', 'recognition'],
-            providers=config.ONNX_PROVIDERS,
+            providers=_onnx_providers(),
         )
 
     # =========================================================================
@@ -121,6 +144,7 @@ class FaceRecognizer:
             with np.load(self.cache_path, allow_pickle=False) as data:
                 names = [str(name) for name in data['names']]
                 embeddings = list(data['embeddings'])
+                settings = str(data['settings']) if 'settings' in data else "inconnus"
             if len(names) != len(embeddings):
                 raise ValueError(f"{len(names)} nom(s) pour {len(embeddings)} embedding(s)")
         except (EOFError, ValueError, KeyError, OSError, zipfile.BadZipFile) as e:
@@ -128,6 +152,13 @@ class FaceRecognizer:
                 "Cache illisible (%s: %s) — reconstruction depuis %s",
                 type(e).__name__, e, self.known_faces_dir,
             )
+            self._build_database()
+            return
+        if settings != _embedding_settings():
+            # Les visages de la base doivent être détectés comme ceux du flux :
+            # la taille d'entrée du détecteur déplace ses points de repère.
+            logger.info("Cache calculé avec d'autres réglages (%s, attendu %s) — reconstruction",
+                        settings, _embedding_settings())
             self._build_database()
             return
 
@@ -204,7 +235,7 @@ class FaceRecognizer:
             with os.fdopen(fd, 'wb') as f:
                 # Sur un objet fichier, savez n'ajoute pas d'extension au nom.
                 np.savez(f, names=np.array(self.known_names, dtype=str),
-                         embeddings=embeddings)
+                         embeddings=embeddings, settings=np.array(_embedding_settings()))
             os.replace(tmp_path, self.cache_path)
         except BaseException:
             if os.path.exists(tmp_path):

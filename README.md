@@ -112,6 +112,7 @@ VisionCam/
 │   ├── bench_pose.py         # Compare les deux sources d'orientation
 │   ├── bench_yolo.py         # Compare des variantes du modèle YOLO (.pt, TensorRT)
 │   ├── bench_embedder.py     # Compare les embedders d'apparence (vitesse, fidélité)
+│   ├── bench_face.py         # Compare des variantes de la reconnaissance faciale (vitesse, noms)
 │   ├── export_embedder_engine.py # Construit le moteur TensorRT de l'embedder
 │   ├── eval_mot.py           # MOTA / IDF1 sur MOT17, balayage des seuils
 │   ├── sweep_deepsort.py     # Réglage des seuils DeepSORT avec validation
@@ -225,6 +226,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `POSE_FACE_KP_MIN_VISIBLE` | `1` | Keypoints visibles min pour utiliser le centroïde |
 | `YOLO_MODEL` | `yolov8s-pose.pt` | Modèle YOLO (auto-téléchargé), ou `yolov8s-pose.engine` (TensorRT) |
 | `DEEPSORT_EMBEDDER_ENGINE` | vide | Moteur TensorRT de l'embedder ; vide = PyTorch |
+| `INSIGHTFACE_TENSORRT` | `false` | Reconnaissance faciale en TensorRT FP16 (moteurs dans `data/trt_cache/`) |
 | `DEEPSORT_MAX_AGE` | `70` | Frames avant suppression d'un track perdu |
 | `FRAME_SKIP` | `2` | Cadence de l'estimation d'orientation |
 | `POSE_SOURCE` | `yolo` | Orientation : `yolo` (keypoints, gratuit) ou `mediapipe` |
@@ -317,6 +319,37 @@ Pas de dégradation d'ensemble avec TensorRT. D'une séquence à l'autre, les
 associations à la limite du seuil basculent, sans tendance. Le calcul d'une
 image sur deux, l'autre piste envisagée, n'a pas été retenu : il change
 l'algorithme, là où TensorRT garde le même réseau.
+
+### Reconnaissance faciale InsightFace (~2 min au premier lancement)
+
+La reconnaissance était l'étape la plus lourde : SCRFD en 640×640 puis
+glintr100 (ResNet-100) en CUDA FP32, par crop de tête. Deux changements :
+
+- **SCRFD en 320×320**, par défaut. Les crops de tête font 250 px en médiane :
+  en 640 ils étaient agrandis, et les visages devenus trop gros étaient ratés.
+  La base d'embeddings est reconstruite au démarrage quand cette taille change.
+- **TensorRT FP16** pour les deux modèles, via le `TensorrtExecutionProvider`
+  d'onnxruntime : `INSIGHTFACE_TENSORRT=true` dans `.env`. Les moteurs se
+  construisent au premier lancement et sont gardés dans `data/trt_cache/`.
+
+#### Résultats mesurés
+
+`uv run -m tools.bench_face --gallery <…> --probe <…>` : crops de tête de
+l'application (YOLOv8-Pose + `head_crop_box`) sur CHIRLA, enrôlement sur deux
+séquences, reconnaissance sur deux autres prises des mois plus tard ; 620
+visages de test ≥ 40 px, seuil 0,45. Temps par crop, médiane / p95.
+
+| Variante | Détection | Embedding | Bons noms | Mauvais noms | « Inconnu » |
+|:---------|----------:|----------:|----------:|-------------:|------------:|
+| CUDA, SCRFD 640 (avant) | 10,5 / 20,5 ms | 9,0 / 33,4 ms | 410 | 16 | 180 |
+| TensorRT, SCRFD 640 | 5,3 / 9,3 ms | 3,7 / 18,9 ms | 411 | 18 | 177 |
+| TensorRT, SCRFD 384 | 2,5 / 6,1 ms | 3,3 / 16,7 ms | 413 | 15 | 184 |
+| **TensorRT, SCRFD 320** | **2,2 / 5,8 ms** | **3,3 / 16,3 ms** | **489** | 18 | **100** |
+| TensorRT, SCRFD 256 | 1,9 / 5,5 ms | 3,3 / 17,7 ms | 464 | 16 | 126 |
+
+Dans `FaceRecognizer`, sur 336 crops : 5,7 ms par crop en médiane avec
+TensorRT, 12,6 ms en CUDA (SCRFD 320 dans les deux cas). TensorRT et CUDA
+donnent les mêmes embeddings à 0,998 près (cosinus).
 
 ---
 

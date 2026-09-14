@@ -69,11 +69,23 @@ LOGIN_FAILURE_WINDOW_S = 300
 INSIGHTFACE_MODEL = "antelopev2"
 ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
-# Résolution d'entrée du détecteur de visages.
-# (640, 640) : bon compromis perf/précision pour flux 1080p, personnes à < 5m.
-# (320, 320) : +rapide, moins précis sur visages lointains.
-# (1280, 1280): détection longue distance, mais ~4x plus lent — éviter en temps réel.
-INSIGHTFACE_DET_SIZE = (640, 640)
+# Résolution d'entrée du détecteur de visages (SCRFD). Il ne voit que des crops
+# de tête (250 px de côté en médiane) : en 640, il les agrandissait et ratait
+# les visages devenus trop gros. Mesuré avec tools/bench_face.py sur CHIRLA
+# (TensorRT, 620 visages de test ≥ 40 px, seuil 0,45) :
+#   640 : 411 bons noms, 18 mauvais, 177 « Inconnu », détection 5,3 ms
+#   320 : 489 bons noms, 18 mauvais, 100 « Inconnu », détection 2,2 ms
+#   256 : 464 bons noms, 16 mauvais, 126 « Inconnu », détection 1,9 ms
+# Changer cette taille reconstruit la base d'embeddings au démarrage.
+INSIGHTFACE_DET_SIZE = (320, 320)
+
+# SCRFD et glintr100 en TensorRT FP16 (TensorrtExecutionProvider d'onnxruntime)
+# au lieu de CUDA FP32 : par crop, détection 10,5 → 2,2 ms et embedding
+# 9,0 → 3,3 ms en médiane, embeddings identiques à 0,998 près (cosinus).
+# Premier lancement : ~2 min de construction des moteurs, gardés dans
+# TRT_CACHE_DIR (propres au GPU et aux versions de TensorRT).
+INSIGHTFACE_TENSORRT = os.getenv("INSIGHTFACE_TENSORRT", "false").lower() == "true"
+TRT_CACHE_DIR = os.path.join(DATA_DIR, "trt_cache")
 
 # Similarité cosinus minimale pour valider un match (0.0–1.0).
 # Plus HAUT = plus strict : _identify teste `score >= seuil`.
