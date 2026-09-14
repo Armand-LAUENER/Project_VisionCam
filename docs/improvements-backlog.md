@@ -119,9 +119,11 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   Pas de `.github/`. Un workflow `pytest` + `ruff` suffit : les tests ne
   demandent pas de GPU.
 
-- [ ] **Déploiement**
+- [x] **Déploiement**
   Serveur de dev Flask (`app.run`) → waitress ou gunicorn (nouvelle dépendance,
   à valider).
+  → waitress (fonctionne aussi sous Windows, contrairement à gunicorn),
+  `SERVER_THREADS=16` : chaque flux MJPEG ouvert garde un thread.
   - [x] Cache d'embeddings en `pickle` → `.npz` (le chargement d'un `pickle`
     altéré peut exécuter du code).
 

@@ -690,7 +690,12 @@ if __name__ == '__main__':
     process_thread = threading.Thread(target=processing_loop, daemon=True)
     camera_thread.start()
     process_thread.start()
-    logger.info("Démarrage sur http://%s:%d", config.FLASK_HOST, config.FLASK_PORT)
+    logger.info("Démarrage sur http://%s:%d (waitress, %d threads)",
+                config.FLASK_HOST, config.FLASK_PORT, config.SERVER_THREADS)
 
-    app.run(host=config.FLASK_HOST, port=config.FLASK_PORT,
-            debug=config.DEBUG_MODE, threaded=True)
+    # waitress plutôt que le serveur de développement de Flask, qui n'est pas
+    # fait pour tourner en continu. Il fonctionne sous Linux comme sous Windows.
+    from waitress import serve
+
+    serve(app, host=config.FLASK_HOST, port=config.FLASK_PORT,
+          threads=config.SERVER_THREADS, ident="VisionCam")

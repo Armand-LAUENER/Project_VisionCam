@@ -73,7 +73,7 @@
 | Domaine | Outil | Version |
 |:--------|:------|:--------|
 | Langage | Python | 3.11+ |
-| Web | Flask | 3.1 |
+| Web | Flask + waitress (serveur WSGI) | 3.1 / 3.0 |
 | Reconnaissance faciale | InsightFace (antelopev2) + ONNX Runtime GPU | 0.7.3 |
 | Détection corps | YOLOv8-Pose (ultralytics) | 8.4 |
 | Tracking | DeepSORT + ReID MobileNet GPU | 1.3.2 |
@@ -186,7 +186,8 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 |:----------|:-------|:-----|
 | `USE_LOCAL_CAM` | `True` | Webcam locale si `True`, caméra IP sinon |
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
-| `FLASK_PORT` | `5000` | Port du serveur Flask |
+| `FLASK_PORT` | `5000` | Port du serveur HTTP |
+| `SERVER_THREADS` | `16` | Threads waitress ; chaque onglet ouvert sur le flux vidéo en garde un |
 | `RECOGNITION_THRESHOLD` | `0.45` | Similarité cosinus min pour identifier (0–1, plus haut = plus strict) |
 | `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames |
 | `FACE_FRESHNESS_FRAMES` | `30` | Frames avant passage en mode orange [BODY] |
