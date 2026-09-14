@@ -25,7 +25,7 @@ import threading
 import numpy as np
 import pytest
 
-from core.face_recognition import FaceRecognizer
+from core.face_recognition import FaceRecognizer, _embedding_settings
 
 
 def make_recognizer(tmp_path):
@@ -41,11 +41,12 @@ def make_recognizer(tmp_path):
     return recognizer
 
 
-def write_cache(recognizer, names, embeddings=None):
+def write_cache(recognizer, names, embeddings=None, settings=None):
     if embeddings is None:
         embeddings = np.ones((len(names), 512), dtype=np.float32)
     with open(recognizer.cache_path, "wb") as f:
-        np.savez(f, names=np.array(names, dtype=str), embeddings=embeddings)
+        np.savez(f, names=np.array(names, dtype=str), embeddings=embeddings,
+                 settings=np.array(settings or _embedding_settings()))
 
 
 def read_cached_names(recognizer):
@@ -127,6 +128,24 @@ class TestDamagedCacheIsRebuilt:
         assert recognizer.known_names == ["Armand", "Invité"]
         assert len(recognizer.known_embeddings) == 2
         assert recognizer.known_embeddings[0].shape == (512,)
+
+    @pytest.mark.parametrize("settings", ["antelopev2 det=640x640", None])
+    def test_cache_from_other_detector_settings_is_rebuilt(self, tmp_path, monkeypatch, settings):
+        """Base calculée avec un autre det_size (ou avant l'ajout des réglages
+        au cache) : ses visages ne sont pas repérés comme ceux du flux."""
+        recognizer = make_recognizer(tmp_path)
+        if settings is None:
+            with open(recognizer.cache_path, "wb") as f:
+                np.savez(f, names=np.array(["Armand"]), embeddings=np.ones((1, 512), np.float32))
+        else:
+            write_cache(recognizer, ["Armand"], settings=settings)
+        rebuilt = []
+        monkeypatch.setattr(recognizer, "_build_database", lambda: rebuilt.append(True))
+
+        recognizer._load_or_build_database()
+
+        assert rebuilt == [True]
+        assert recognizer.known_names == []
 
     def test_absent_cache_is_built(self, tmp_path):
         recognizer = make_recognizer(tmp_path)
