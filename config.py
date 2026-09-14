@@ -119,7 +119,9 @@ POSE_NOSE_CONF_THRESHOLD = 0.5
 #               personne et par frame.
 # "yolo"      : relecture des keypoints COCO déjà produits par YOLOv8-Pose sur
 #               GPU — aucune inférence supplémentaire.
-POSE_SOURCE = os.getenv("POSE_SOURCE", "mediapipe").strip().lower()
+# Défaut "yolo" : gratuit, et 100 % d'accord avec Mediapipe au-delà de
+# POSE_MIN_SHOULDER_DIST_PX ; en dessous il s'abstient au lieu de deviner.
+POSE_SOURCE = os.getenv("POSE_SOURCE", "yolo").strip().lower()
 
 # Seuils de la classification depuis les keypoints YOLO (POSE_SOURCE="yolo").
 # Repris de la logique Mediapipe ; la confiance de keypoint YOLO ne suit pas la
