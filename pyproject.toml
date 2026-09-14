@@ -38,6 +38,7 @@ rust = ["deepsort-rs"]
 dev = [
     "motmetrics==1.4.0",               # tools/eval_mot.py uniquement
     "mypy",
+    "playwright",                      # tests/ui : navigateur headless
     "pytest",
     "ruff",
 ]
