@@ -189,6 +189,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `FLASK_PORT` | `5000` | Port du serveur HTTP |
 | `SERVER_THREADS` | `16` | Threads waitress ; chaque onglet ouvert sur le flux vidéo en garde un |
 | `RECOGNITION_THRESHOLD` | `0.45` | Similarité cosinus min pour identifier (0–1, plus haut = plus strict) |
+| `RECOGNITION_MIN_FACE_PX` | `40` | Taille min d'un visage pour décider d'un nom ; en dessous, la piste garde le sien |
 | `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames |
 | `FACE_FRESHNESS_FRAMES` | `30` | Frames avant passage en mode orange [BODY] |
 | `POSE_NOSE_CONF_THRESHOLD` | `0.5` | Confiance minimale d'un keypoint facial |
