@@ -106,7 +106,13 @@ TRACKER_BACKEND = os.getenv("TRACKER_BACKEND", "python").strip().lower()
 
 # Modèle YOLO-Pose : détecte les corps ET les keypoints du squelette COCO (17 pts).
 # "yolov8s-pose.pt" = Small-Pose — auto-téléchargé au premier lancement.
-YOLO_MODEL = "yolov8s-pose.pt"
+#
+# "yolov8s-pose.engine" : le même modèle compilé en TensorRT FP16. Mesuré par
+# tools/bench_yolo.py sur MOT17-04 et MOT17-09 (1920x1080, RTX 4060) : étape
+# YOLO 1,8 à 2,2x plus rapide en médiane, p95 de ~33 ms à ~7-8 ms, keypoints
+# à 0,16-0,44 px près au p95. Un moteur ne vaut que pour le GPU et la version
+# de TensorRT qui l'ont construit : il n'est pas versionné, cf. README.
+YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8s-pose.pt")
 
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
 YOLO_CONF_THRESHOLD = 0.5

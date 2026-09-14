@@ -59,11 +59,13 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   même sans client connecté. Utiliser un `threading.Condition` ou un compteur de frames ;
   n'encoder que si au moins un client écoute.
 
-- [ ] **YOLO en TensorRT FP16**
+- [x] **YOLO en TensorRT FP16**
   `predict` tourne en PyTorch FP32, sans `half`.
   `yolo export model=yolov8s-pose.pt format=engine half=True`, puis
   `YOLO_MODEL = "yolov8s-pose.engine"`. Souvent ×2 à ×3 sur l'inférence
   YOLO sur ce type de GPU — à mesurer.
+  → Mesuré : ×1,8 à ×2,2 en médiane et p95 de ~33 à ~7-8 ms avec un moteur
+  384x640 ; un moteur 640x640 change les détections. Cf. README.
 
 - [ ] **Embedder MobileNetV2 du tracker**
   D'après le README, c'est lui qui domine le temps du tracker (déjà en `half=True`).

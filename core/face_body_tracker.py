@@ -17,6 +17,7 @@ from __future__ import annotations
 import itertools
 import logging
 import math
+import os
 from collections import deque
 
 import numpy as np
@@ -27,6 +28,12 @@ from core.face_recognition import FaceRecognizer
 from core.tracker_backends import build_body_tracker
 
 logger = logging.getLogger(__name__)
+
+# 384x640 : la taille letterbox d'une image 16:9 à 640 px de large. Un moteur
+# 640x640 ajoute du padding qui change les détections (cf. README).
+YOLO_ENGINE_EXPORT_COMMAND = (
+    "uv run yolo export model=yolov8s-pose.pt format=engine half=True device=0 imgsz=384,640"
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,6 +82,13 @@ class FaceBodyTracker:
 
     def __init__(self, face_recognizer: FaceRecognizer) -> None:
         logger.info("Chargement YOLO-Pose (%s)...", config.YOLO_MODEL)
+        # Sans ce contrôle, ultralytics tente de télécharger le .engine absent
+        # et échoue avec un message qui ne parle pas de TensorRT.
+        if config.YOLO_MODEL.endswith(".engine") and not os.path.exists(config.YOLO_MODEL):
+            raise FileNotFoundError(
+                f"Moteur TensorRT introuvable : {config.YOLO_MODEL}. Il se construit sur "
+                f"la machine qui l'utilise : {YOLO_ENGINE_EXPORT_COMMAND}"
+            )
         self.yolo = YOLO(config.YOLO_MODEL)
         logger.info("YOLO-Pose chargé")
 

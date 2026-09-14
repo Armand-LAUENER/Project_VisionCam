@@ -1056,6 +1056,22 @@ wheels = [
 ]
 
 [[package]]
+name = "onnxslim"
+version = "0.1.96"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama" },
+    { name = "ml-dtypes" },
+    { name = "onnx" },
+    { name = "packaging" },
+    { name = "sympy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/92/ac/b2230e9a0654a64d929398d703816b34655119998a9e136301c8f66585a3/onnxslim-0.1.96.tar.gz", hash = "sha256:386a1c64e61a66fb79cdd62de996323b9fb950d22de9b117cd31f211cac96048", size = 598898, upload-time = "2026-08-16T03:15:59.536Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/c0/7a491ab9ebc7fc7dfccb7ca36251d9d54ee35b9c88427733f05b09fc40e9/onnxslim-0.1.96-py3-none-any.whl", hash = "sha256:a43f800d39434e6b4d542abe17c25afb7fcc33aabf53d20464cb0dae0f66cbb6", size = 239022, upload-time = "2026-08-16T03:15:58.121Z" },
+]
+
+[[package]]
 name = "opencv-contrib-python"
 version = "4.11.0.86"
 source = { registry = "https://pypi.org/simple" }
@@ -1597,6 +1613,31 @@ wheels = [
 ]
 
 [[package]]
+name = "tensorrt-cu12"
+version = "10.16.1.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tensorrt-cu12-bindings" },
+    { name = "tensorrt-cu12-libs" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/a1/4841ac6b5e6d1d4a7f289013d359ed8479ec186a946e84446822cd4f5cc5/tensorrt_cu12-10.16.1.11.tar.gz", hash = "sha256:a044fe4a2e2e51fc205d806534102529c6f744402350b7730d221c99ffa6d269", size = 17921, upload-time = "2026-04-07T19:42:03.606Z" }
+
+[[package]]
+name = "tensorrt-cu12-bindings"
+version = "10.16.1.11"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/9a/0b148ab0e3019d0a43e0a2404ff52ac0b3c230dbf776f4aed8960c647cc9/tensorrt_cu12_bindings-10.16.1.11-cp311-none-manylinux_2_28_x86_64.whl", hash = "sha256:150ef2b672487e29a8ea916353467c3e199994fb33589167e3641a928e243aa7", size = 1346362, upload-time = "2026-04-07T19:48:43.236Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/f8/a264f4837ac8196ba4764a989e3526edc72ac83799c3b7659208e57b70dd/tensorrt_cu12_bindings-10.16.1.11-cp311-none-win_amd64.whl", hash = "sha256:425382e26ea149ac4a3cba3ae9b1abb4187a14c0cf9add58206d9bb1a236aa26", size = 963754, upload-time = "2026-04-07T19:46:28.672Z" },
+]
+
+[[package]]
+name = "tensorrt-cu12-libs"
+version = "10.16.1.11"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/9b/8d5b85c7cb7feaead7d462e81a4592a9d4ad3f581798f65ed34b765441f3/tensorrt_cu12_libs-10.16.1.11.tar.gz", hash = "sha256:53b45a3e82bead09638e7a3ddf4b927254b81fa0d924fe3fe594420a09ebf48b", size = 15757, upload-time = "2026-04-07T19:42:58.348Z" }
+
+[[package]]
 name = "threadpoolctl"
 version = "3.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1944,6 +1985,8 @@ cpu = [
     { name = "torchvision", version = "0.20.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'group-9-visioncam-cpu') or (sys_platform != 'darwin' and sys_platform != 'linux' and extra == 'group-9-visioncam-cpu') or (sys_platform == 'darwin' and extra == 'group-9-visioncam-cpu' and extra == 'group-9-visioncam-cu121') or (sys_platform == 'linux' and extra == 'group-9-visioncam-cpu' and extra == 'group-9-visioncam-cu121')" },
 ]
 cu121 = [
+    { name = "onnxslim" },
+    { name = "tensorrt-cu12" },
     { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" } },
     { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" } },
 ]
@@ -1979,6 +2022,8 @@ cpu = [
     { name = "torchvision", specifier = "==0.20.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "visioncam", group = "cpu" } },
 ]
 cu121 = [
+    { name = "onnxslim", specifier = ">=0.1.96" },
+    { name = "tensorrt-cu12", specifier = ">=10.3,<11" },
     { name = "torch", specifier = "==2.5.1", index = "https://download.pytorch.org/whl/cu121", conflict = { package = "visioncam", group = "cu121" } },
     { name = "torchvision", specifier = "==0.20.1", index = "https://download.pytorch.org/whl/cu121", conflict = { package = "visioncam", group = "cu121" } },
 ]

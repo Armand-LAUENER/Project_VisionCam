@@ -25,7 +25,12 @@ dependencies = [
 # Des groupes plutôt que des extras : uv run resynchronise l'environnement et
 # retirerait un extra non redemandé, alors que les groupes par défaut restent.
 [dependency-groups]
-cu121 = ["torch==2.5.1", "torchvision==0.20.1"]
+cu121 = [
+    "onnxslim>=0.1.96",
+    "tensorrt-cu12>=10.3,<11",
+    "torch==2.5.1",
+    "torchvision==0.20.1",
+]
 cpu = ["torch==2.5.1", "torchvision==0.20.1"]
 # TRACKER_BACKEND=rust. Pas sur PyPI : construit depuis git, il faut cargo.
 rust = ["deepsort-rs"]

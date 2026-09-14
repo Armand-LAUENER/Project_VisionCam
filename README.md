@@ -103,6 +103,7 @@ VisionCam/
 ├── tools/
 │   ├── bench_tracker.py      # Compare les deux backends (parité + vitesse)
 │   ├── bench_pose.py         # Compare les deux sources d'orientation
+│   ├── bench_yolo.py         # Compare des variantes du modèle YOLO (.pt, TensorRT)
 │   ├── eval_mot.py           # MOTA / IDF1 sur MOT17, balayage des seuils
 │   ├── pose_threshold_study.py # Choix de POSE_MIN_SHOULDER_DIST_PX
 │   └── webcam_bridge.py      # Webcam Windows → flux MJPEG pour WSL2
@@ -182,11 +183,50 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `FACE_FRESHNESS_FRAMES` | `30` | Frames avant passage en mode orange [BODY] |
 | `POSE_NOSE_CONF_THRESHOLD` | `0.5` | Confiance minimale d'un keypoint facial |
 | `POSE_FACE_KP_MIN_VISIBLE` | `1` | Keypoints visibles min pour utiliser le centroïde |
-| `YOLO_MODEL` | `yolov8s-pose.pt` | Modèle YOLO (auto-téléchargé) |
+| `YOLO_MODEL` | `yolov8s-pose.pt` | Modèle YOLO (auto-téléchargé), ou `yolov8s-pose.engine` (TensorRT) |
 | `DEEPSORT_MAX_AGE` | `70` | Frames avant suppression d'un track perdu |
 | `FRAME_SKIP` | `2` | Cadence de l'estimation d'orientation |
 | `POSE_SOURCE` | `yolo` | Orientation : `yolo` (keypoints, gratuit) ou `mediapipe` |
 | `TRACKER_BACKEND` | `python` | Association de tracks : `python` ou `rust` |
+
+---
+
+## Accélération TensorRT (optionnel)
+
+Le modèle YOLOv8-Pose peut tourner en moteur TensorRT FP16 au lieu de
+PyTorch FP32. Le moteur dépend du GPU et de la version de TensorRT qui l'ont
+construit : il n'est pas versionné, chaque machine construit le sien (~4 min).
+
+```bash
+# TensorRT et onnxslim font partie du groupe cu121, installé par uv sync
+uv run yolo export model=yolov8s-pose.pt format=engine half=True device=0 imgsz=384,640
+```
+
+Puis `YOLO_MODEL=yolov8s-pose.engine` dans `.env`. Pour revenir en arrière,
+retirer la ligne.
+
+`imgsz=384,640` est la taille letterbox d'une image 16:9 ramenée à 640 px de
+large, celle qu'utilise PyTorch sur le flux 1920x1080. Un moteur 640x640
+ajoute un padding qui modifie les détections, sans rapport avec le FP16.
+
+### Résultats mesurés
+
+`uv run -m tools.bench_yolo --images <vidéo ou motif> <modèle de référence> <modèles…>`
+mesure l'étape YOLO telle que le pipeline la paie (`predict` + lecture des
+résultats sur le CPU) et compare les sorties à la référence.
+
+| Séquence | Modèle | Médiane | p95 | Détections non appariées | Écart keypoints (méd. / p95) |
+|:---------|:-------|--------:|----:|-------------------------:|-----------------------------:|
+| MOT17-04 (600 images) | `.pt` FP32 | 9,8 ms | 33,4 ms | — | — |
+| | `.engine` FP16 640x640 | 6,5 ms | 16,9 ms | 558 | 0,10 / 1,50 px |
+| | `.engine` FP16 384x640 | **5,5 ms** | **7,9 ms** | 24 | 0,04 / 0,16 px |
+| MOT17-09 (400 images) | `.pt` FP32 | 11,5 ms | 33,6 ms | — | — |
+| | `.engine` FP16 384x640 | **5,3 ms** | **6,8 ms** | 7 | 0,09 / 0,44 px |
+
+RTX 4060, 1920x1080, 30 images de warm-up. `half=True` sur le `.pt`, sans
+TensorRT, est plus lent que FP32 (0,91x) : le gain vient de TensorRT, pas du
+FP16 seul. Ces temps portent sur l'étape YOLO uniquement ; le tracker (embedder
+MobileNetV2) et la reconnaissance faciale restent inchangés.
 
 ---
 

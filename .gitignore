@@ -62,6 +62,7 @@ embeddings.*
 
 # --- Modèles IA téléchargés (lourds, reproductibles) ---
 *.onnx
+*.engine
 *.pt
 *.pth
 *.h5
