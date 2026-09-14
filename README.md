@@ -89,7 +89,8 @@
 VisionCam/
 ├── app.py                  # Entrée : Flask + 2 threads (caméra + pipeline AI)
 ├── config.py               # Source unique de toutes les constantes
-├── requirements.txt        # Dépendances Python
+├── pyproject.toml          # Dépendances (uv) + réglages ruff / mypy
+├── uv.lock                 # Versions figées de toute la chaîne
 ├── .env.example            # Template configuration locale
 │
 ├── core/
@@ -131,7 +132,8 @@ VisionCam/
 
 ### Prérequis
 
-- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) — il installe aussi Python 3.11 si besoin
+- [Rust](https://rustup.rs) (`cargo`) — pour construire `deepsort-rs`, le backend de tracking optionnel
 - GPU NVIDIA avec CUDA 12.1 **fortement recommandé** (CPU possible mais ~5× plus lent)
 - Webcam OU caméra IP accessible sur le LAN
 
@@ -142,24 +144,20 @@ VisionCam/
 git clone https://github.com/Armand-LAUENER/Project_VisionCam.git
 cd Project_VisionCam
 
-# 2. Environnement virtuel
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # Linux / macOS
+# 2. Environnement + dépendances, versions de uv.lock (.venv/ dans le projet)
+uv sync                                   # GPU : torch CUDA 12.1
+# uv sync --no-group cu121 --group cpu    # sans GPU : torch CPU
 
-# 3. Dépendances (PyTorch CUDA 12.1 inclus)
-pip install -r requirements.txt
-
-# 4. Configuration
+# 3. Configuration
 cp .env.example .env
 # Éditer .env si nécessaire (source vidéo, seuils, port)
 
-# 5. Préparer le dataset (voir section Enrôlement)
-mkdir known_faces\MonNom
+# 4. Préparer le dataset (voir section Enrôlement)
+mkdir -p known_faces/MonNom
 # Y copier 3-5 photos du visage
 
-# 6. Lancer
-python app.py
+# 5. Lancer
+uv run app.py
 ```
 
 L'interface est disponible sur `http://localhost:5000`.
@@ -196,8 +194,8 @@ existe en deux implémentations interchangeables, choisies par
 
 | Valeur | Implémentation | Installation |
 |:-------|:---------------|:-------------|
-| `python` (défaut) | `deep_sort_realtime` 1.3.2 | déjà dans `requirements.txt` |
-| `rust` | crate [`deepsort-rs`](https://github.com/Armand-LAUENER/deepsort-rs) via PyO3 | à construire, ci-dessous |
+| `python` (défaut) | `deep_sort_realtime` 1.3.2 | installé par `uv sync` |
+| `rust` | crate [`deepsort-rs`](https://github.com/Armand-LAUENER/deepsort-rs) via PyO3 | installé par `uv sync` (groupe `rust`), cf. ci-dessous |
 
 Seule l'association passe en Rust. La détection (YOLOv8-Pose), la
 reconnaissance faciale (InsightFace) et l'embedder d'apparence
@@ -205,17 +203,19 @@ reconnaissance faciale (InsightFace) et l'embedder d'apparence
 `deep_sort_realtime` et ses crops, ce qui rend les deux backends comparables
 à l'identique.
 
-### Construire le wheel
+### Installation
+
+`uv sync` construit le crate depuis git, au commit figé dans `pyproject.toml`
+(il faut `cargo`). Le build passe par le backend PEP 517 de maturin, en
+`--release` par défaut : un build debug fausserait complètement la
+comparaison. Pour ne pas l'installer : `uv sync --no-group rust`.
+
+Pour travailler sur le crate en parallèle, remplacer temporairement la version
+figée par le dépôt local, puis lancer sans resynchroniser :
 
 ```bash
-# Rust + maturin, une seule fois
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-pip install 'maturin>=1.15,<2.0'
-
-git clone https://github.com/Armand-LAUENER/deepsort-rs.git
-cd deepsort-rs
-maturin develop --release      # --release est obligatoire : un build debug
-                               # fausserait complètement la comparaison
+uv pip install -e ../deepsort-rs
+uv run --no-sync app.py
 ```
 
 Puis `TRACKER_BACKEND=rust` dans `.env`.
@@ -228,7 +228,7 @@ c'est le seul point de bascule.
 
 ### Résultats mesurés
 
-`python -m tools.bench_tracker --video <fichier> --frames 400` fait tourner les
+`uv run -m tools.bench_tracker --video <fichier> --frames 400` fait tourner les
 deux backends sur les mêmes détections YOLO, frame par frame, et compare pistes
 et temps. Les séquences MOT17 se passent directement en motif d'images, par
 exemple `--video ~/datasets/MOT17/train/MOT17-04-FRCNN/img1/%06d.jpg`.
@@ -318,9 +318,9 @@ Méthodes d'enrôlement : `average` (embedding moyen — recommandé) ou `multit
 ## Tests
 
 ```bash
-pytest tests/
+uv run pytest tests/
 # 131 tests — 0 GPU requis, ~5 s
-ruff check .
+uv run ruff check .
 ```
 
 ---

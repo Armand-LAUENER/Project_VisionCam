@@ -94,14 +94,15 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
 ## 4. Hygiène du projet
 
 - [x] **README à jour**
-  Arborescence, nombre de tests, source d'orientation et routes mis à jour.
-  Reste l'installation, encore décrite avec `pip`/`requirements.txt` : à
-  réécrire avec la migration vers uv.
+  Arborescence, nombre de tests, source d'orientation, routes et installation
+  (uv) mis à jour.
 
-- [ ] **Migration vers uv**
+- [x] **Migration vers uv**
   `pyproject.toml` n'a pas de section `[project]` ; pas de `uv.lock`.
+  → Fait : groupes `cu121` / `cpu` exclusifs pour torch, `deepsort-rs` depuis
+  git (groupe `rust`), `requirements.txt` supprimé.
 
-- [ ] **CI**
+- [x] **CI**
   Pas de `.github/`. Un workflow `pytest` + `ruff` suffit : les tests ne
   demandent pas de GPU.
 
