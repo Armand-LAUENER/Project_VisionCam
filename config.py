@@ -19,7 +19,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DATA_DIR = os.path.join(BASE_DIR, "data")
 KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
-CAPTURED_FACES_DIR = os.path.join(DATA_DIR, "captured_faces")
 EMBEDDINGS_CACHE_PATH = os.path.join(DATA_DIR, "embeddings.npz")
 
 
@@ -211,5 +210,5 @@ PRESENCE_TIMEOUT = 5.0
 # CRÉATION AUTOMATIQUE DES DOSSIERS
 # =============================================================================
 
-for _dir in (DATA_DIR, KNOWN_FACES_DIR, CAPTURED_FACES_DIR):
+for _dir in (DATA_DIR, KNOWN_FACES_DIR):
     os.makedirs(_dir, exist_ok=True)

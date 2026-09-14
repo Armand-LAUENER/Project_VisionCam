@@ -304,35 +304,6 @@ class FaceRecognizer:
         clean_name = best_name.split('#')[0] if '#' in best_name else best_name
         return clean_name, best_score
 
-    def detect_and_recognize(self, frame: np.ndarray) -> list:
-        """
-        Détecte et reconnaît les visages dans une frame.
-
-        Returns:
-            [{ 'bbox': [x1,y1,x2,y2], 'name': str, 'confidence': float,
-               'embedding': np.ndarray }, ...]
-        """
-        results = []
-        faces = self.app.get(frame)
-        if not faces:
-            return results
-
-        h, w = frame.shape[:2]
-        for face in faces:
-            x1, y1, x2, y2 = [int(v) for v in face.bbox]
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(w, x2), min(h, y2)
-
-            name, confidence = self._identify(face.embedding)
-            results.append({
-                'bbox': [x1, y1, x2, y2],
-                'name': name,
-                'confidence': confidence,
-                'embedding': face.embedding
-            })
-
-        return results
-
     def recognize_center_face(self, crop: np.ndarray) -> dict | None:
         """
         Reconnaît uniquement le visage le plus proche du centre d'un crop de tête.
@@ -415,10 +386,6 @@ class FaceRecognizer:
         self._save_cache()
         logger.info("[AVG] '%s' enrôlé : %d embedding(s) -> moyenne L2.", name, len(embeddings))
         return True, f"'{name}' enrôlé par averaging sur {len(embeddings)} image(s)."
-
-    # Alias rétro-compatible avec l'ancienne méthode enroll()
-    def enroll(self, name: str, images: list) -> tuple:
-        return self.enroll_person_average(name, images)
 
     # =========================================================================
     # ENRÔLEMENT — Méthode 2 : Multi-Template (angles distincts)
