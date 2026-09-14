@@ -237,6 +237,12 @@ MJPEG_FPS_LIMIT = 30
 # Délai (s) au-delà duquel une personne non détectée est retirée de "currently_present".
 PRESENCE_TIMEOUT = 5.0
 
+# Historique des présences (core/presence_log.py). Une session se ferme quand la
+# personne n'a plus été vue depuis PRESENCE_LOG_GAP_S : plus long que
+# PRESENCE_TIMEOUT, pour qu'une courte sortie du champ ne coupe pas la session.
+PRESENCE_DB_PATH = os.path.join(DATA_DIR, "presence.db")
+PRESENCE_LOG_GAP_S = float(os.getenv("PRESENCE_LOG_GAP_S", "60"))
+
 
 # =============================================================================
 # CRÉATION AUTOMATIQUE DES DOSSIERS

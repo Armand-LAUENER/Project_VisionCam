@@ -13,6 +13,7 @@ import queue
 import statistics
 import threading
 import time
+from datetime import datetime, timedelta
 
 import cv2
 import numpy as np
@@ -23,6 +24,7 @@ from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
+from core.presence_log import PresenceLog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,6 +85,7 @@ class AppState:
         self.bench_persons: list = []
 
 state = AppState()
+presence_log = PresenceLog(config.PRESENCE_DB_PATH, gap=config.PRESENCE_LOG_GAP_S)
 
 # Queue inter-thread caméra → AI. Taille 2 : on garde toujours la frame la plus fraîche.
 _frame_queue: queue.Queue = queue.Queue(maxsize=2)
@@ -321,6 +324,15 @@ def processing_loop():
                     present_list.append(person_entry)
                 else:
                     del state.last_seen[tid]
+
+        # ── Historique des présences ─────────────────────────────────────────
+        # Une erreur de base de données ne doit pas arrêter le pipeline vidéo.
+        try:
+            for event in presence_log.update({p.name for p in persons_cache}, now):
+                logger.info("Présence : %s %s", event['name'],
+                            "arrivé(e)" if event['type'] == 'arrival' else "parti(e)")
+        except Exception as e:
+            logger.warning("Historique de présence indisponible : %s: %s", type(e).__name__, e)
 
         # ── FPS ──────────────────────────────────────────────────────────────
         elapsed = time.time() - fps_time
@@ -602,14 +614,18 @@ def api_rename_person(name):
     """
     new_name = str((request.get_json(silent=True) or {}).get('new_name', '')).strip()
     status, message = face_recognizer.rename_person(name, new_name)
+    if status == 'ok' and new_name != name:
+        presence_log.rename(name, new_name)
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
 
 
 @app.route('/api/people/<name>', methods=['DELETE'])
 def api_delete_person(name):
-    """Supprime photos et entrées. Réponse : 200 | 400 | 404 — { success, message }"""
+    """Supprime photos, entrées et historique. Réponse : 200 | 400 | 404 — { success, message }"""
     status, message = face_recognizer.delete_person(name)
     if status == 'ok':
+        # Droit à l'effacement : l'historique de présence part avec la personne.
+        presence_log.forget(name)
         _refresh_total_known()
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
 
@@ -773,6 +789,55 @@ def status():
 # ══════════════════════════════════════════
 # LANCEMENT
 # ══════════════════════════════════════════
+# ══════════════════════════════════════════
+# HISTORIQUE DES PRÉSENCES
+# ══════════════════════════════════════════
+def _history_query():
+    """Filtres communs de /api/history : (sessions, None) ou (None, réponse d'erreur 400).
+
+    Paramètres : name, from et to (AAAA-MM-JJ, heure locale ; `to` inclus), limit.
+    """
+    try:
+        start = datetime.strptime(request.args['from'], '%Y-%m-%d') if request.args.get('from') else None
+        end = datetime.strptime(request.args['to'], '%Y-%m-%d') + timedelta(days=1) \
+            if request.args.get('to') else None
+        limit = max(1, min(int(request.args.get('limit', 1000)), 10000))
+    except ValueError:
+        return None, (jsonify({'message': 'Filtres invalides : dates AAAA-MM-JJ, limit entier.'}), 400)
+    sessions = presence_log.sessions(
+        name=request.args.get('name') or None,
+        start=start.timestamp() if start else None,
+        end=end.timestamp() if end else None,
+        limit=limit,
+    )
+    return sessions, None
+
+
+@app.route('/api/history')
+def api_history():
+    """
+    Sessions de présence, les plus récentes d'abord.
+
+    Réponse : 200 { sessions: [{ id, name, arrived, departed|null, last_seen,
+                                 ongoing, duration_s }], names: [...] } | 400
+    """
+    sessions, error = _history_query()
+    if error:
+        return error
+    return jsonify({'sessions': sessions, 'names': presence_log.names()})
+
+
+@app.route('/api/history.csv')
+def api_history_csv():
+    """Mêmes filtres que /api/history, en CSV à télécharger."""
+    sessions, error = _history_query()
+    if error:
+        return error
+    filename = f"presences-{datetime.now():%Y%m%d-%H%M}.csv"
+    return Response(PresenceLog.to_csv(sessions), mimetype='text/csv',
+                    headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
 if __name__ == '__main__':
     camera_thread = threading.Thread(target=camera_loop, daemon=True)
     process_thread = threading.Thread(target=processing_loop, daemon=True)
@@ -785,5 +850,10 @@ if __name__ == '__main__':
     # fait pour tourner en continu. Il fonctionne sous Linux comme sous Windows.
     from waitress import serve
 
-    serve(app, host=config.FLASK_HOST, port=config.FLASK_PORT,
-          threads=config.SERVER_THREADS, ident="VisionCam")
+    try:
+        serve(app, host=config.FLASK_HOST, port=config.FLASK_PORT,
+              threads=config.SERVER_THREADS, ident="VisionCam")
+    finally:
+        state.running = False
+        # Ferme les sessions en cours à leur dernière heure vue.
+        presence_log.close_all()
