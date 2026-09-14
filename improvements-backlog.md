@@ -13,7 +13,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
 
 ## 1. Bugs
 
-- [ ] **Personnes jamais reconnues** — `core/face_body_tracker.py:137`
+- [x] **Personnes jamais reconnues** — `core/face_body_tracker.py:137`
   `tracks_to_recognize[:2]` prend toujours les deux premiers tracks. S'ils
   restent « Inconnu » (deux inconnus, deux personnes de dos), les tracks
   suivants ne sont jamais soumis à InsightFace.

@@ -90,6 +90,10 @@ class FaceBodyTracker:
         # { track_id: deque([(name, confidence), ...], maxlen=VOTE_WINDOW) }
         self._vote_buffer: dict[int, deque] = {}
 
+        # { track_id: frame_count } — dernière soumission à InsightFace.
+        # Fait tourner les tracks quand ils sont plus nombreux que les places.
+        self._last_attempt_frame: dict[int, int] = {}
+
         # { track_id: (nose_x, nose_y, nose_conf) }
         # Mis à jour par IoU matching YOLO↔DeepSORT chaque frame.
         # Contourne le fait que track.others n'est pas fiable dans DeepSORT 1.3.x.
@@ -133,8 +137,14 @@ class FaceBodyTracker:
                 if name == 'Inconnu' or (frame_count - last_face_frame > config.FACE_FRESHNESS_FRAMES):
                     tracks_to_recognize.append(track)
 
-            # Max 2 InsightFace/frame pour garantir les FPS
+            # Max 2 InsightFace/frame pour garantir les FPS. La tentative la plus
+            # ancienne passe en premier (jamais tenté = -1) : sinon deux tracks
+            # qui restent « Inconnu » monopolisent les deux places.
+            tracks_to_recognize.sort(
+                key=lambda t: self._last_attempt_frame.get(t.track_id, -1))
             tracks_to_recognize = tracks_to_recognize[:2]
+            for track in tracks_to_recognize:
+                self._last_attempt_frame[track.track_id] = frame_count
 
             if tracks_to_recognize:
                 faces = self._recognize_faces_for_tracks(frame, tracks_to_recognize)
@@ -147,6 +157,8 @@ class FaceBodyTracker:
         active_ids = {t.track_id for t in active_tracks}
         self._identity_map = {tid: v for tid, v in self._identity_map.items() if tid in active_ids}
         self._vote_buffer  = {tid: v for tid, v in self._vote_buffer.items()  if tid in active_ids}
+        self._last_attempt_frame = {tid: v for tid, v in self._last_attempt_frame.items()
+                                    if tid in active_ids}
         # _nose_map et _face_kps_map sont déjà purgés dans _update_nose_map
 
         return results
@@ -509,5 +521,6 @@ class FaceBodyTracker:
         """Libère les ressources."""
         self._identity_map.clear()
         self._vote_buffer.clear()
+        self._last_attempt_frame.clear()
         self._face_kps_map.clear()
         logger.info("Ressources libérées")
