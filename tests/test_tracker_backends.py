@@ -5,9 +5,10 @@ Couvre la bascule entre les deux implémentations de l'association de tracks
 (`config.TRACKER_BACKEND`) et l'adaptateur qui branche le crate Rust
 `deepsort_rs` sur le pipeline Body-First.
 
-Le vrai `deepsort_rs` est utilisé : c'est lui qu'on veut voir répondre. Seul
-l'embedder MobileNetV2 est remplacé — il chargerait torch et le GPU, et le
-tracking ne dépend de lui que par les vecteurs qu'il produit.
+Le vrai `deepsort_rs` et le vrai `deep_sort_realtime` sont utilisés : ce sont
+eux qu'on veut voir répondre. Seul l'embedder MobileNetV2 est remplacé — il
+chargerait torch et le GPU, et le tracking ne dépend de lui que par les
+vecteurs qu'il produit.
 
 Aucun stub n'est posé dans `sys.modules` au niveau module : il y resterait pour
 tous les fichiers de test collectés ensuite (cf. commit cadc2a7).
@@ -17,8 +18,6 @@ Lancer : pytest tests/test_tracker_backends.py -v
 
 import importlib
 import pathlib
-import sys
-import types
 
 import numpy as np
 import pytest
@@ -78,19 +77,27 @@ class SpyDeepSort:
 
 
 @pytest.fixture
-def rust_backend(monkeypatch):
-    """`RustDeepSortBackend` complet — vrai tracker Rust, faux embedder."""
-    SpyDeepSort.calls = []
-    fake_module = types.ModuleType("deep_sort_realtime.embedder.embedder_pytorch")
-    fake_module.MobileNetv2_Embedder = FakeEmbedder
-    monkeypatch.setitem(
-        sys.modules, "deep_sort_realtime.embedder.embedder_pytorch", fake_module
-    )
-    monkeypatch.setattr(tracker_backends, "DeepSort", SpyDeepSort)
+def fake_embedder(monkeypatch):
+    monkeypatch.setattr(tracker_backends, "build_embedder", FakeEmbedder)
     monkeypatch.setattr(config, "DEEPSORT_EMBEDDER", "mobilenet")
     monkeypatch.setattr(config, "DEEPSORT_MAX_AGE", 5)
     monkeypatch.setattr(config, "DEEPSORT_N_INIT", 3)
+
+
+@pytest.fixture
+def rust_backend(monkeypatch, fake_embedder):
+    """`RustDeepSortBackend` complet — vrai tracker Rust, faux embedder."""
+    SpyDeepSort.calls = []
+    monkeypatch.setattr(tracker_backends.DeepSort, "crop_bb", SpyDeepSort.crop_bb)
     return RustDeepSortBackend()
+
+
+@pytest.fixture
+def python_backend(monkeypatch, fake_embedder):
+    """`PythonDeepSortBackend` complet — vrai deep_sort_realtime, faux embedder."""
+    SpyDeepSort.calls = []
+    monkeypatch.setattr(tracker_backends.DeepSort, "crop_bb", SpyDeepSort.crop_bb)
+    return PythonDeepSortBackend()
 
 
 def make_frame(people: dict[tuple, int] | None = None) -> np.ndarray:
@@ -145,10 +152,12 @@ class TestBackendSelection:
         with pytest.raises(ValueError, match="rustt"):
             build_body_tracker()
 
-    def test_rust_backend_refuses_an_embedder_it_cannot_reproduce(self, monkeypatch):
+    @pytest.mark.parametrize("backend", [PythonDeepSortBackend, RustDeepSortBackend])
+    def test_backends_refuse_an_embedder_they_cannot_run(self, monkeypatch, backend):
         monkeypatch.setattr(config, "DEEPSORT_EMBEDDER", "torchreid")
+        monkeypatch.setattr(tracker_backends, "build_embedder", FakeEmbedder)
         with pytest.raises(ValueError, match="torchreid"):
-            RustDeepSortBackend()
+            backend()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -259,6 +268,51 @@ class TestRustBackendUpdate:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Backend Python : embeddings calculés en amont
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPythonBackendUpdate:
+
+    def test_embeddings_come_from_the_shared_embedder(self, python_backend):
+        """deep_sort_realtime ne calcule plus rien : un embedder interne
+        chargerait un second MobileNetV2 et casserait la comparaison."""
+        ltwh = (10, 20, 40, 90)
+        frame = make_frame({ltwh: 150})
+
+        python_backend.update([detection(ltwh)], frame)
+
+        assert python_backend._tracker.embedder is None
+        assert len(python_backend._embedder.batches) == 1
+        called_frame, called_dets = SpyDeepSort.calls[0]
+        assert called_frame is frame
+        assert called_dets == [detection(ltwh)]
+
+    def test_degenerate_boxes_are_dropped_before_embedding(self, python_backend):
+        valid = (300, 100, 50, 120)
+        frame = make_frame({valid: 220})
+        dets = [detection((0, 0, 0, 50)), detection(valid), detection((500, 50, 30, 0))]
+
+        for _ in range(config.DEEPSORT_N_INIT):
+            tracks = python_backend.update(dets, frame)
+
+        assert all(len(batch) == 1 for batch in python_backend._embedder.batches)
+        confirmed = [t for t in tracks if t.is_confirmed()]
+        assert len(confirmed) == 1
+        np.testing.assert_allclose(confirmed[0].to_ltrb(), [300, 100, 350, 220], atol=1e-3)
+
+    def test_frame_without_detection_still_ages_tracks(self, python_backend):
+        ltwh = (200, 150, 70, 160)
+        frame = make_frame({ltwh: 180})
+
+        for _ in range(config.DEEPSORT_N_INIT):
+            python_backend.update([detection(ltwh)], frame)
+        for _ in range(config.DEEPSORT_MAX_AGE + 2):
+            tracks = python_backend.update([], make_frame())
+
+        assert [t for t in tracks if t.is_confirmed()] == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Paramètres transmis aux deux implémentations
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -276,6 +330,8 @@ class TestBothBackendsGetTheSameParameters:
                 captured.update(kwargs)
 
         monkeypatch.setattr(tracker_backends, "DeepSort", SpyDeepSortCtor)
+        monkeypatch.setattr(tracker_backends, "build_embedder", FakeEmbedder)
+        monkeypatch.setattr(config, "DEEPSORT_EMBEDDER", "mobilenet")
         monkeypatch.setattr(config, "DEEPSORT_NN_BUDGET", 100)
 
         PythonDeepSortBackend()
@@ -285,6 +341,7 @@ class TestBothBackendsGetTheSameParameters:
         assert captured["n_init"] == config.DEEPSORT_N_INIT
         assert captured["max_cosine_distance"] == config.DEEPSORT_MAX_COSINE_DISTANCE
         assert captured["max_iou_distance"] == config.DEEPSORT_MAX_IOU_DISTANCE
+        assert captured["embedder"] is None
 
     def test_rust_backend_forwards_the_configured_budget(self, monkeypatch):
         import deepsort_rs
@@ -293,11 +350,7 @@ class TestBothBackendsGetTheSameParameters:
         monkeypatch.setattr(
             deepsort_rs, "Tracker", lambda **kwargs: captured.update(kwargs)
         )
-        fake_module = types.ModuleType("deep_sort_realtime.embedder.embedder_pytorch")
-        fake_module.MobileNetv2_Embedder = FakeEmbedder
-        monkeypatch.setitem(
-            sys.modules, "deep_sort_realtime.embedder.embedder_pytorch", fake_module
-        )
+        monkeypatch.setattr(tracker_backends, "build_embedder", FakeEmbedder)
         monkeypatch.setattr(config, "DEEPSORT_EMBEDDER", "mobilenet")
         monkeypatch.setattr(config, "DEEPSORT_NN_BUDGET", 100)
 

@@ -76,6 +76,12 @@ DEEPSORT_N_INIT = 3             # Confirmations minimales avant qu'un track soit
 DEEPSORT_EMBEDDER = "mobilenet" # Embedder d'apparence pour la ReID (vêtements).
 DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 
+# Moteur TensorRT FP16 de l'embedder (cf. core/appearance_embedder.py), vide =
+# MobileNetV2 en PyTorch. Mesuré sur MOT17 (7 séquences FRCNN, RTX 4060) :
+# étape tracker de 19,1 à 13,7 ms en médiane, MOTA 21,7 → 22,1 %, IDF1 48,1 %
+# inchangé. Propre au GPU qui l'a construit : non versionné, cf. README.
+DEEPSORT_EMBEDDER_ENGINE = os.getenv("DEEPSORT_EMBEDDER_ENGINE", "")
+
 # Nombre de vecteurs d'apparence conservés par piste (les plus récents).
 # None = illimité, le défaut de deep_sort_realtime : la banque grossit d'une
 # feature par frame et par piste, donc le coût de l'association croît avec la

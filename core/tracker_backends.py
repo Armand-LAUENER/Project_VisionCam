@@ -7,12 +7,13 @@ de tracks pour le pipeline Body-First.
 exactement cette surface, ce qui permet de basculer de l'un à l'autre via
 `config.TRACKER_BACKEND` sans toucher au reste du pipeline.
 
-- "python" : deep_sort_realtime 1.3.2, qui calcule lui-même les embeddings
-             d'apparence à partir de la frame.
-- "rust"   : crate deepsort-rs (PyO3). Le crate ne fait que l'association ;
-             les embeddings restent calculés ici, avec le même MobileNetV2 et
-             les mêmes crops que la référence (`DeepSort.crop_bb`), pour que
-             comparer les deux backends mesure bien le tracking seul.
+- "python" : deep_sort_realtime 1.3.2.
+- "rust"   : crate deepsort-rs (PyO3).
+
+Les deux ne font que l'association : les embeddings d'apparence sont calculés
+ici, par le même embedder (`core.appearance_embedder`) et sur les mêmes crops
+(`DeepSort.crop_bb`), pour que comparer les deux backends mesure bien le
+tracking seul.
 
 Deux écarts observables, sans conséquence sur le pipeline :
 
@@ -36,12 +37,9 @@ import numpy as np
 from deep_sort_realtime.deepsort_tracker import DeepSort
 
 import config
+from core.appearance_embedder import EMBED_DIM, build_embedder
 
 logger = logging.getLogger(__name__)
-
-# Dimension de sortie de MobileNetV2-bottleneck ; sert uniquement à former un
-# tableau d'embeddings vide quand une frame ne contient aucune détection.
-_EMBED_DIM = 1280
 
 
 class TrackLike(Protocol):
@@ -58,24 +56,49 @@ class BodyTrackerBackend(Protocol):
     def update(self, detections: list[tuple], frame: np.ndarray) -> list[TrackLike]: ...
 
 
+def _check_embedder() -> None:
+    # Vérifié avant de charger le modèle : une configuration invalide doit
+    # échouer tout de suite, sans payer le chargement de torch.
+    if config.DEEPSORT_EMBEDDER != "mobilenet":
+        raise ValueError(
+            f"Seul DEEPSORT_EMBEDDER='mobilenet' est géré, pas '{config.DEEPSORT_EMBEDDER}'."
+        )
+
+
+def _embed(embedder, detections: list[tuple], frame: np.ndarray):
+    """Détections exploitables et leurs embeddings, dans le même ordre.
+
+    Une boîte de largeur ou hauteur nulle ferait planter le resize : elle est
+    écartée comme le fait deep_sort_realtime. `crop_bb` est réutilisé tel quel
+    pour que les crops soient bit à bit ceux de la référence.
+    """
+    detections = [d for d in detections if d[0][2] > 0 and d[0][3] > 0]
+    if not detections:
+        return detections, np.zeros((0, EMBED_DIM), dtype=np.float32)
+    crops, _ = DeepSort.crop_bb(frame, detections)
+    return detections, embedder.predict(crops)
+
+
 class PythonDeepSortBackend:
-    """deep_sort_realtime tel qu'utilisé depuis le début du projet."""
+    """deep_sort_realtime, avec les embeddings calculés en amont."""
 
     name = "python"
 
     def __init__(self) -> None:
+        _check_embedder()
+        self._embedder = build_embedder()
         self._tracker = DeepSort(
             max_age=config.DEEPSORT_MAX_AGE,
             n_init=config.DEEPSORT_N_INIT,
             nn_budget=config.DEEPSORT_NN_BUDGET,
             max_cosine_distance=config.DEEPSORT_MAX_COSINE_DISTANCE,
             max_iou_distance=config.DEEPSORT_MAX_IOU_DISTANCE,
-            embedder=config.DEEPSORT_EMBEDDER,
-            embedder_gpu=config.DEEPSORT_EMBEDDER_GPU,
+            embedder=None,
         )
 
     def update(self, detections: list[tuple], frame: np.ndarray) -> list[TrackLike]:
-        return self._tracker.update_tracks(detections, frame=frame)
+        detections, embeddings = _embed(self._embedder, detections, frame)
+        return self._tracker.update_tracks(detections, embeds=list(embeddings))
 
 
 class RustDeepSortBackend:
@@ -90,22 +113,11 @@ class RustDeepSortBackend:
     name = "rust"
 
     def __init__(self) -> None:
-        # Vérifié avant les imports : une configuration invalide doit échouer
-        # tout de suite, sans payer le chargement de torch et du modèle.
-        if config.DEEPSORT_EMBEDDER != "mobilenet":
-            raise ValueError(
-                f"TRACKER_BACKEND=rust ne gère que DEEPSORT_EMBEDDER='mobilenet', "
-                f"pas '{config.DEEPSORT_EMBEDDER}'."
-            )
+        _check_embedder()
 
         import deepsort_rs
-        from deep_sort_realtime.embedder.embedder_pytorch import MobileNetv2_Embedder
 
-        self._embedder = MobileNetv2_Embedder(
-            half=True,
-            bgr=True,
-            gpu=config.DEEPSORT_EMBEDDER_GPU,
-        )
+        self._embedder = build_embedder()
         self._tracker = deepsort_rs.Tracker(
             max_age=config.DEEPSORT_MAX_AGE,
             n_init=config.DEEPSORT_N_INIT,
@@ -115,28 +127,16 @@ class RustDeepSortBackend:
         )
 
     def update(self, detections: list[tuple], frame: np.ndarray) -> list[TrackLike]:
-        # Même filtre que deep_sort_realtime avant d'embarquer les crops :
-        # une boîte de largeur ou hauteur nulle ferait planter le resize.
-        detections = [d for d in detections if d[0][2] > 0 and d[0][3] > 0]
-
-        if detections:
-            # `crop_bb` est réutilisé tel quel pour que les crops — et donc les
-            # embeddings — soient bit à bit ceux de la référence.
-            crops, _ = DeepSort.crop_bb(frame, detections)
-            embeddings = np.asarray(self._embedder.predict(crops), dtype=np.float32)
-            boxes = np.array(
-                [[x, y, x + w, y + h] for (x, y, w, h), *_ in detections],
-                dtype=np.float32,
-            )
-            confidences = [d[1] for d in detections]
-        else:
-            # Une frame sans détection doit quand même faire avancer les
-            # prédictions de Kalman et vieillir les pistes.
-            boxes = np.zeros((0, 4), dtype=np.float32)
-            embeddings = np.zeros((0, _EMBED_DIM), dtype=np.float32)
-            confidences = []
-
-        return self._tracker.update(boxes, confidences, embeddings)
+        detections, embeddings = _embed(self._embedder, detections, frame)
+        # Même sans détection, le tracker est appelé : c'est ce qui fait
+        # avancer les prédictions de Kalman et vieillir les pistes.
+        boxes = np.array(
+            [[x, y, x + w, y + h] for (x, y, w, h), *_ in detections],
+            dtype=np.float32,
+        ).reshape(-1, 4)
+        confidences = [d[1] for d in detections]
+        return self._tracker.update(boxes, confidences,
+                                    np.asarray(embeddings, dtype=np.float32))
 
 
 def build_body_tracker() -> BodyTrackerBackend:
