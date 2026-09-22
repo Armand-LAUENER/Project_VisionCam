@@ -2,11 +2,10 @@
 # .gitignore — Project_VisionCam (repo PUBLIC)
 # ============================================================
 # Objectif : garder ce repo propre pour un portfolio public.
-# La config Claude Code vit dans un repo PRIVÉ séparé
-# (voir .claude-workspace/ localement, non pushé ici).
+# La configuration des outils locaux vit dans un repo privé séparé.
 # ============================================================
 
-# --- Config Claude Code (repo privé séparé) ---
+# --- Outils et config locale (repo privé séparé) ---
 .claude-workspace/
 .claude/
 CLAUDE.md
