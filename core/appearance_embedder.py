@@ -11,8 +11,8 @@ Même réseau et mêmes poids que l'embedder de deep_sort_realtime
 - `TensorRTEmbedder` : moteur TensorRT FP16, activé par
   `config.DEEPSORT_EMBEDDER_ENGINE`.
 
-Mesures (tools/bench_embedder.py, tools/eval_mot.py) : voir le README,
-section Accélération TensorRT.
+Mesures (tools/bench_embedder.py, tools/eval_mot.py) : voir
+docs/performance.md.
 """
 
 from __future__ import annotations

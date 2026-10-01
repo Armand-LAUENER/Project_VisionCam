@@ -91,7 +91,7 @@ TRT_CACHE_DIR = os.path.join(DATA_DIR, "trt_cache")
 # Plus HAUT = plus strict : _identify teste `score >= seuil`.
 # Mesuré avec tools/bench_face.py --thresholds sur CHIRLA, dans les conditions
 # de l'application (crops de tête YOLOv8-Pose, SCRFD 320, TensorRT ; 607
-# visages ≥ 40 px de personnes enrôlées, IC 95 % de Wilson ; cf. README) :
+# visages ≥ 40 px de personnes enrôlées, IC 95 % de Wilson ; cf. docs/performance.md) :
 #   0,45 : 80 % de bons noms, 3,0 % de mauvais [1,9-4,6 %], 17 % « Inconnu »
 #   0,50 : 65 % de bons noms, 1,2 % de mauvais [0,6-2,4 %], 34 % « Inconnu »
 # Chaque visage est jugé seul : le vote par piste (VOTE_WINDOW) n'est pas
@@ -127,7 +127,7 @@ FRAME_SKIP = 2
 DEEPSORT_MAX_AGE = 70           # Frames avant suppression d'un track perdu.
 # Confirmations minimales avant qu'un track soit actif. 5 plutôt que 3 (défaut
 # du papier) : mesuré sur trois jeux de données en validation (MOT17,
-# DanceTrack, CHIRLA ; cf. README, section Réglage du tracking), les
+# DanceTrack, CHIRLA ; cf. docs/tracking.md), les
 # changements d'identité baissent de 10 à 17 % pour un IDF1 inchangé à ±1,6
 # point. Coût : une nouvelle personne apparaît 2 images plus tard.
 DEEPSORT_N_INIT = 5
@@ -137,7 +137,7 @@ DEEPSORT_EMBEDDER_GPU = True    # Activer si GPU disponible (RTX 4060 ✅).
 # Moteur TensorRT FP16 de l'embedder (cf. core/appearance_embedder.py), vide =
 # MobileNetV2 en PyTorch. Mesuré sur MOT17 (7 séquences FRCNN, RTX 4060) :
 # étape tracker de 19,1 à 13,7 ms en médiane, MOTA 21,7 → 22,1 %, IDF1 48,1 %
-# inchangé. Propre au GPU qui l'a construit : non versionné, cf. README.
+# inchangé. Propre au GPU qui l'a construit : non versionné, cf. docs/performance.md.
 DEEPSORT_EMBEDDER_ENGINE = os.getenv("DEEPSORT_EMBEDDER_ENGINE", "")
 
 # Nombre de vecteurs d'apparence conservés par piste (les plus récents).
@@ -177,7 +177,7 @@ TRACKER_BACKEND = os.getenv("TRACKER_BACKEND", "python").strip().lower()
 # tools/bench_yolo.py sur MOT17-04 et MOT17-09 (1920x1080, RTX 4060) : étape
 # YOLO 1,8 à 2,2x plus rapide en médiane, p95 de ~33 ms à ~7-8 ms, keypoints
 # à 0,16-0,44 px près au p95. Un moteur ne vaut que pour le GPU et la version
-# de TensorRT qui l'ont construit : il n'est pas versionné, cf. README.
+# de TensorRT qui l'ont construit : il n'est pas versionné, cf. docs/performance.md.
 YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8s-pose.pt")
 
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.

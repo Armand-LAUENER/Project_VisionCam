@@ -31,7 +31,7 @@ from core.tracker_backends import build_body_tracker
 logger = logging.getLogger(__name__)
 
 # 384x640 : la taille letterbox d'une image 16:9 à 640 px de large. Un moteur
-# 640x640 ajoute du padding qui change les détections (cf. README).
+# 640x640 ajoute du padding qui change les détections (cf. docs/performance.md).
 YOLO_ENGINE_EXPORT_COMMAND = (
     "uv run yolo export model=yolov8s-pose.pt format=engine half=True device=0 imgsz=384,640"
 )
@@ -191,7 +191,7 @@ class FaceBodyTracker:
         # libre (personne occultée ou sortie) : sa boîte n'est qu'une
         # prédiction. Elle garde son identité en mémoire jusqu'à max_age, mais
         # n'est ni affichée ni soumise à la reconnaissance, dont le crop
-        # montrerait l'obstacle. Mesuré sur MOT17 (validation, cf. README) :
+        # montrerait l'obstacle. Mesuré sur MOT17 (validation, cf. docs/tracking.md) :
         # MOTA 21,5 → 44,2 %, IDF1 48,3 → 54,4 %.
         visible_tracks = [t for t in active_tracks if t.track_id in visible_ids]
 
