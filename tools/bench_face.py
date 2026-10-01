@@ -41,7 +41,7 @@ import numpy as np
 
 import config
 from tools import eval_mot
-from tools.recognition_threshold_study import enroll, load_gt_boxes, outcomes
+from tools.recognition_threshold_study import enroll, load_gt_boxes, outcomes, wilson
 
 MODEL_DIR = os.path.expanduser(f"~/.insightface/models/{config.INSIGHTFACE_MODEL}")
 TRT_CACHE_DIR = os.path.join(config.DATA_DIR, "trt_cache")
@@ -149,6 +149,8 @@ def main():
     parser.add_argument("--photos", type=int, default=5, help="photos par personne enrôlée")
     parser.add_argument("--variants", nargs="+", default=DEFAULT_VARIANTS,
                         help="moteur_détecteur:taille/moteur_reconnaissance, moteurs cuda ou trt")
+    parser.add_argument("--thresholds", nargs="+", type=float,
+                        help="balaie ces seuils pour chaque variante, avec IC 95 %% de Wilson")
     args = parser.parse_args()
 
     from ultralytics import YOLO
@@ -184,12 +186,15 @@ def main():
     print(f"{'variante':<14} │ {'détection':>13} {'embedding':>13} │ {'test':>5} "
           f"{'bon nom':>8} {'mauvais':>8} {'Inconnu':>8} │ {'cos vs réf.':>13}")
     n_gallery = len(gallery_crops)
+    sweeps = []
     for variant in variants:
         faces = [(crop[0], crop[1], r[0], r[1]) if r and r[1] >= min_face else None
                  for crop, r in zip(crops, variant.results)]
         gallery = enroll([f for f in faces[:n_gallery] if f], args.photos)
         probes = [f for f in faces[n_gallery:] if f]
         _, _, rows = outcomes(gallery, probes, [threshold])
+        if args.thresholds:
+            sweeps.append((variant.spec, outcomes(gallery, probes, args.thresholds)))
         _, right, wrong, rejected, _ = rows[0]
         similarity = [float(a[0] @ b[0]) for a, b in zip(reference.results, variant.results)
                       if a and b]
@@ -199,6 +204,25 @@ def main():
     print("\ntest : visages de test d'au moins RECOGNITION_MIN_FACE_PX ; bon nom, mauvais, "
           "Inconnu : nombres de visages.\ncos vs réf. : similarité avec la première variante "
           "(médiane / 5e centile), sur les crops où les deux trouvent un visage.")
+
+    for spec, (known, unknown, rows) in sweeps:
+        print_sweep(spec, known, unknown, rows)
+
+
+def print_sweep(spec, known, unknown, rows):
+    """Taux par seuil, en % des visages de personnes enrôlées, avec IC 95 % de Wilson."""
+    def rate(k, n):
+        low, high = wilson(k, n)
+        return f"{k / n:5.1%} [{low:.1%}-{high:.1%}]" if n else "—"
+
+    print(f"\n{spec} — {len(known)} visages de personnes enrôlées, "
+          f"{len(unknown)} de personnes absentes de la base")
+    print(f"{'seuil':>6} │ {'bon nom':>8} {'mauvais nom [IC 95 %]':>24} {'Inconnu':>8} │ "
+          f"{'absent reconnu à tort [IC 95 %]':>32}")
+    for t, right, wrong, rejected, false_accept in rows:
+        n = len(known)
+        print(f"{t:>6.2f} │ {right / max(1, n):>8.1%} {rate(wrong, n):>24} "
+              f"{rejected / max(1, n):>8.1%} │ {rate(false_accept, len(unknown)):>32}")
 
 
 if __name__ == "__main__":

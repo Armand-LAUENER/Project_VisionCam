@@ -100,6 +100,19 @@ def enroll(faces, photos):
     return gallery
 
 
+def wilson(k, n, z=1.96):
+    """Intervalle de confiance de Wilson (95 % par défaut) pour k succès sur n.
+
+    Reste valable aux bords : 0 erreur sur n essais donne [0, ~3,8/n], pas [0, 0].
+    """
+    if n == 0:
+        return 0.0, 1.0
+    p = k / n
+    centre = (p + z * z / (2 * n)) / (1 + z * z / n)
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
 def outcomes(gallery, probes, thresholds):
     ids = sorted(gallery)
     matrix = np.stack([gallery[i] for i in ids])

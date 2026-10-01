@@ -353,6 +353,31 @@ Dans `FaceRecognizer`, sur 336 crops : 5,7 ms par crop en médiane avec
 TensorRT, 12,6 ms en CUDA (SCRFD 320 dans les deux cas). TensorRT et CUDA
 donnent les mêmes embeddings à 0,998 près (cosinus).
 
+### Seuil de reconnaissance
+
+`uv run -m tools.bench_face --gallery <…> --probe <…> --variants trt:320/trt
+--thresholds 0.35 0.40 0.45 0.50 0.55 0.60 0.65` : mêmes crops et mêmes
+séquences que ci-dessus, configuration déployée. 607 visages de test ≥ 40 px
+de personnes enrôlées ; intervalles de confiance à 95 % (Wilson).
+
+| Seuil | Bons noms | Mauvais noms [IC 95 %] | « Inconnu » |
+|------:|----------:|-----------------------:|------------:|
+| 0,40 | 83,9 % | 4,1 % [2,8-6,0 %] | 12,0 % |
+| **0,45** (défaut) | **80,4 %** | **3,0 % [1,9-4,6 %]** | **16,6 %** |
+| 0,50 | 64,9 % | 1,2 % [0,6-2,4 %] | 33,9 % |
+| 0,55 | 27,2 % | 0,3 % [0,1-1,2 %] | 72,5 % |
+| 0,60 | 1,0 % | 0,0 % [0,0-0,6 %] | 99,0 % |
+
+Chaque visage est jugé seul : dans l'application, une piste ne prend un nom
+qu'à la majorité de 3 reconnaissances (`VOTE_WINDOW`), ce que ce tableau ne
+compte pas. Les personnes absentes de la base ne fournissent que 15 visages
+de test (1 reconnu à tort à 0,45) : trop peu pour un taux.
+
+L'étude précédente (`tools.recognition_threshold_study`, InsightFace sur
+l'image entière) trouvait 0 % de mauvais noms à 0,45 au-delà de 40 px. Sur
+les crops de tête de l'application, les scores de la bonne personne sont plus
+bas : au-delà de 0,55, elle est presque toujours rejetée.
+
 ---
 
 ## Réglage du tracking

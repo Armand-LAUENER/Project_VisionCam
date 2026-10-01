@@ -89,15 +89,21 @@ TRT_CACHE_DIR = os.path.join(DATA_DIR, "trt_cache")
 
 # Similarité cosinus minimale pour valider un match (0.0–1.0).
 # Plus HAUT = plus strict : _identify teste `score >= seuil`.
-# Mesuré avec tools/recognition_threshold_study.py sur CHIRLA (enrôlement en
-# juin-juillet, reconnaissance en décembre) : sur les visages d'au moins 40 px,
-# aucun mauvais nom entre 0,45 et 0,75, et 96 % de bons noms à 0,45 au-delà de
-# 56 px. Les erreurs viennent des petits visages, d'où le seuil suivant.
+# Mesuré avec tools/bench_face.py --thresholds sur CHIRLA, dans les conditions
+# de l'application (crops de tête YOLOv8-Pose, SCRFD 320, TensorRT ; 607
+# visages ≥ 40 px de personnes enrôlées, IC 95 % de Wilson ; cf. README) :
+#   0,45 : 80 % de bons noms, 3,0 % de mauvais [1,9-4,6 %], 17 % « Inconnu »
+#   0,50 : 65 % de bons noms, 1,2 % de mauvais [0,6-2,4 %], 34 % « Inconnu »
+# Chaque visage est jugé seul : le vote par piste (VOTE_WINDOW) n'est pas
+# compté. L'ancienne étude sur image entière (recognition_threshold_study)
+# trouvait 0 % de mauvais noms à 0,45 ; elle ne reflète pas l'application.
 RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.45"))
 
 # Taille minimale (côté le plus court, px) d'un visage pour décider d'un nom.
-# Même étude, seuil 0,45 : 1,7 % de mauvais noms sur tous les visages (35 px
-# en médiane), 0,0 % dès 40 px. Un visage plus petit ne change pas le nom de
+# Choisie avec recognition_threshold_study (image entière, seuil 0,45) : 1,7 %
+# de mauvais noms sur tous les visages (35 px en médiane), moins dès 40 px.
+# Sur les crops de l'application, il reste 3,0 % de mauvais noms au-dessus
+# (cf. RECOGNITION_THRESHOLD). Un visage plus petit ne change pas le nom de
 # la piste, qui reste celui qu'elle avait.
 RECOGNITION_MIN_FACE_PX = int(os.getenv("RECOGNITION_MIN_FACE_PX", "40"))
 
