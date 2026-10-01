@@ -78,6 +78,26 @@ def _flatten_model_dir(name, root="~/.insightface"):
 
 
 class FaceRecognizer:
+    # Remplacer l'une des deux listes invalide la matrice empilée de _identify.
+    # Une modification en place (_upsert_embedding) l'invalide elle-même.
+    @property
+    def known_embeddings(self) -> list:
+        return self._known_embeddings
+
+    @known_embeddings.setter
+    def known_embeddings(self, value: list) -> None:
+        self._known_embeddings = value
+        self._matrix = None
+
+    @property
+    def known_names(self) -> list:
+        return self._known_names
+
+    @known_names.setter
+    def known_names(self, value: list) -> None:
+        self._known_names = value
+        self._matrix = None
+
     def __init__(self, known_faces_dir="known_faces", threshold=0.45, cache_path="data/embeddings.npz"):
         self.known_faces_dir = known_faces_dir
         self.threshold = threshold
@@ -296,6 +316,7 @@ class FaceRecognizer:
         else:
             self.known_embeddings.append(embedding)
             self.known_names.append(name)
+        self._matrix = None
 
     def _save_images_to_disk(self, dir_name: str, images: list, prefix: str = "enroll") -> None:
         """
@@ -385,9 +406,11 @@ class FaceRecognizer:
         with self._lock:
             if not self.known_embeddings:
                 return "Inconnu", 0.0
-            names = list(self.known_names)
             # Une matrice (N, 512) : un seul produit au lieu d'une boucle Python.
-            known = np.stack(self.known_embeddings)
+            # Empilée une fois, puis à chaque changement de la base (cf. setters).
+            if self._matrix is None:
+                self._matrix = (np.stack(self.known_embeddings), list(self.known_names))
+            known, names = self._matrix
 
         scores = known @ (embedding / np.linalg.norm(embedding))
         best = int(np.argmax(scores))

@@ -81,10 +81,12 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   frames. `tools/pose_threshold_study.py` donne 100 % d'accord avec MediaPipe
   au-delà de 100 px d'écart d'épaules, et la source YOLO ne coûte rien.
 
-- [x] **Recherche vectorisée dans `_identify`** — `core/face_recognition.py:261`
+- [x] **Recherche vectorisée dans `_identify`** — `core/face_recognition.py:397`
   Boucle Python et copie des listes à chaque appel. Garder une matrice
   pré-empilée (reconstruite à l'enrôlement) et faire un seul `argmax`. Gain
   faible, sauf avec beaucoup de personnes enrôlées.
+  Matrice réellement mise en cache le 2026-10-01 (avant : `np.stack` à chaque
+  appel) : 11 → 4,5 µs par appel à 10 personnes, 3,7 → 0,3 ms à 1000.
 
 ## 3. Qualité et réglages
 

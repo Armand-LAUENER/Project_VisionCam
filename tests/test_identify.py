@@ -75,3 +75,60 @@ class TestIdentify:
         recognizer = make_recognizer([("Alice", unit(1, 0)), ("Bob", unit(1, 0))])
 
         assert recognizer._identify(unit(1, 0))[0] == "Alice"
+
+
+class TestStackedMatrix:
+    """La matrice (N, 512) est empilée une fois, puis à chaque changement de la base.
+
+    Avant : np.stack à chaque appel de _identify, soit à chaque visage reconnu.
+    """
+
+    def count_stacks(self, monkeypatch):
+        calls = []
+        real_stack = np.stack
+
+        def counting_stack(*args, **kwargs):
+            calls.append(1)
+            return real_stack(*args, **kwargs)
+
+        monkeypatch.setattr("core.face_recognition.np.stack", counting_stack)
+        return calls
+
+    def test_matrix_is_not_restacked_between_calls(self, monkeypatch):
+        recognizer = make_recognizer([("Alice", unit(1, 0)), ("Bob", unit(0, 1))])
+        stacks = self.count_stacks(monkeypatch)
+
+        for _ in range(5):
+            recognizer._identify(unit(1, 0))
+
+        assert len(stacks) == 1
+
+    def test_enrolled_person_is_recognized_right_away(self):
+        recognizer = make_recognizer([("Alice", unit(1, 0))])
+        recognizer._identify(unit(1, 0))
+
+        with recognizer._lock:
+            recognizer._upsert_embedding("Bob", unit(0, 1))
+
+        assert recognizer._identify(unit(0, 1))[0] == "Bob"
+
+    def test_updated_embedding_replaces_the_old_one(self):
+        recognizer = make_recognizer([("Alice", unit(1, 0)), ("Bob", unit(0, 1))])
+        recognizer._identify(unit(1, 0))
+
+        with recognizer._lock:
+            recognizer._upsert_embedding("Alice", unit(0, 0, 1))
+
+        assert recognizer._identify(unit(1, 0))[0] == "Inconnu"
+        assert recognizer._identify(unit(0, 0, 1))[0] == "Alice"
+
+    def test_replaced_database_is_used(self):
+        """Rebuild, chargement du cache et suppression remplacent les listes entières."""
+        recognizer = make_recognizer([("Alice", unit(1, 0))])
+        recognizer._identify(unit(1, 0))
+
+        with recognizer._lock:
+            recognizer.known_embeddings, recognizer.known_names = [unit(0, 1)], ["Bob"]
+
+        assert recognizer._identify(unit(0, 1))[0] == "Bob"
+        assert recognizer._identify(unit(1, 0))[0] == "Inconnu"
