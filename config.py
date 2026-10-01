@@ -101,6 +101,13 @@ RECOGNITION_THRESHOLD = float(os.getenv("RECOGNITION_THRESHOLD", "0.45"))
 # la piste, qui reste celui qu'elle avait.
 RECOGNITION_MIN_FACE_PX = int(os.getenv("RECOGNITION_MIN_FACE_PX", "40"))
 
+# Visages nets (≥ RECOGNITION_MIN_FACE_PX) reconnus « Inconnu » d'affilée avant
+# qu'une piste perde son nom. Couvre l'échange de pistes avec une personne non
+# enrôlée, qui sinon garderait le nom indéfiniment. Une personne enrôlée sort
+# « Inconnu » sur ~16 % de ses visages ≥ 40 px (tableau bench_face du README) :
+# un seul échec ne doit pas lui retirer son nom.
+RECOGNITION_UNKNOWN_STREAK = int(os.getenv("RECOGNITION_UNKNOWN_STREAK", "3"))
+
 
 # =============================================================================
 # TRACKER & PERFORMANCE

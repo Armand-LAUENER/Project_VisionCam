@@ -139,6 +139,10 @@ class FaceBodyTracker:
         # { track_id: deque([(name, confidence), ...], maxlen=VOTE_WINDOW) }
         self._vote_buffer: dict[int, deque] = {}
 
+        # { track_id: n } — visages nets reconnus « Inconnu » d'affilée sur une
+        # piste nommée. Au-delà de RECOGNITION_UNKNOWN_STREAK, le nom tombe.
+        self._unknown_streak: dict[int, int] = {}
+
         # { track_id: frame_count } — dernière soumission à InsightFace.
         # Fait tourner les tracks quand ils sont plus nombreux que les places.
         self._last_attempt_frame: dict[int, int] = {}
@@ -228,6 +232,8 @@ class FaceBodyTracker:
         active_ids = {t.track_id for t in active_tracks}
         self._identity_map = {tid: v for tid, v in self._identity_map.items() if tid in active_ids}
         self._vote_buffer  = {tid: v for tid, v in self._vote_buffer.items()  if tid in active_ids}
+        self._unknown_streak = {tid: v for tid, v in self._unknown_streak.items()
+                                if tid in active_ids}
         self._last_attempt_frame = {tid: v for tid, v in self._last_attempt_frame.items()
                                     if tid in active_ids}
         # _nose_map et _face_kps_map sont déjà purgés dans _update_nose_map
@@ -465,7 +471,9 @@ class FaceBodyTracker:
           2. Proximité euclidienne face_center ↔ nose_keypoint (fallback).
 
         Règles absolues :
-          - 'Inconnu' ne remplace JAMAIS une identité établie.
+          - Un 'Inconnu' isolé ne remplace pas une identité établie : il en
+            faut RECOGNITION_UNKNOWN_STREAK d'affilée (échange de pistes avec
+            une personne non enrôlée).
           - Confiance < RECOGNITION_THRESHOLD → rejeté.
           - Anti-clonage : une identité ne peut appartenir qu'à un seul corps.
           - Vote buffer : consensus requis avant confirmation.
@@ -474,6 +482,10 @@ class FaceBodyTracker:
 
         for face in faces:
             if face['name'] == 'Inconnu':
+                # Seulement par source_track_id : le repli géométrique pourrait
+                # retirer son nom à une autre piste que celle du crop.
+                if face.get('source_track_id') in active_track_map:
+                    self._count_unknown_face(face['source_track_id'])
                 continue
             if face['confidence'] < config.RECOGNITION_THRESHOLD:
                 continue
@@ -486,6 +498,7 @@ class FaceBodyTracker:
 
             if best_track_id is None:
                 continue
+            self._unknown_streak.pop(best_track_id, None)
 
             # ── Vote buffer ────────────────────────────────────────────────────
             if best_track_id not in self._vote_buffer:
@@ -520,6 +533,27 @@ class FaceBodyTracker:
                 'confidence': avg_confidence,
                 'last_face_frame': frame_count,
             }
+
+    def _count_unknown_face(self, track_id: int) -> None:
+        """Compte un visage net reconnu « Inconnu » ; retire le nom après K d'affilée.
+
+        Sans ce compteur, une piste nommée qui passe à une personne non enrôlée
+        (échange de pistes DeepSORT) garde le nom indéfiniment : l'historique
+        enregistre la mauvaise personne et l'alerte « inconnu » ne part pas.
+        """
+        name = self._identity_map.get(track_id, {}).get('name', 'Inconnu')
+        if name == 'Inconnu':
+            return
+        streak = self._unknown_streak.get(track_id, 0) + 1
+        if streak < config.RECOGNITION_UNKNOWN_STREAK:
+            self._unknown_streak[track_id] = streak
+            return
+        logger.warning("Piste #%s : %d visages « Inconnu » d'affilée, '%s' retiré",
+                       track_id, streak, name)
+        self._identity_map[track_id] = {'name': 'Inconnu', 'confidence': 0.0,
+                                        'last_face_frame': -1}
+        self._vote_buffer.pop(track_id, None)
+        self._unknown_streak.pop(track_id, None)
 
     def _find_containing_track(
             self,
@@ -588,6 +622,7 @@ class FaceBodyTracker:
         """Libère les ressources."""
         self._identity_map.clear()
         self._vote_buffer.clear()
+        self._unknown_streak.clear()
         self._last_attempt_frame.clear()
         self._face_kps_map.clear()
         logger.info("Ressources libérées")
