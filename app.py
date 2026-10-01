@@ -42,7 +42,7 @@ from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
-from core.presence_log import PresenceLog
+from core.presence_log import FaceConfirmedNames, PresenceLog
 
 logging.basicConfig(
     level=logging.INFO,
@@ -113,6 +113,7 @@ class AppState:
 state = AppState()
 presence_log = PresenceLog(config.PRESENCE_DB_PATH, gap=config.PRESENCE_LOG_GAP_S,
                            retention=config.PRESENCE_RETENTION_DAYS * 86400 or None)
+face_confirmed = FaceConfirmedNames(config.PRESENCE_FACE_MAX_AGE_S)
 events = EventBus()
 timings = StageTimer()
 unknown_watcher = UnknownWatcher(config.UNKNOWN_ALERT_S)
@@ -370,9 +371,13 @@ def processing_loop():
                     del state.last_seen[tid]
 
         # ── Historique des présences ─────────────────────────────────────────
+        # Seuls les noms dont le visage a été reconnu récemment : une piste
+        # nommée garde son nom de dos, y compris après un échange de pistes.
         # Une erreur de base de données ne doit pas arrêter le pipeline vidéo.
+        confirmed = face_confirmed.update(
+            [(p.track_id, p.name, p.last_face_frame) for p in persons_cache], now)
         try:
-            for event in presence_log.update({p.name for p in persons_cache}, now):
+            for event in presence_log.update(confirmed, now):
                 logger.info("Présence : %s %s", event['name'],
                             "arrivé(e)" if event['type'] == 'arrival' else "parti(e)")
                 events.publish(event)

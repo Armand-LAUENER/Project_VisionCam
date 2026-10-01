@@ -252,3 +252,45 @@ class PresenceLog:
             writer.writerow([s["name"], s["arrived"], s["departed"] or "", s["duration_s"],
                              "oui" if s["ongoing"] else "non"])
         return buffer.getvalue()
+
+
+class FaceConfirmedNames:
+    """Noms dont le visage a été reconnu depuis moins de `max_age` secondes.
+
+    Une piste garde son nom quand la personne est de dos : c'est voulu à
+    l'écran, mais après un échange de pistes vers une personne non enrôlée,
+    l'historique inscrirait la mauvaise personne tant qu'elle reste visible.
+    La marge, bien plus longue que l'affichage (FACE_FRESHNESS_FRAMES), évite
+    de couper la session d'une personne enrôlée assise de dos quelques minutes.
+
+    Une reconnaissance se voit au changement de `last_face_frame` de la piste.
+    Une piste en roue libre qui revient garde la date de sa dernière
+    reconnaissance : sa réapparition n'en est pas une.
+    """
+
+    def __init__(self, max_age: float) -> None:
+        self.max_age = max_age
+        # { track_id: (nom, last_face_frame, heure de la reconnaissance) }
+        self._recognized: dict[str, tuple[str, int, float]] = {}
+
+    def update(self, persons, now: float) -> set[str]:
+        """persons : [(track_id, nom, last_face_frame)] visibles ; retourne les noms confirmés."""
+        names = set()
+        visible = set()
+        for track_id, name, last_face_frame in persons:
+            track_id = str(track_id)
+            visible.add(track_id)
+            if name == UNKNOWN or last_face_frame < 0:
+                self._recognized.pop(track_id, None)
+                continue
+            entry = self._recognized.get(track_id)
+            if entry is None or entry[:2] != (name, last_face_frame):
+                entry = (name, last_face_frame, now)
+                self._recognized[track_id] = entry
+            if now - entry[2] <= self.max_age:
+                names.add(name)
+        # Les pistes disparues sont oubliées une fois leur marge écoulée.
+        for track_id, entry in list(self._recognized.items()):
+            if track_id not in visible and now - entry[2] > self.max_age:
+                del self._recognized[track_id]
+        return names

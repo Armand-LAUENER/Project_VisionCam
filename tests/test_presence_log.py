@@ -14,7 +14,7 @@ import os
 import sqlite3
 from datetime import datetime
 
-from core.presence_log import PresenceLog
+from core.presence_log import FaceConfirmedNames, PresenceLog
 
 T0 = datetime(2026, 9, 14, 9, 0, 0).timestamp()
 
@@ -207,3 +207,63 @@ class TestRetention:
 
         assert log.purge(T0 + 400 * self.DAY) == 0
         assert len(log.sessions()) == 1
+
+
+class TestFaceConfirmedNames:
+    """Seuls les noms dont le visage a été reconnu récemment entrent dans l'historique.
+
+    Une piste garde son nom tant que la personne est de dos : après un échange
+    de pistes vers une personne non enrôlée, elle inscrirait sinon la mauvaise
+    personne dans l'historique aussi longtemps qu'elle reste visible.
+    """
+
+    MAX_AGE = 300
+
+    def feed(self, schedule):
+        """schedule : [(secondes, [(track_id, nom, last_face_frame)])] ; noms par étape."""
+        confirmed = FaceConfirmedNames(self.MAX_AGE)
+        return [confirmed.update(persons, T0 + offset) for offset, persons in schedule]
+
+    def test_name_kept_while_the_face_is_recent(self):
+        steps = self.feed([(0, [(1, "Alice", 10)]), (self.MAX_AGE, [(1, "Alice", 10)])])
+
+        assert steps == [{"Alice"}, {"Alice"}]
+
+    def test_name_dropped_without_a_face_for_longer_than_the_margin(self):
+        steps = self.feed([(0, [(1, "Alice", 10)]), (self.MAX_AGE + 1, [(1, "Alice", 10)])])
+
+        assert steps[-1] == set()
+
+    def test_new_face_restarts_the_margin(self):
+        steps = self.feed([(0, [(1, "Alice", 10)]),
+                           (200, [(1, "Alice", 6000)]),
+                           (450, [(1, "Alice", 6000)])])
+
+        assert steps[-1] == {"Alice"}
+
+    def test_track_hidden_for_a_while_does_not_get_a_fresh_margin(self):
+        """Piste en roue libre puis revenue : même visage, pas de nouvelle reconnaissance."""
+        steps = self.feed([(0, [(1, "Alice", 10)]),
+                           (100, []),
+                           (self.MAX_AGE + 1, [(1, "Alice", 10)])])
+
+        assert steps[-1] == set()
+
+    def test_name_change_on_a_track_restarts_the_margin(self):
+        steps = self.feed([(0, [(1, "Alice", 10)]),
+                           (self.MAX_AGE + 1, [(1, "Bob", 10)])])
+
+        assert steps[-1] == {"Bob"}
+
+    def test_unknown_and_never_recognized_tracks_are_ignored(self):
+        steps = self.feed([(0, [(1, "Inconnu", -1), (2, "Alice", -1)])])
+
+        assert steps == [set()]
+
+    def test_memory_is_bounded(self):
+        confirmed = FaceConfirmedNames(self.MAX_AGE)
+        for tid in range(100):
+            confirmed.update([(tid, "Alice", tid)], T0 + tid)
+        confirmed.update([], T0 + 100 + self.MAX_AGE + 1)
+
+        assert len(confirmed._recognized) == 0

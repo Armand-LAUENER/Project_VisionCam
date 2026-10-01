@@ -213,6 +213,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `FLASK_PORT` | `5000` | Port du serveur HTTP |
 | `PRESENCE_LOG_GAP_S` | `60` | Absence (s) après laquelle une session de présence se ferme |
 | `PRESENCE_RETENTION_DAYS` | `30` | Conservation de l'historique (jours) ; `0` = sans limite |
+| `PRESENCE_FACE_MAX_AGE_S` | `300` | Une piste n'inscrit son nom dans l'historique que si son visage a été reconnu depuis moins de ce délai (s) |
 | `ADMIN_PASSWORD_HASH` / `ADMIN_PASSWORD` | vide | Mot de passe exigé pour tout l'accès ; vide = accès ouvert au réseau local |
 | `SESSION_DAYS` | `7` | Durée d'une session de connexion |
 | `SERVER_THREADS` | `32` | Threads waitress ; chaque onglet ouvert en garde deux (flux vidéo + événements) |

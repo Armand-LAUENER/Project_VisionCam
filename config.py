@@ -284,6 +284,12 @@ PRESENCE_LOG_GAP_S = float(os.getenv("PRESENCE_LOG_GAP_S", "60"))
 # Durée de conservation (jours) des sessions terminées ; 0 = sans limite.
 # Purge au démarrage puis toutes les heures (minimisation des données, RGPD).
 PRESENCE_RETENTION_DAYS = float(os.getenv("PRESENCE_RETENTION_DAYS", "30"))
+# Une piste n'inscrit son nom dans l'historique que si le visage a été reconnu
+# depuis moins de PRESENCE_FACE_MAX_AGE_S. Sans cette limite, une piste qui a
+# changé de personne (échange vers un non-enrôlé, nom gardé de dos) y
+# inscrirait la mauvaise. 5 min : une personne enrôlée assise de dos ne voit
+# pas sa session coupée, sauf au-delà de 5 min + PRESENCE_LOG_GAP_S sans visage.
+PRESENCE_FACE_MAX_AGE_S = float(os.getenv("PRESENCE_FACE_MAX_AGE_S", "300"))
 
 # Délai (s) après lequel une personne visible restée « Inconnu » est signalée
 # aux pages ouvertes (une seule fois par piste). Une piste neuve n'a pas encore
