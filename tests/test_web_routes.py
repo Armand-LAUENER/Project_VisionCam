@@ -18,20 +18,25 @@ Lancer : pytest tests/test_web_routes.py -v
 """
 
 import concurrent.futures
+import csv
 import io
 import json
 import pathlib
+import queue
 import re
 import sys
 import threading
 import time
 import types
 import urllib.request
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import cv2
 import numpy as np
 import pytest
+
+from tests.test_video_source import N_FRAMES, index_of, make_sequence
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Mocks des modules lourds, avant l'import de app
@@ -742,3 +747,83 @@ class TestBenchPose:
             assert res.status_code == 409
         finally:
             visioncam._bench_lock.release()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Boucle caméra avec une source fichier (VIDEO_FILE) et journal des pistes
+# ─────────────────────────────────────────────────────────────────────────────
+# Ici plutôt que dans un fichier à part : l'importer depuis un autre fichier
+# installerait les doubles ci-dessus dans sys.modules dès sa collecte, avant
+# les tests qui utilisent le vrai FaceRecognizer.
+
+
+@pytest.fixture
+def file_source(monkeypatch, tmp_path):
+    def use(mode, path=None):
+        monkeypatch.setattr(visioncam.config, "VIDEO_FILE", path or make_sequence(tmp_path))
+        monkeypatch.setattr(visioncam.config, "VIDEO_MODE", mode)
+        monkeypatch.setattr(visioncam.config, "VIDEO_LOOP", False)
+    while True:
+        try:
+            visioncam._frame_queue.get_nowait()
+        except queue.Empty:
+            break
+    yield use
+    visioncam.state.running = True
+
+
+def start_camera_loop():
+    thread = threading.Thread(target=visioncam.camera_loop, daemon=True)
+    thread.start()
+    return thread
+
+
+class TestFileSourceInCameraLoop:
+
+    def test_every_frame_loses_no_frame_with_a_slow_pipeline(self, file_source):
+        file_source("every_frame")
+        thread = start_camera_loop()
+
+        frames = []
+        while len(frames) < N_FRAMES:
+            frames.append(index_of(visioncam._frame_queue.get(timeout=5)))
+            time.sleep(0.02)   # pipeline plus lent que la lecture
+        thread.join(timeout=5)
+
+        assert frames == list(range(1, N_FRAMES + 1))
+        assert not thread.is_alive()
+
+    def test_end_of_video_stops_without_reconnecting(self, file_source, monkeypatch):
+        file_source("realtime")
+        reconnect = []
+        monkeypatch.setattr(visioncam, "_reconnect_camera", lambda cap: reconnect.append(cap))
+
+        thread = start_camera_loop()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert reconnect == []
+
+    def test_unreadable_video_is_not_retried(self, file_source, monkeypatch, tmp_path):
+        file_source("every_frame", path=str(tmp_path / "absent.mp4"))
+        reconnect = []
+        monkeypatch.setattr(visioncam, "_reconnect_camera", lambda cap: reconnect.append(cap))
+
+        thread = start_camera_loop()
+        thread.join(timeout=5)
+
+        assert not thread.is_alive()
+        assert reconnect == []
+
+
+def test_tracks_log_has_one_row_per_visible_track(tmp_path):
+    persons = [SimpleNamespace(track_id=3, body_bbox=[10, 20, 50, 120], name="Alice"),
+               SimpleNamespace(track_id=7, body_bbox=[200, 30, 260, 150], name="Inconnu")]
+    path = tmp_path / "tracks.csv"
+    with open(path, "w", newline="") as f:
+        visioncam._log_tracks(csv.writer(f), 12, persons)
+
+    with open(path, newline="") as f:
+        rows = list(csv.reader(f))
+    assert rows == [["12", "3", "10", "20", "40", "100", "Alice"],
+                    ["12", "7", "200", "30", "60", "120", "Inconnu"]]

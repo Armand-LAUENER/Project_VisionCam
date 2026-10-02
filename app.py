@@ -8,6 +8,7 @@ import os
 # explicite de l'environnement.
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
+import csv
 import hmac
 import json
 import logging
@@ -43,6 +44,7 @@ from core.face_recognition import FaceRecognizer
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
 from core.presence_log import FaceConfirmedNames, PresenceLog
+from core.video_source import FileSource
 
 logging.basicConfig(
     level=logging.INFO,
@@ -199,7 +201,17 @@ def _open_camera():
     """
     Ouvre la caméra avec un timeout court pour ne pas bloquer le thread.
     Retourne un objet VideoCapture ouvert, ou None si l'ouverture échoue.
+    Avec VIDEO_FILE, une source fichier (même interface) remplace la caméra.
     """
+    if config.VIDEO_FILE:
+        source = FileSource(config.VIDEO_FILE, mode=config.VIDEO_MODE, loop=config.VIDEO_LOOP)
+        if not source.isOpened():
+            logger.error("Vidéo illisible : %s", config.VIDEO_FILE)
+            return None
+        logger.info("Vidéo à la place de la caméra : %s (%s, %.0f i/s%s)", config.VIDEO_FILE,
+                    config.VIDEO_MODE, source.fps, ", en boucle" if config.VIDEO_LOOP else "")
+        return source
+
     cap = cv2.VideoCapture(config.CAMERA_SOURCE)
 
     # Timeout de connexion et de lecture (ms). Sans ça, VideoCapture sur HTTP
@@ -254,6 +266,8 @@ def camera_loop():
     """
     logger.info("Thread caméra démarré.")
     cap = _open_camera()
+    if cap is None and config.VIDEO_FILE:
+        return   # un fichier illisible ne se répare pas en réessayant
     if cap is None:
         logger.error("Impossible d'ouvrir la caméra au démarrage : %s", config.CAMERA_SOURCE)
         cap = _reconnect_camera(None)
@@ -264,6 +278,9 @@ def camera_loop():
 
     while state.running:
         ret, frame = cap.read()
+        if not ret and isinstance(cap, FileSource):
+            logger.info("Fin de la vidéo : %s", config.VIDEO_FILE)
+            break
         if not ret:
             consecutive_failures += 1
             if consecutive_failures == 1:
@@ -279,6 +296,11 @@ def camera_loop():
             continue
 
         consecutive_failures = 0
+
+        # every_frame : aucune image perdue, la lecture attend le pipeline.
+        if isinstance(cap, FileSource) and cap.mode == "every_frame":
+            _put_waiting(frame)
+            continue
 
         # Toujours garder la frame la plus fraîche : drop oldest si queue pleine.
         try:
@@ -297,6 +319,16 @@ def camera_loop():
     logger.info("Thread caméra arrêté.")
 
 
+def _put_waiting(frame) -> None:
+    """Met l'image en file en attendant qu'une place se libère (mode every_frame)."""
+    while state.running:
+        try:
+            _frame_queue.put(frame, timeout=0.5)
+            return
+        except queue.Full:
+            continue
+
+
 # ══════════════════════════════════════════
 # THREAD B — PIPELINE AI
 # ══════════════════════════════════════════
@@ -312,6 +344,10 @@ def processing_loop():
     fps_counter = 0
     persons_cache = []
     pose_cache = {}
+    # Écrit ligne par ligne (buffering=1) : un arrêt par SIGTERM ne perd rien.
+    tracks_log = (open(config.TRACKS_LOG_PATH, "w", newline="", buffering=1)
+                  if config.TRACKS_LOG_PATH else None)
+    tracks_writer = csv.writer(tracks_log) if tracks_log else None
 
     while state.running:
         try:
@@ -331,6 +367,8 @@ def processing_loop():
             persons_cache = tracker.update(frame, frame_count)
             for stage, seconds in tracker.last_timings.items():
                 timings.record(stage, seconds)
+            if tracks_writer:
+                _log_tracks(tracks_writer, frame_count, persons_cache)
         except Exception as e:
             logger.error("Erreur traitement : %s: %s", type(e).__name__, e)
 
@@ -414,7 +452,16 @@ def processing_loop():
             state.bench_persons = persons_cache
 
     tracker.release()
+    if tracks_log:
+        tracks_log.close()
     logger.info("Thread de traitement arrêté.")
+
+
+def _log_tracks(writer, frame_count, persons) -> None:
+    """Une ligne par piste visible : image,track_id,x,y,largeur,hauteur,nom."""
+    for p in persons:
+        x1, y1, x2, y2 = p.body_bbox
+        writer.writerow([frame_count, p.track_id, x1, y1, x2 - x1, y2 - y1, p.name])
 
 
 # ══════════════════════════════════════════

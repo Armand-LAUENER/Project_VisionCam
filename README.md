@@ -234,6 +234,10 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 |:----------|:-------|:-----|
 | `USE_LOCAL_CAM` | `True` | Webcam locale si `True`, caméra IP sinon |
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
+| `VIDEO_FILE` | vide | Vidéo, motif d'images ou séquence MOT17 à la place de la caméra |
+| `VIDEO_MODE` | `realtime` | `realtime` : cadence d'origine, images sautées si le pipeline est lent ; `every_frame` : toutes les images, déterministe |
+| `VIDEO_LOOP` | `false` | Relire la vidéo en boucle (test d'endurance) |
+| `TRACKS_LOG_PATH` | vide | CSV des pistes affichées, une ligne par piste et par image |
 | `FLASK_PORT` | `5000` | Port du serveur HTTP |
 | `PRESENCE_LOG_GAP_S` | `60` | Absence (s) après laquelle une session de présence se ferme |
 | `PRESENCE_RETENTION_DAYS` | `30` | Conservation de l'historique (jours) ; `0` = sans limite |

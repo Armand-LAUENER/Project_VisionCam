@@ -33,6 +33,19 @@ LOCAL_SOURCE = 0
 REMOTE_SOURCE = os.getenv("REMOTE_SOURCE", "http://192.168.27.65:5000/video")
 CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 
+# Simulation de caméra (core/video_source.py) : si défini, remplace la caméra
+# par une vidéo, un motif d'images ou un dossier de séquence MOT17.
+#   realtime    : cadence d'origine, images sautées si le pipeline est trop lent
+#   every_frame : chaque image traitée, dans l'ordre (déterministe, tests)
+VIDEO_FILE = os.getenv("VIDEO_FILE", "")
+VIDEO_MODE = os.getenv("VIDEO_MODE", "realtime")
+VIDEO_LOOP = os.getenv("VIDEO_LOOP", "false").lower() == "true"
+
+# Si défini, chaque image traitée y ajoute ses pistes visibles, une ligne par
+# piste : image,track_id,x,y,largeur,hauteur,nom (image en base 1, comme MOT17
+# en mode every_frame). Sert à comparer deux exécutions et à mesurer les noms.
+TRACKS_LOG_PATH = os.getenv("TRACKS_LOG_PATH", "")
+
 
 # =============================================================================
 # SERVEUR FLASK

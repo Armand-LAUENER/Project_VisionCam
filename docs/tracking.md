@@ -70,6 +70,15 @@ même identité à une personne pendant toute la vidéo, même après une longue
 sortie du champ, alors que DeepSORT ouvre une nouvelle piste passé `max_age`.
 Dans VisionCam, c'est la reconnaissance faciale qui redonne le nom au retour.
 
+Pour rejouer une séquence dans l'application complète, au lieu de la caméra,
+et garder les pistes affichées (deux exécutions en `every_frame` donnent les
+mêmes : vérifié sur 600 images de CHIRLA, 1 266 pistes-images identiques) :
+
+```bash
+VIDEO_FILE=~/datasets/visioncam/scene-01 VIDEO_MODE=every_frame \
+    TRACKS_LOG_PATH=data/tracks.csv uv run app.py
+```
+
 Pour valider sur ta propre caméra :
 
 ```bash

@@ -7,6 +7,10 @@ Windows si USE_LOCAL_CAM=false) ou une vidéo, puis écrit :
     <sortie>/img1/000001.jpg …   images, à la cadence demandée
     <sortie>/det/det.txt         détections YOLO (config.YOLO_MODEL), format MOT
     <sortie>/seqinfo.ini         nom, cadence, taille, nombre d'images
+    <sortie>/timestamps.txt      heure de chaque image (CSV avec en-tête) :
+                                 `frame,unix_time` depuis une caméra, pour
+                                 resynchroniser plus tard plusieurs caméras ;
+                                 `frame,video_time_s` depuis une vidéo
 
 `--detect-only <séquence>` ne fait que (re)générer `det/det.txt` pour une
 séquence existante, par exemple un jeu de données qui n'a pas de détections
@@ -38,7 +42,10 @@ import config
 
 
 def capture(source, seconds, fps, img_dir):
-    """Écrit les images à `fps` pendant `seconds` ; retourne (nombre, largeur, hauteur)."""
+    """Écrit les images à `fps` pendant `seconds` ; retourne (nombre, largeur, hauteur).
+
+    Écrit aussi timestamps.txt à côté de img_dir : l'heure de chaque image.
+    """
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         sys.exit(f"Source vidéo illisible : {source}")
@@ -49,6 +56,8 @@ def capture(source, seconds, fps, img_dir):
     count = read = 0
     size = (0, 0)
     next_shot = time.monotonic()
+    stamps = open(os.path.join(os.path.dirname(img_dir), "timestamps.txt"), "w")
+    stamps.write("frame,video_time_s\n" if is_file else "frame,unix_time\n")
     print(f"Enregistrement de {seconds} s à {fps} images/s… (Ctrl+C pour arrêter)")
     try:
         while count < seconds * fps:
@@ -67,6 +76,10 @@ def capture(source, seconds, fps, img_dir):
                     continue
                 next_shot += period
             count += 1
+            # Heure de réception de l'image : aucune horloge commune n'est
+            # disponible dans le flux, c'est la plus proche de la capture.
+            stamp = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000 if is_file else time.time()
+            stamps.write(f"{count},{stamp:.3f}\n")
             size = (frame.shape[1], frame.shape[0])
             cv2.imwrite(os.path.join(img_dir, f"{count:06d}.jpg"), frame,
                         [cv2.IMWRITE_JPEG_QUALITY, 95])
@@ -75,6 +88,7 @@ def capture(source, seconds, fps, img_dir):
     except KeyboardInterrupt:
         print("  arrêt demandé")
     cap.release()
+    stamps.close()
     return count, *size
 
 
