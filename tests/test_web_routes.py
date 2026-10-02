@@ -76,10 +76,14 @@ def auth_disabled(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def isolated_presence_log(monkeypatch, tmp_path):
-    """Jamais la vraie data/presence.db : une base temporaire par test."""
+    """Jamais la vraie data/presence.db : une base temporaire par test, événements compris."""
+    from core.event_log import EventLog, TrackEvents
     from core.presence_log import PresenceLog
 
-    monkeypatch.setattr(visioncam, "presence_log", PresenceLog(str(tmp_path / "presence-test.db")))
+    db = str(tmp_path / "presence-test.db")
+    monkeypatch.setattr(visioncam, "presence_log", PresenceLog(db))
+    monkeypatch.setattr(visioncam, "event_log", EventLog(db, run_id="test"))
+    monkeypatch.setattr(visioncam, "track_events", TrackEvents("cam0", 5.0))
 
 
 @pytest.fixture(autouse=True)
@@ -720,6 +724,27 @@ class TestHistoryApi:
         client.post('/api/people/Alice/rename', json={'new_name': 'Alicia'})
 
         assert history.names() == ['Alicia', 'Bob']
+
+    def _person_events(self):
+        visioncam.event_log.write(visioncam.track_events.update([(1, 'Inconnu'), (2, 'Bob')], 0.0)
+                                  + visioncam.track_events.update([(1, 'Alice'), (2, 'Bob')], 1.0))
+
+    def test_supprimer_une_personne_efface_les_evenements_de_ses_pistes(self, client):
+        """Apparition comprise : la piste n'avait pas encore de nom à ce moment-là."""
+        self._person_events()
+        _recognizer.delete_person.return_value = ('ok', 'supprimé')
+
+        client.delete('/api/people/Alice')
+
+        assert {e['track_id'] for e in visioncam.event_log.events()} == {'2'}
+
+    def test_renommer_une_personne_renomme_ses_evenements(self, client):
+        self._person_events()
+        _recognizer.rename_person.return_value = ('ok', 'renommé')
+
+        client.post('/api/people/Alice/rename', json={'new_name': 'Alicia'})
+
+        assert {e['name'] for e in visioncam.event_log.events()} == {None, 'Alicia', 'Bob'}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

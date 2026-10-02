@@ -57,7 +57,12 @@ def server():
 
 @pytest.fixture(autouse=True)
 def scene(monkeypatch, tmp_path):
-    """Une personne inconnue à l'écran, une personne en base, un historique."""
+    """Une personne inconnue à l'écran, une personne en base, un historique.
+
+    Historique et journal d'événements dans une base temporaire : les pages
+    renomment et suppriment des personnes, jamais dans la vraie data/presence.db.
+    """
+    from core.event_log import EventLog, TrackEvents
     from core.presence_log import PresenceLog
 
     monkeypatch.setattr(visioncam.config, 'ADMIN_PASSWORD', '')
@@ -68,6 +73,8 @@ def scene(monkeypatch, tmp_path):
     log.update(["Alice"], now=now - 600)
     log.update([], now=now - 300)
     monkeypatch.setattr(visioncam, "presence_log", log)
+    monkeypatch.setattr(visioncam, "event_log", EventLog(str(tmp_path / "presence.db"), "test"))
+    monkeypatch.setattr(visioncam, "track_events", TrackEvents("cam0", 5.0))
 
     person = type("Person", (), {"track_id": 7, "name": "Inconnu",
                                  "body_bbox": [500, 100, 800, 700],

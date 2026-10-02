@@ -19,6 +19,7 @@ import statistics
 import sys
 import threading
 import time
+import uuid
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
@@ -39,6 +40,7 @@ from werkzeug.security import check_password_hash
 
 import config
 from core.endurance import EnduranceLog
+from core.event_log import EventLog, ForwardClock, TrackEvents
 from core.events import EventBus, StageTimer, UnknownWatcher
 from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
@@ -117,6 +119,12 @@ state = AppState()
 presence_log = PresenceLog(config.PRESENCE_DB_PATH, gap=config.PRESENCE_LOG_GAP_S,
                            retention=config.PRESENCE_RETENTION_DAYS * 86400 or None)
 face_confirmed = FaceConfirmedNames(config.PRESENCE_FACE_MAX_AGE_S)
+# Journal d'événements bruts (roadmap 2.1), même base que l'historique. Une
+# piste est finie après PRESENCE_TIMEOUT sans être visible.
+event_clock = ForwardClock()
+event_log = EventLog(config.PRESENCE_DB_PATH, run_id=uuid.uuid4().hex[:12], clock=event_clock,
+                     retention=config.PRESENCE_RETENTION_DAYS * 86400 or None)
+track_events = TrackEvents(config.CAMERA_ID, config.PRESENCE_TIMEOUT)
 events = EventBus()
 timings = StageTimer()
 unknown_watcher = UnknownWatcher(config.UNKNOWN_ALERT_S)
@@ -429,6 +437,11 @@ def processing_loop():
                 events.publish(event)
         except Exception as e:
             logger.warning("Historique de présence indisponible : %s: %s", type(e).__name__, e)
+        try:
+            event_log.write(track_events.update(
+                [(p.track_id, p.name) for p in persons_cache], event_clock()))
+        except Exception as e:
+            logger.warning("Journal d'événements indisponible : %s: %s", type(e).__name__, e)
 
         # ── Alerte : personne visible restée inconnue ────────────────────────
         for track_id in unknown_watcher.update([(p.track_id, p.name) for p in persons_cache], now):
@@ -502,6 +515,7 @@ def _endurance_probe(frame_count, fps, persons) -> dict:
         'size_unknown_watcher': len(unknown_watcher._first_unknown) + len(unknown_watcher._alerted),
         'size_face_confirmed': len(face_confirmed._recognized),
         'size_presence_open': len(presence_log._open),
+        'size_track_events': len(track_events._tracks),
         'size_event_subscribers': len(events._subscribers),
     })
     return row
@@ -778,6 +792,7 @@ def api_rename_person(name):
     status, message = face_recognizer.rename_person(name, new_name)
     if status == 'ok' and new_name != name:
         presence_log.rename(name, new_name)
+        event_log.rename(name, new_name)
         _publish('renamed', name=new_name, old_name=name)
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
 
@@ -787,8 +802,10 @@ def api_delete_person(name):
     """Supprime photos, entrées et historique. Réponse : 200 | 400 | 404 — { success, message }"""
     status, message = face_recognizer.delete_person(name)
     if status == 'ok':
-        # Droit à l'effacement : l'historique de présence part avec la personne.
+        # Droit à l'effacement : l'historique de présence et les événements de
+        # ses pistes partent avec la personne.
         presence_log.forget(name)
+        event_log.forget(name)
         _refresh_total_known()
         _publish('deleted', name=name)
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
@@ -1214,5 +1231,6 @@ if __name__ == '__main__':
         # exception »), et une frame traitée après close_all rouvrirait une session.
         process_thread.join(timeout=10)
         camera_thread.join(timeout=10)
-        # Ferme les sessions en cours à leur dernière heure vue.
+        # Ferme les sessions et les pistes en cours à leur dernière heure vue.
         presence_log.close_all()
+        event_log.write(track_events.finish())

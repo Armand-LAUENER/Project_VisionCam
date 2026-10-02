@@ -37,6 +37,9 @@ CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 # par une vidéo, un motif d'images ou un dossier de séquence MOT17.
 #   realtime    : cadence d'origine, images sautées si le pipeline est trop lent
 #   every_frame : chaque image traitée, dans l'ordre (déterministe, tests)
+# Identifiant de la caméra dans le journal d'événements (core/event_log.py).
+CAMERA_ID = os.getenv("CAMERA_ID", "cam0")
+
 VIDEO_FILE = os.getenv("VIDEO_FILE", "")
 VIDEO_MODE = os.getenv("VIDEO_MODE", "realtime")
 VIDEO_LOOP = os.getenv("VIDEO_LOOP", "false").lower() == "true"
