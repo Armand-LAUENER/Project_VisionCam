@@ -786,7 +786,9 @@ class TestFileSourceInCameraLoop:
 
         frames = []
         while len(frames) < N_FRAMES:
-            frames.append(index_of(visioncam._frame_queue.get(timeout=5)))
+            received, frame = visioncam._frame_queue.get(timeout=5)
+            assert received <= time.perf_counter()
+            frames.append(index_of(frame))
             time.sleep(0.02)   # pipeline plus lent que la lecture
         thread.join(timeout=5)
 

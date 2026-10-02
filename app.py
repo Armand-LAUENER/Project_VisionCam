@@ -260,7 +260,8 @@ def _reconnect_camera(cap):
 # ══════════════════════════════════════════
 def camera_loop():
     """
-    Lit les frames depuis la caméra et les pousse dans _frame_queue.
+    Lit les frames depuis la caméra et les pousse dans _frame_queue, avec
+    leur heure de réception (perf_counter) pour mesurer la latence.
     Entièrement découplé du pipeline AI : cap.read() ne bloque jamais
     le calcul YOLO/InsightFace. La queue conserve toujours la frame
     la plus récente (drop oldest si pleine).
@@ -297,22 +298,23 @@ def camera_loop():
             continue
 
         consecutive_failures = 0
+        item = (time.perf_counter(), frame)
 
         # every_frame : aucune image perdue, la lecture attend le pipeline.
         if isinstance(cap, FileSource) and cap.mode == "every_frame":
-            _put_waiting(frame)
+            _put_waiting(item)
             continue
 
         # Toujours garder la frame la plus fraîche : drop oldest si queue pleine.
         try:
-            _frame_queue.put_nowait(frame)
+            _frame_queue.put_nowait(item)
         except queue.Full:
             try:
                 _frame_queue.get_nowait()
             except queue.Empty:
                 pass
             try:
-                _frame_queue.put_nowait(frame)
+                _frame_queue.put_nowait(item)
             except queue.Full:
                 pass
 
@@ -320,11 +322,11 @@ def camera_loop():
     logger.info("Thread caméra arrêté.")
 
 
-def _put_waiting(frame) -> None:
+def _put_waiting(item) -> None:
     """Met l'image en file en attendant qu'une place se libère (mode every_frame)."""
     while state.running:
         try:
-            _frame_queue.put(frame, timeout=0.5)
+            _frame_queue.put(item, timeout=0.5)
             return
         except queue.Full:
             continue
@@ -357,7 +359,7 @@ def processing_loop():
 
     while state.running:
         try:
-            frame = _frame_queue.get(timeout=1.0)
+            received, frame = _frame_queue.get(timeout=1.0)
         except queue.Empty:
             continue
 
@@ -451,6 +453,9 @@ def processing_loop():
         with timings.measure('encode'):
             _publish_display_frame(display_frame)
         timings.record('frame', time.perf_counter() - frame_start)
+        # Réception par le thread caméra → image et noms publiés pour les pages :
+        # attente en file comprise. En every_frame, l'attente est voulue.
+        timings.record('latency', time.perf_counter() - received)
         with state.lock:
             state.currently_present = present_list
             state.fps = current_fps
@@ -483,7 +488,14 @@ def _endurance_probe(frame_count, fps, persons) -> dict:
         free, total = torch.cuda.mem_get_info()
         row['gpu_used_mb'] = round((total - free) / 2**20)
         row['torch_reserved_mb'] = round(torch.cuda.memory_reserved() / 2**20)
+    latency = timings.summary().get('latency')
+    if latency:
+        row['latency_p50_ms'] = latency['median_ms']
+        row['latency_p95_ms'] = latency['p95_ms']
     row['visible_tracks'] = len(persons)
+    # Grossit normalement (sessions de présence) : affichée, pas jugée.
+    if os.path.exists(config.PRESENCE_DB_PATH):
+        row['presence_db_kb'] = round(os.path.getsize(config.PRESENCE_DB_PATH) / 1024)
     row.update({f'size_{k}': v for k, v in tracker.state_sizes().items()})
     row.update({
         'size_last_seen': len(state.last_seen),

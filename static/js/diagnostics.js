@@ -8,6 +8,7 @@ const STAGES = {
     pose: 'Orientation',
     encode: 'Encodage vidéo',
     frame: 'Image complète',
+    latency: 'Latence (réception → affichage)',
 };
 
 function pairs(target, rows) {

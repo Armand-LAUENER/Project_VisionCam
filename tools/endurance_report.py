@@ -7,6 +7,7 @@ et juge chaque mesure après le warm-up (moteurs TensorRT, caches) :
 - mémoire (`*_mb`) : la dérive linéaire sur la durée mesurée ne dépasse pas
   max(50 Mo, 5 % de la moyenne) ;
 - FPS : la dérive ne fait pas perdre plus de 5 % de la moyenne ;
+- latence (`latency_*_ms`) : la dérive ne dépasse pas max(20 ms, 10 %) ;
 - structures internes (`size_*`, `visible_tracks`) : le maximum du dernier
   quart de la mesure ne dépasse pas 1,5 × celui du premier quart + 5. Leur
   taille suit le nombre de personnes : bornée, pas constante.
@@ -28,8 +29,8 @@ from dataclasses import dataclass
 import numpy as np
 
 MIN_ROWS = 10
-# Compteurs cumulés : croissent par construction, ils ne sont pas jugés.
-COUNTERS = ("frames",)
+# Croissent par construction (compteur, historique de présence) : affichés, pas jugés.
+COUNTERS = ("frames", "presence_db_kb")
 HOUR = 3600.0
 
 
@@ -73,6 +74,10 @@ def analyze(rows, warmup_s: float = 1800) -> list[Result]:
             limit = 1.5 * values[:quarter].max() + 5
             stable = bool(values[-quarter:].max() <= limit)
             rule = f"max fin ≤ {limit:.0f}"
+        elif column.startswith("latency_"):
+            limit = max(20.0, 0.10 * mean)
+            stable = drift <= limit
+            rule = f"dérive ≤ {limit:.0f}"
         elif column == "fps":
             stable = drift >= -0.05 * mean
             rule = f"dérive ≥ {-0.05 * mean:.2f}"
@@ -101,6 +106,9 @@ def main():
     if "frames" in rows[0] and duration > 0:
         frames = float(rows[-1]["frames"]) - float(rows[0]["frames"])
         print(f"Images traitées : {frames:.0f}, soit {frames / (duration * HOUR):.1f} i/s en moyenne")
+    if "presence_db_kb" in rows[-1] and rows[-1]["presence_db_kb"]:
+        first = next(r["presence_db_kb"] for r in rows if r.get("presence_db_kb"))
+        print(f"Historique de présence : {first} → {rows[-1]['presence_db_kb']} Ko")
     if len(gaps) and gaps.max() > 3 * np.median(gaps):
         print(f"Attention : trou de {gaps.max():.0f} s dans le journal (pipeline bloqué ?)")
 
