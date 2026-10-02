@@ -524,7 +524,7 @@ class FaceBodyTracker:
                         'name': 'Inconnu', 'confidence': 0.0, 'last_face_frame': -1
                     }
                     logger.warning(
-                        "Correction usurpation : '%s' passe du corps #%d au corps #%d",
+                        "Correction usurpation : '%s' passe du corps #%s au corps #%s",
                         new_name, old_tid, best_track_id,
                     )
 

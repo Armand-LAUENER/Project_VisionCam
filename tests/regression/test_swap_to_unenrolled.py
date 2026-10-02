@@ -129,3 +129,27 @@ class TestSwapToUnenrolled:
         name, _ = run(tracker, 60, 300)
 
         assert name == 'Alice'
+
+
+def test_identity_move_is_logged_with_string_track_ids(caplog):
+    """deep_sort_realtime donne des track_id en chaîne : le message ne doit pas casser.
+
+    Bug d'origine : « passe du corps #%d au corps #%d » levait TypeError dans le
+    logging à chaque correction d'usurpation ; le message était perdu.
+    """
+    tracker = FaceBodyTracker(MagicMock())
+    tracks = []
+    for i, track_id in enumerate(('1', '51')):
+        track = make_track(i + 1)
+        track.track_id = track_id
+        tracks.append(track)
+    tracker._identity_map['1'] = {'name': 'Alice', 'confidence': 0.9, 'last_face_frame': 0}
+    faces = [{'name': 'Alice', 'confidence': 0.9, 'bbox': [0, 0, 1, 1], 'source_track_id': '51'}
+             for _ in range(2)]
+
+    with caplog.at_level("WARNING", logger="core.face_body_tracker"):
+        tracker._associate_faces_to_tracks(tracks, faces, frame_count=10)
+
+    assert tracker._identity_map['51']['name'] == 'Alice'
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("passe du corps #1 au corps #51" in m for m in messages)

@@ -152,7 +152,7 @@ def _estimate_pose_safe(frame, person):
             return None
         return pose_estimator.estimate(crop)
     except Exception as e:
-        logger.warning("Échec pose sur track #%d : %s: %s",
+        logger.warning("Échec pose sur track #%s : %s: %s",
                        person.track_id, type(e).__name__, e)
         return None
 
