@@ -340,7 +340,9 @@ def processing_loop():
     logger.info("Thread de traitement démarré.")
 
     frame_count = 0
-    fps_time = time.time()
+    # Horloge monotone : sous WSL2, l'horloge murale recule de ~0,8 s toutes
+    # les 30 s environ, ce qui faisait bondir le FPS affiché.
+    fps_time = time.monotonic()
     fps_counter = 0
     persons_cache = []
     pose_cache = {}
@@ -427,11 +429,11 @@ def processing_loop():
             _publish('unknown', track_id=track_id)
 
         # ── FPS ──────────────────────────────────────────────────────────────
-        elapsed = time.time() - fps_time
+        elapsed = time.monotonic() - fps_time
         if elapsed >= 1.0:
             current_fps = fps_counter / elapsed
             fps_counter = 0
-            fps_time = time.time()
+            fps_time = time.monotonic()
         else:
             current_fps = state.fps
 
