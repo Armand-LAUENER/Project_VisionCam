@@ -124,7 +124,9 @@ face_confirmed = FaceConfirmedNames(config.PRESENCE_FACE_MAX_AGE_S)
 event_clock = ForwardClock()
 event_log = EventLog(config.PRESENCE_DB_PATH, run_id=uuid.uuid4().hex[:12], clock=event_clock,
                      retention=config.PRESENCE_RETENTION_DAYS * 86400 or None)
-track_events = TrackEvents(config.CAMERA_ID, config.PRESENCE_TIMEOUT)
+track_events = TrackEvents(config.CAMERA_ID, config.PRESENCE_TIMEOUT,
+                           face_max_age=config.PRESENCE_FACE_MAX_AGE_S,
+                           face_interval=config.FACE_EVENT_INTERVAL_S)
 events = EventBus()
 timings = StageTimer()
 unknown_watcher = UnknownWatcher(config.UNKNOWN_ALERT_S)
@@ -439,7 +441,7 @@ def processing_loop():
             logger.warning("Historique de présence indisponible : %s: %s", type(e).__name__, e)
         try:
             event_log.write(track_events.update(
-                [(p.track_id, p.name) for p in persons_cache], event_clock()))
+                [(p.track_id, p.name, p.last_face_frame) for p in persons_cache], event_clock()))
         except Exception as e:
             logger.warning("Journal d'événements indisponible : %s: %s", type(e).__name__, e)
 

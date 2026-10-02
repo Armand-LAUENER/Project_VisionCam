@@ -174,3 +174,148 @@ class TestEventLog:
         conn.close()
 
         assert columns == ["id", "time", "run_id", "camera_id", "track_id", "type", "name", "zone"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sessions de présence recalculées à partir des événements (roadmap 2.1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+FPS = 5.0
+GAP = 60.0
+FACE_MAX_AGE = 300.0
+
+
+class Scene:
+    """Pistes scriptées image par image : visibilité, nom, reconnaissances du visage."""
+
+    def __init__(self):
+        self.tracks = []   # (track_id, début, fin, [(depuis, nom)], visage(t) -> bool)
+
+    def track(self, track_id, start, end, names, face=lambda t: True, hidden=()):
+        self.tracks.append((track_id, start, end, names, face, hidden))
+        return self
+
+    def frames(self):
+        end = max(t[2] for t in self.tracks) + 10
+        last_face = {}
+        for i in range(int(end * FPS)):
+            now = i / FPS
+            persons = []
+            for track_id, start, stop, names, face, hidden in self.tracks:
+                if not (start <= now <= stop) or any(a <= now < b for a, b in hidden):
+                    continue
+                name = [n for since, n in names if since <= now][-1]
+                if name != "Inconnu" and face(now):
+                    last_face[track_id] = i
+                elif name == "Inconnu":
+                    last_face.pop(track_id, None)
+                persons.append((track_id, name, last_face.get(track_id, -1)))
+            yield now, persons
+
+
+def presence_sessions(scene, tmp_path):
+    """Le calcul actuel, au fil de l'eau : FaceConfirmedNames puis PresenceLog."""
+    from core.presence_log import FaceConfirmedNames, PresenceLog
+
+    log = PresenceLog(str(tmp_path / "live.db"), gap=GAP)
+    confirmed = FaceConfirmedNames(FACE_MAX_AGE)
+    for now, persons in scene.frames():
+        log.update(confirmed.update(persons, T0 + now), now=T0 + now)
+    log.close_all()
+    conn = sqlite3.connect(tmp_path / "live.db")
+    rows = conn.execute("SELECT name, arrived, departed FROM sessions ORDER BY name, arrived")
+    sessions = [tuple(r) for r in rows]
+    conn.close()
+    return sessions
+
+
+def event_sessions(scene):
+    from core.event_log import sessions_from_events
+
+    transitions = TrackEvents("cam0", 5.0, face_max_age=FACE_MAX_AGE, face_interval=60.0)
+    events = []
+    for now, persons in scene.frames():
+        events += transitions.update(persons, T0 + now)
+    events += transitions.finish()
+    for i, e in enumerate(events):
+        e.update(id=i, run_id="run-a")
+    return sorted((s["name"], s["arrived"], s["departed"])
+                  for s in sessions_from_events(events, GAP, FACE_MAX_AGE)), events
+
+
+def assert_same(live, rebuilt):
+    assert [s[0] for s in live] == [s[0] for s in rebuilt]
+    for (_, a1, d1), (_, a2, d2) in zip(live, rebuilt):
+        assert a2 == pytest.approx(a1, abs=1.01 / FPS)
+        assert d2 == pytest.approx(d1, abs=1.01 / FPS)
+
+
+class TestSessionsFromEvents:
+
+    @pytest.mark.parametrize("scene", [
+        # Une personne reconnue en continu.
+        Scene().track(1, 0, 400, [(0, "Alice")]),
+        # Reconnue puis de dos : la marge de 5 min s'écoule, puis elle se retourne.
+        Scene().track(1, 0, 1500, [(0, "Alice")],
+                      face=lambda t: t < 200 or t > 900),
+        # Reconnaissances espacées (toutes les 40 s) : jamais plus de 5 min sans visage.
+        Scene().track(1, 0, 1200, [(0, "Alice")], face=lambda t: int(t) % 40 == 0),
+        # Courte occultation : la session ne se coupe pas.
+        Scene().track(1, 0, 300, [(0, "Alice")], hidden=[(100, 103)]),
+        # Inconnue d'abord, nommée ensuite, puis le nom tombe (échange de pistes).
+        Scene().track(1, 0, 600, [(0, "Inconnu"), (20, "Alice"), (300, "Inconnu")]),
+        # Le nom change sur la piste, et deux pistes portent le même nom à la suite.
+        Scene().track(1, 0, 500, [(0, "Alice"), (250, "Bob")])
+               .track(2, 520, 700, [(520, "Alice")]),
+        # Deux personnes en même temps, l'une revient après plus d'une minute.
+        Scene().track(1, 0, 300, [(0, "Alice")])
+               .track(2, 50, 200, [(50, "Bob")])
+               .track(3, 400, 600, [(400, "Bob")]),
+    ], ids=["continue", "de-dos", "espacees", "occultation", "nom-perdu", "nom-change",
+            "deux-personnes"])
+    def test_same_sessions_as_the_live_history(self, scene, tmp_path):
+        rebuilt, _ = event_sessions(scene)
+
+        assert_same(presence_sessions(scene, tmp_path), rebuilt)
+
+    def test_face_events_are_throttled(self):
+        """Visage reconnu à chaque image pendant 10 min : une ligne par minute environ."""
+        _, events = event_sessions(Scene().track(1, 0, 600, [(0, "Alice")]))
+
+        faces = [e for e in events if e["type"] == "face"]
+        assert 9 <= len(faces) <= 12
+
+
+def test_face_frames_without_face_events_are_ignored():
+    """Sans face_max_age, last_face_frame est accepté mais ne produit rien."""
+    transitions = TrackEvents("cam0", 5.0)
+
+    events = transitions.update([(1, "Alice", 3)], T0) + transitions.update([(1, "Alice", 9)], T0 + 1)
+
+    assert kinds(events) == [("appeared", "1", None), ("identified", "1", "Alice")]
+
+
+def test_open_track_gives_an_ongoing_session():
+    from core.event_log import sessions_from_events
+
+    transitions = TrackEvents("cam0", 5.0, face_max_age=300.0)
+    events = transitions.update([(1, "Alice", 1)], T0) + transitions.update([(1, "Alice", 2)], T0 + 10)
+
+    sessions = sessions_from_events(events, 60.0, 300.0, now=T0 + 20)
+
+    assert sessions == [{"name": "Alice", "arrived": T0, "departed": None}]
+
+
+def test_check_sessions_pairs_by_name_and_arrival():
+    from tools.check_sessions import compare
+
+    stored = [{"name": "Alice", "arrived": T0, "departed": T0 + 100},
+              {"name": "Bob", "arrived": T0 + 5, "departed": T0 + 50}]
+    rebuilt = [{"name": "Alice", "arrived": T0 + 0.2, "departed": T0 + 100.2},
+               {"name": "Carol", "arrived": T0 + 5, "departed": T0 + 50}]
+
+    pairs, only_stored, only_rebuilt = compare(stored, rebuilt)
+
+    assert [(s["name"], r["name"]) for s, r in pairs] == [("Alice", "Alice")]
+    assert [s["name"] for s in only_stored] == ["Bob"]
+    assert [r["name"] for r in only_rebuilt] == ["Carol"]
