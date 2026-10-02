@@ -46,6 +46,12 @@ VIDEO_LOOP = os.getenv("VIDEO_LOOP", "false").lower() == "true"
 # en mode every_frame). Sert à comparer deux exécutions et à mesurer les noms.
 TRACKS_LOG_PATH = os.getenv("TRACKS_LOG_PATH", "")
 
+# Test d'endurance (core/endurance.py) : si défini, une ligne CSV toutes les
+# ENDURANCE_INTERVAL_S — mémoire, VRAM, FPS, taille des structures internes.
+# Analyse : uv run -m tools.endurance_report <fichier>
+ENDURANCE_LOG_PATH = os.getenv("ENDURANCE_LOG_PATH", "")
+ENDURANCE_INTERVAL_S = float(os.getenv("ENDURANCE_INTERVAL_S", "60"))
+
 
 # =============================================================================
 # SERVEUR FLASK

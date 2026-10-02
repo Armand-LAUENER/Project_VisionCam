@@ -238,6 +238,8 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `VIDEO_MODE` | `realtime` | `realtime` : cadence d'origine, images sautées si le pipeline est lent ; `every_frame` : toutes les images, déterministe |
 | `VIDEO_LOOP` | `false` | Relire la vidéo en boucle (test d'endurance) |
 | `TRACKS_LOG_PATH` | vide | CSV des pistes affichées, une ligne par piste et par image |
+| `ENDURANCE_LOG_PATH` | vide | Test d'endurance : CSV de mémoire, VRAM, FPS et taille des structures internes ; analyse avec `uv run -m tools.endurance_report` |
+| `ENDURANCE_INTERVAL_S` | `60` | Intervalle (s) entre deux lignes du journal d'endurance |
 | `FLASK_PORT` | `5000` | Port du serveur HTTP |
 | `PRESENCE_LOG_GAP_S` | `60` | Absence (s) après laquelle une session de présence se ferme |
 | `PRESENCE_RETENTION_DAYS` | `30` | Conservation de l'historique (jours) ; `0` = sans limite |

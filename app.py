@@ -38,6 +38,7 @@ from flask import (
 from werkzeug.security import check_password_hash
 
 import config
+from core.endurance import EnduranceLog
 from core.events import EventBus, StageTimer, UnknownWatcher
 from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
@@ -350,6 +351,9 @@ def processing_loop():
     tracks_log = (open(config.TRACKS_LOG_PATH, "w", newline="", buffering=1)
                   if config.TRACKS_LOG_PATH else None)
     tracks_writer = csv.writer(tracks_log) if tracks_log else None
+    endurance = (EnduranceLog(config.ENDURANCE_LOG_PATH, config.ENDURANCE_INTERVAL_S,
+                              lambda: _endurance_probe(frame_count, current_fps, persons_cache))
+                 if config.ENDURANCE_LOG_PATH else None)
 
     while state.running:
         try:
@@ -452,11 +456,43 @@ def processing_loop():
             state.fps = current_fps
             state.bench_frame = frame
             state.bench_persons = persons_cache
+        if endurance:
+            endurance.maybe_write()
 
     tracker.release()
     if tracks_log:
         tracks_log.close()
+    if endurance:
+        endurance.close()
     logger.info("Thread de traitement arrêté.")
+
+
+def _endurance_probe(frame_count, fps, persons) -> dict:
+    """Mesures du test d'endurance (cf. config.ENDURANCE_LOG_PATH).
+
+    gpu_used_mb est la VRAM occupée sur tout le GPU, autres programmes compris
+    (WSL2 ne donne pas la VRAM par processus) ; torch_reserved_mb ne compte que
+    l'allocateur de torch, sans TensorRT ni onnxruntime.
+    """
+    import psutil
+    import torch
+
+    row = {'frames': frame_count, 'fps': round(fps, 2),
+           'rss_mb': round(psutil.Process().memory_info().rss / 2**20, 1)}
+    if torch.cuda.is_available():
+        free, total = torch.cuda.mem_get_info()
+        row['gpu_used_mb'] = round((total - free) / 2**20)
+        row['torch_reserved_mb'] = round(torch.cuda.memory_reserved() / 2**20)
+    row['visible_tracks'] = len(persons)
+    row.update({f'size_{k}': v for k, v in tracker.state_sizes().items()})
+    row.update({
+        'size_last_seen': len(state.last_seen),
+        'size_unknown_watcher': len(unknown_watcher._first_unknown) + len(unknown_watcher._alerted),
+        'size_face_confirmed': len(face_confirmed._recognized),
+        'size_presence_open': len(presence_log._open),
+        'size_event_subscribers': len(events._subscribers),
+    })
+    return row
 
 
 def _log_tracks(writer, frame_count, persons) -> None:

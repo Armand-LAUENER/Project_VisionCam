@@ -618,6 +618,18 @@ class FaceBodyTracker:
     # Utilitaires
     # ─────────────────────────────────────────────────────────────────────────
 
+    def state_sizes(self) -> dict[str, int]:
+        """Taille des dictionnaires par piste : bornée par le nombre de pistes actives."""
+        return {
+            'identity_map': len(self._identity_map),
+            'vote_buffer': len(self._vote_buffer),
+            'unknown_streak': len(self._unknown_streak),
+            'last_attempt_frame': len(self._last_attempt_frame),
+            'nose_map': len(self._nose_map),
+            'face_kps_map': len(self._face_kps_map),
+            'pose_kps_map': len(self._pose_kps_map),
+        }
+
     def release(self) -> None:
         """Libère les ressources."""
         self._identity_map.clear()
