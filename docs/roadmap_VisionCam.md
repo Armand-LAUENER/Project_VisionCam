@@ -95,7 +95,7 @@ tête du README.
 
 ### 1.6 Test d'endurance
 
-- [ ] 8 h en continu (vidéo en boucle via 1.1), journal toutes les minutes :
+- [x] 8 h en continu (vidéo en boucle via 1.1), journal toutes les minutes :
   RSS, VRAM, FPS, nombre de pistes, taille des dictionnaires internes.
 
 **Terminé quand** : mémoire et FPS stables (pas de pente) sur 8 h.

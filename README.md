@@ -14,11 +14,13 @@ par VisionCam n'est encore annotée, ces chiffres viennent de proxys.
 | Mesure | Résultat | Détail |
 |:-------|:---------|:-------|
 | Reconnaissance, seuil 0,45 (CHIRLA, crops de l'application, visages ≥ 40 px) | 80,4 % de bons noms, **3,0 % de mauvais** [IC 95 % : 1,9-4,6], 16,6 % « Inconnu » | [performance](docs/performance.md#seuil-de-reconnaissance) |
+| Nom affiché de bout en bout (CHIRLA, application complète, personnes enrôlées) | **35,5 %** du temps le bon nom, **1,1 %** un mauvais, le reste « Inconnu » ou sans piste ; 2,6 % / 0,0 % sur une scène filmée de loin | [performance](docs/performance.md#identité-de-bout-en-bout) |
 | Masquer les pistes en roue libre (MOT17, validation) | MOTA 21,5 → **44,2 %**, IDF1 48,3 → **54,4 %** | [tracking](docs/tracking.md#seuils-deepsort) |
 | `n_init=5` (MOT17, DanceTrack, CHIRLA, validation) | **−10 à −17 %** de changements d'identité, IDF1 à ±1,6 point | [tracking](docs/tracking.md#validation-sur-trois-jeux-de-données) |
 | YOLOv8-Pose en TensorRT FP16 | 9,8 → **5,5 ms** (médiane), p95 33,4 → 7,9 ms | [performance](docs/performance.md#yolov8-pose-4-min-de-construction) |
 | Embedder d'apparence en TensorRT FP16 | étape tracker 22,4 → **13,7 ms**, mêmes MOTA / IDF1 | [performance](docs/performance.md#embedder-dapparence-mobilenetv2-1-min-de-construction) |
 | Reconnaissance (SCRFD 320 + TensorRT) | 12,6 → **5,7 ms** par visage | [performance](docs/performance.md#reconnaissance-faciale-insightface-2-min-au-premier-lancement) |
+| Endurance : 8 h en continu, vidéo CHIRLA en boucle à 30 i/s | 30,0 i/s tenus, RSS 2 376 Mo (+0,4 Mo), VRAM et structures internes constantes | [performance](docs/performance.md#endurance) |
 | Tracker Rust (`deepsort-rs`) | pistes identiques, mais **×0,78-0,84** sur l'étape complète : `python` reste le défaut | [tracker Rust](docs/rust-tracker.md#résultats-mesurés) |
 
 Chaque visage est jugé seul dans la ligne reconnaissance : l'application vote

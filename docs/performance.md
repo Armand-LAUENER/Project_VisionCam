@@ -142,3 +142,70 @@ L'étude précédente (`tools.recognition_threshold_study`, InsightFace sur
 l'image entière) trouvait 0 % de mauvais noms à 0,45 au-delà de 40 px. Sur
 les crops de tête de l'application, les scores de la bonne personne sont plus
 bas : au-delà de 0,55, elle est presque toujours rejetée.
+
+## Identité de bout en bout
+
+Le seuil ci-dessus juge chaque visage seul. Ce que voit l'utilisateur dépend
+aussi du tracking, du vote par piste, de la taille des visages et du temps
+passé face caméra. `tools/eval_identity.py` le mesure : l'application rejoue
+une séquence annotée en `every_frame` (`VIDEO_FILE`, `TRACKS_LOG_PATH`), puis
+chaque personne annotée, à chaque image, reçoit une issue selon la piste
+affichée qui la recouvre (IoU ≥ 0,5) : bon nom, mauvais nom, « Inconnu »,
+ou pas de piste.
+
+Protocole CHIRLA, configuration déployée : identités enrôlées avec
+`tools/enroll_from_sequence.py` sur `seq_004_camera_2` et `seq_020_camera_4`
+(10 crops de tête par personne, visages ≥ 40 px seulement : 13 identités),
+rejeu de `seq_026_camera_3` et `seq_025_camera_2`, prises des mois plus tard.
+Les personnes 9 et 14, sans visage exploitable à l'enrôlement, sont les
+non-enrôlées.
+
+| Séquence | Personnes enrôlées : bon nom / mauvais nom / « Inconnu » / sans piste | Non enrôlées : « Inconnu » / nommées à tort |
+|:---------|:----------------------------------------------------------------------|:---------------------------------------------|
+| `seq_026_camera_3` (7 754 images) | **35,5 %** / **1,1 %** / 38,1 % / 25,3 % | 85,9 % / 1,9 % |
+| `seq_025_camera_2` (8 089 images) | 2,6 % / 0,0 % / 83,6 % / 13,8 % | 89,5 % / 0,0 % |
+
+En % des images-personnes annotées. Sur `seq_026_camera_3`, la personne
+assise face caméra pendant toute la séquence (id 6) a le bon nom 87 % du
+temps ; celles qui ne font que passer ne sont presque jamais nommées (44
+apparitions sur 49). Sur `seq_025_camera_2`, filmée de plus loin, 90 % des
+crops de tête n'ont pas de visage d'au moins 40 px (`RECOGNITION_MIN_FACE_PX`) :
+l'application ne décide presque jamais d'un nom, et ne se trompe pas.
+
+Ce que ça dit : les mauvais noms restent rares (1 à 2 %) ; la limite est
+le nombre de visages exploitables, pas le seuil. Le « 80 % de bons noms par
+visage » du tableau précédent ne vaut que pour les visages assez grands et de
+face, qui sont l'exception dans une scène de bureau vue de loin.
+
+Limites : deux séquences d'un même bureau ; les images d'une même personne ne
+sont pas indépendantes (les intervalles de confiance de l'outil sont
+indicatifs) ; « sans piste » mêle les personnes non détectées et les boîtes
+dont l'IoU avec la vérité terrain reste sous 0,5 (personne assise en partie
+masquée, id 5 : 72 %).
+
+## Endurance
+
+L'application complète tourne 8 h d'affilée sur une vidéo en boucle, avec une
+mesure par minute (`ENDURANCE_LOG_PATH`), puis
+`uv run -m tools.endurance_report <journal>` juge chaque colonne après 30 min
+de warm-up. Source : CHIRLA `seq_025_camera_2` (8 089 images, 30 i/s) en
+boucle et en `realtime`, configuration déployée (YOLO, embedder et
+InsightFace en TensorRT), RTX 4060 sous WSL2, le 2026-10-02.
+
+| Mesure | Après warm-up | Fin | Dérive sur 7 h 45 | Verdict |
+|:-------|--------------:|----:|------------------:|:--------|
+| FPS | 30,0 | 30,0 | +0,0 | stable |
+| RSS | 2 375,7 Mo | 2 375,9 Mo | +0,4 Mo | stable |
+| VRAM du GPU | 1 520 Mo | 1 520 Mo | 0 | stable |
+| Structures internes (12) | — | — | maxima constants | bornées |
+
+892 465 images traitées, soit 30,0 i/s en moyenne : le pipeline suit la
+cadence de la source sans en sauter. Aucun trou dans le journal (pas de
+blocage), aucune erreur dans les logs.
+
+Limites : aucune personne de CHIRLA n'est enrôlée sur la machine du test,
+donc les structures liées aux noms (votes, identités, sessions de présence)
+sont restées vides, et aucune page web n'était ouverte. Ce test couvre la
+détection, le tracking et la reconnaissance ; pas l'attribution des noms ni
+les clients web. Le temps écoulé est mesuré sur l'horloge monotone : 8,27 h
+pour 8 h d'horloge murale, que WSL2 recale en arrière toutes les ~30 s.

@@ -79,11 +79,30 @@ VIDEO_FILE=~/datasets/visioncam/scene-01 VIDEO_MODE=every_frame \
     TRACKS_LOG_PATH=data/tracks.csv uv run app.py
 ```
 
-Pour valider sur ta propre caméra :
+Pour valider sur ta propre caméra (roadmap 1.4) : trois séquences de 60 à
+90 s — entrées et sorties, croisements, lunettes, contre-jour, et une
+personne non enrôlée.
 
 ```bash
+# 1. Enregistrer et annoter (une fois par scène)
 uv run -m tools.record_sequence --seconds 90 --output ~/datasets/visioncam/scene-01
 uv run -m tools.annotate_sequence ~/datasets/visioncam/scene-01   # corriger les identités
+
+# 2. Tracking, réglages actuels, sans les réajuster (validation, pas réglage)
+uv run -m tools.eval_mot --seq ~/datasets/visioncam/scene-01
+
+# 3. Identité de bout en bout : rejouer dans l'application, puis comparer.
+#    --names relie chaque identité annotée au nom enrôlé ; la personne non
+#    enrôlée n'y figure pas.
+VIDEO_FILE=~/datasets/visioncam/scene-01 VIDEO_MODE=every_frame \
+    TRACKS_LOG_PATH=data/tracks-scene-01.csv uv run app.py   # Ctrl+C à « Fin de la vidéo »
+uv run -m tools.eval_identity --tracks data/tracks-scene-01.csv \
+    --sequence ~/datasets/visioncam/scene-01 --names 1=Armand 2=Alice
+```
+
+Pour régler DeepSORT sur ses propres scènes plutôt que valider :
+
+```bash
 uv run -m tools.sweep_deepsort --only-updated --tune ~/datasets/visioncam/scene-01 \
     --grid init=3,5 --validate ~/datasets/visioncam/scene-02
 ```
