@@ -106,3 +106,30 @@ def test_load_tracks(tmp_path):
     assert tracks[12] == [(3, 10.0, 20.0, 40.0, 100.0, "Alice"),
                           (7, 200.0, 30.0, 60.0, 120.0, "Inconnu")]
     assert len(tracks[13]) == 1
+
+
+class TestTrackingMetrics:
+    """MOTA / IDF1 / changements d'ID des pistes affichées par l'application."""
+
+    def test_perfect_tracking(self):
+        from tools.eval_identity import tracking_metrics
+
+        gt, tracks = scene(range(1, 21), ["Alice"] * 20)
+
+        metrics = tracking_metrics(gt, tracks)
+
+        assert metrics["mota"] == pytest.approx(1.0)
+        assert metrics["idf1"] == pytest.approx(1.0)
+        assert metrics["switches"] == 0
+
+    def test_track_alternation_counts_as_switches(self):
+        """Une personne suivie tour à tour par deux pistes (pistes dédoublées)."""
+        from tools.eval_identity import tracking_metrics
+
+        gt = {f: [(6, *BOX)] for f in range(1, 21)}
+        tracks = {f: [((1 if (f // 5) % 2 == 0 else 2), *TRACK, "Alice")] for f in range(1, 21)}
+
+        metrics = tracking_metrics(gt, tracks)
+
+        assert metrics["switches"] == 4
+        assert metrics["idf1"] < 0.7

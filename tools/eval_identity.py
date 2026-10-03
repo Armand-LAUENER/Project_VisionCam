@@ -18,6 +18,12 @@ affichée qui la recouvre (IoU ≥ 0,5, un-pour-un) donne une issue : bon nom,
 mauvais nom, « Inconnu », ou pas de piste. Pour une personne non enrôlée,
 « Inconnu » est la bonne réponse et un nom une erreur.
 
+Tracking des pistes affichées : MOTA, IDF1 et changements d'identité de ce que
+montre l'application (YOLO, DeepSORT, pistes en roue libre masquées), là où
+tools/eval_mot.py mesure DeepSORT seul sur les détections publiques. Une
+personne suivie tour à tour par deux pistes compte un changement à chaque
+bascule.
+
 Délai avant le bon nom : pour chaque apparition d'une personne enrôlée (une
 absence de plus d'une seconde en ouvre une nouvelle), temps entre sa première
 image et la première où son nom est affiché.
@@ -140,6 +146,40 @@ def evaluate(gt: dict, tracks: dict, gt_names: dict, fps: float) -> Report:
     return Report(dict(per_id), enrolled, unenrolled, delays)
 
 
+def tracking_metrics(gt: dict, tracks: dict) -> dict:
+    """MOTA, IDF1 et changements d'ID (motmetrics, appariement IoU ≥ 0,5)."""
+    import motmetrics as mm
+
+    acc = mm.MOTAccumulator(auto_id=False)
+    for frame in sorted(set(gt) | set(tracks)):
+        people = gt.get(frame, [])
+        shown = tracks.get(frame, [])
+        gt_boxes = [(x1, y1, x2 - x1, y2 - y1) for _, x1, y1, x2, y2 in people]
+        distances = mm.distances.iou_matrix(gt_boxes, [t[1:5] for t in shown],
+                                            max_iou=1 - MIN_IOU)
+        acc.update([p[0] for p in people], [t[0] for t in shown], distances, frameid=frame)
+    summary = mm.metrics.create().compute(acc, metrics=["mota", "idf1", "num_switches"])
+    return {"mota": float(summary["mota"].iloc[0]), "idf1": float(summary["idf1"].iloc[0]),
+            "switches": int(summary["num_switches"].iloc[0])}
+
+
+def load_gt(seq_dir: str) -> dict:
+    """{image: [(id, x1, y1, x2, y2)]} des piétons à évaluer (MOT17 : classe 1, drapeau 1).
+
+    CHIRLA n'annote que des piétons à évaluer : rien n'y est écarté.
+    """
+    gt = defaultdict(list)
+    with open(os.path.join(seq_dir, "gt", "gt.txt")) as f:
+        for line in f:
+            values = line.strip().split(",")
+            frame, track_id, left, top, width, height = (float(v) for v in values[:6])
+            if len(values) >= 8 and (float(values[6]) == 0 or int(float(values[7])) != 1):
+                continue
+            x1, y1 = left - 1, top - 1
+            gt[int(frame)].append((int(track_id), x1, y1, x1 + width, y1 + height))
+    return gt
+
+
 def _sequence_fps(seq_dir: str) -> float:
     parser = configparser.ConfigParser()
     parser.read(os.path.join(seq_dir, "seqinfo.ini"))
@@ -147,7 +187,7 @@ def _sequence_fps(seq_dir: str) -> float:
 
 
 def main():
-    from tools.recognition_threshold_study import load_gt_boxes, wilson
+    from tools.recognition_threshold_study import wilson
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--tracks", required=True, help="journal TRACKS_LOG_PATH")
@@ -159,7 +199,7 @@ def main():
     args = parser.parse_args()
 
     seq_dir = os.path.expanduser(args.sequence)
-    gt = load_gt_boxes(seq_dir)
+    gt = load_gt(seq_dir)
     enrolled_names = (set(os.listdir(os.path.expanduser(args.known_faces)))
                       if args.known_faces else set())
     explicit = dict(item.split("=", 1) for item in args.names)
@@ -169,7 +209,14 @@ def main():
         gt_names[gid] = name if (str(gid) in explicit or name in enrolled_names) else None
 
     fps = _sequence_fps(seq_dir)
-    report = evaluate(gt, load_tracks(args.tracks), gt_names, fps)
+    tracks = load_tracks(args.tracks)
+    if not tracks:
+        # Rejeu raté (vidéo illisible, séquence sans images) : pas un tracking à 0 %.
+        raise SystemExit(f"Aucune piste dans {args.tracks} : le rejeu a-t-il tourné ?")
+    report = evaluate(gt, tracks, gt_names, fps)
+    metrics = tracking_metrics(gt, tracks)
+    print(f"Tracking des pistes affichées : MOTA {metrics['mota']:.1%}, "
+          f"IDF1 {metrics['idf1']:.1%}, changements d'ID {metrics['switches']}")
 
     def line(label, counts, correct_label):
         n = counts.frames
