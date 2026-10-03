@@ -95,7 +95,25 @@ L'IDF1 d'une séquence varie de 3 à 7 points d'un réglage à l'autre : les
 écarts moyens de 1 à 2 points sont à la limite du bruit.
 
 Le NMS ne règle qu'une partie du problème : il reste 68 corrections sur
-seq_026, des pistes qui naissent sans deuxième boîte YOLO.
+seq_026. Une partie vient de boîtes emboîtées (haut du corps contenu à 93-94 %
+dans le corps entier, IoU 0,56-0,64 : sous le seuil NMS). Elles sont écartées
+quand elles sont contenues à au moins 90 % dans une boîte plus sûre et la
+recouvrent à au moins 0,5 (`NESTED_BOX_MIN_CONTAINED`, `NESTED_BOX_MIN_IOU`) ;
+l'IoU minimale garde une petite personne plus loin derrière une autre.
+
+| Variante | seq_026 : corrections / changements d'ID / IDF1 | Personne assise : bon nom / « Inconnu » | DanceTrack : MOTA / IDF1 / changements d'ID |
+|:---------|:---|:---|:---|
+| NMS 0,6 | 68 / 124 / 41,6 % | 88,9 % / 5,6 % | 84,7 % / 61,1 % / 99 |
+| **NMS 0,6 + boîtes emboîtées** | **59 / 105** / 34,0 % | **89,8 % / 4,7 %** | **84,7 % / 61,7 % / 97** |
+
+MOT17-04, -09 et seq_025 : inchangés. Sur seq_026, la suppression retire les
+mêmes boîtes qu'un NMS à 0,5, sans toucher aux danseurs qui se recouvrent. Son
+IDF1 recule par rapport au NMS 0,6 seul (41,6 → 34,0 %, au-dessus des 31,7 %
+d'origine) ; sur cette séquence il ne varie pas de façon régulière, quand les
+changements d'ID baissent à chaque étape (137, 124, 105).
+
+Il reste 59 corrections : surtout un nom qui passe d'une personne à une autre
+assise à côté (son visage reconnu par moments sous ce nom), cf. roadmap 1.8.
 
 Pour rejouer une séquence dans l'application complète, au lieu de la caméra,
 et garder les pistes affichées (deux exécutions en `every_frame` donnent les

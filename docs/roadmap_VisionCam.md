@@ -106,6 +106,12 @@ personne : 569 images « Inconnu » et 145 avec un autre nom, sur 7 542.
 - [x] Cause 1 : deux boîtes YOLO sur la même personne (IoU ~0,63, sous le seuil
   NMS de 0,7). `YOLO_NMS_IOU=0.6` : corrections 86 → 68 sur seq_026, sans
   perte sur DanceTrack ni MOT17 (cf. docs/tracking.md).
+- [x] Cause 2 : boîte emboîtée (haut du corps dans le corps entier, IoU ~0,6).
+  Écartée si contenue à 90 % dans une boîte plus sûre : corrections 68 → 59,
+  changements d'ID 124 → 105, DanceTrack inchangé.
+- [ ] Cause 3 : le nom passe à une autre personne assise à côté, dont le
+  visage est par moments reconnu sous ce nom ; l'anti-clonage lui donne le nom
+  puis le rend. Piste : hystérésis de l'anti-clonage.
 - [ ] Piste : quand le nom passe d'une piste en roue libre à une piste visible
   qui recouvre la même personne, fusionner plutôt que basculer ; ou réduire
   `max_age` pour les pistes sans détection.
