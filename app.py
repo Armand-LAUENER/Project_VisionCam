@@ -477,7 +477,11 @@ def processing_loop():
             state.bench_frame = frame
             state.bench_persons = persons_cache
         if endurance:
-            endurance.maybe_write()
+            # Une mesure qui échoue ne doit pas arrêter le pipeline vidéo.
+            try:
+                endurance.maybe_write()
+            except Exception as e:
+                logger.warning("Journal d'endurance indisponible : %s: %s", type(e).__name__, e)
 
     tracker.release()
     if tracks_log:

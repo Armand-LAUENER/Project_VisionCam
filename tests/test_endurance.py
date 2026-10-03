@@ -46,6 +46,29 @@ class TestEnduranceLog:
         assert [r["elapsed_s"] for r in rows] == ["0.0", "60.0", "120.0", "180.0"]
         assert [r["rss_mb"] for r in rows] == ["0", "1", "2", "3"]
 
+    def test_columns_appearing_later_extend_the_header(self, tmp_path):
+        """Compteurs Windows, étapes de reconnaissance : absents de la première ligne.
+
+        Bug d'origine : l'en-tête était figé à la première ligne, et la deuxième,
+        plus large, levait ValueError — dans le thread de traitement, arrêté net.
+        """
+        clock = FakeClock()
+        rows = iter([{"fps": 30}, {"fps": 29, "ctx_host_cpu_pct": 12},
+                     {"fps": 28, "stage_recognition_p95_ms": 9.5}, {"fps": 30}])
+        log = EnduranceLog(str(tmp_path / "e.csv"), 60, lambda: next(rows), clock=clock)
+        for _ in range(4):
+            log.maybe_write()
+            clock.now += 60
+        log.close()
+
+        with open(tmp_path / "e.csv", newline="") as f:
+            reader = csv.DictReader(f)
+            written = list(reader)
+        assert reader.fieldnames == ["time", "elapsed_s", "fps", "ctx_host_cpu_pct",
+                                     "stage_recognition_p95_ms"]
+        assert [(r["fps"], r["ctx_host_cpu_pct"], r["stage_recognition_p95_ms"]) for r in written] == [
+            ("30", "", ""), ("29", "12", ""), ("28", "", "9.5"), ("30", "", "")]
+
     def test_probe_is_not_called_between_rows(self, tmp_path):
         calls = []
         clock = FakeClock()

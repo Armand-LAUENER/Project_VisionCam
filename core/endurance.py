@@ -43,13 +43,31 @@ class EnduranceLog:
         row = {"time": datetime.fromtimestamp(self._wall_clock()).isoformat(timespec="seconds"),
                "elapsed_s": round(now - self._start, 1), **self._probe()}
         if self._writer is None:
-            # Ligne par ligne (buffering=1) : un arrêt brutal ne perd rien.
-            self._file = open(self.path, "w", newline="", buffering=1)
-            self._writer = csv.DictWriter(self._file, fieldnames=list(row))
-            self._writer.writeheader()
+            self._open(list(row))
+        elif set(row) - set(self._writer.fieldnames):
+            self._extend_header(row)
         self._writer.writerow(row)
         self._next = (self._next or now) + self.interval_s
         return True
+
+    def _open(self, fieldnames, rows=()) -> None:
+        # Ligne par ligne (buffering=1) : un arrêt brutal ne perd rien. Une
+        # colonne absente d'une ligne (mesure pas encore disponible) reste vide.
+        self._file = open(self.path, "w", newline="", buffering=1)
+        self._writer = csv.DictWriter(self._file, fieldnames=fieldnames, restval="")
+        self._writer.writeheader()
+        self._writer.writerows(rows)
+
+    def _extend_header(self, row) -> None:
+        """Nouvelle colonne (compteurs Windows, étape pas encore passée) : réécrit le fichier.
+
+        Rare (quelques fois par run) et sur quelques centaines de lignes au plus.
+        """
+        fieldnames = self._writer.fieldnames + [k for k in row if k not in self._writer.fieldnames]
+        self._file.close()
+        with open(self.path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        self._open(fieldnames, rows)
 
     def close(self) -> None:
         if self._file:
