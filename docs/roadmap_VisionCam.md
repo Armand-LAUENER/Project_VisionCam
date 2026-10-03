@@ -88,10 +88,26 @@ mesurés séparément, jamais le résultat affiché à l'utilisateur.
 
 - [ ] Sur les séquences de 1.4 rejouées via 1.1 : % du temps où chaque piste
   affiche le bon nom, un mauvais nom, « Inconnu ».
-- [ ] Mesurer aussi la latence bout en bout (image reçue → nom affiché), p50/p95.
+- [x] Mesurer aussi la latence bout en bout (image reçue → nom affiché), p50/p95.
 
 **Terminé quand** : un chiffre unique « nom correct X %, mauvais nom Y % » en
 tête du README.
+
+### 1.8 Pistes dédoublées : le nom saute entre deux pistes d'une même personne
+
+Constat (endurance, 2026-10-02) : sur une personne assise, DeepSORT garde une
+piste en roue libre pendant qu'il en crée une nouvelle, puis réassocie tour à
+tour l'une et l'autre (163 ↔ 216 : 39 bascules sur une séquence). À chaque
+bascule, l'anti-clonage déplace le nom : 8 875 corrections en 8 h. Sur cette
+personne : 569 images « Inconnu » et 145 avec un autre nom, sur 7 542.
+
+- [ ] Mesurer avant/après avec `tools/eval_identity.py` (rejeu `every_frame`).
+- [ ] Piste : quand le nom passe d'une piste en roue libre à une piste visible
+  qui recouvre la même personne, fusionner plutôt que basculer ; ou réduire
+  `max_age` pour les pistes sans détection.
+
+**Terminé quand** : bascules et images « Inconnu » sur cette personne en
+baisse mesurée, sans perte d'IDF1.
 
 ### 1.6 Test d'endurance
 
@@ -117,14 +133,15 @@ novembre.
 
 ### 2.1 Journal d'événements (refonte du stockage)
 
-- [ ] Table d'événements bruts en ajout seul dans SQLite : `camera_id`,
+- [x] Table d'événements bruts en ajout seul dans SQLite : `camera_id`,
   `track_id`, horodatage, type (apparition, entrée/sortie de zone,
   identification, fin de piste), zone.
 - [ ] Sessions de présence recalculées à partir des événements (vue dérivée,
   plus donnée source).
 - [ ] Horloge unique monotone à la réception ; mesurer le décalage des caméras IP.
-- [ ] RGPD : rétention courte pour les événements des pistes inconnues,
-  effacement d'une personne étendu à ses événements.
+- [x] RGPD : rétention courte pour les événements des pistes inconnues,
+  effacement d'une personne étendu à ses événements. (Choix : même rétention
+  que l'historique, 30 jours.)
 
 SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
 

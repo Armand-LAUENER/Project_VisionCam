@@ -203,9 +203,61 @@ InsightFace en TensorRT), RTX 4060 sous WSL2, le 2026-10-02.
 cadence de la source sans en sauter. Aucun trou dans le journal (pas de
 blocage), aucune erreur dans les logs.
 
-Limites : aucune personne de CHIRLA n'est enrôlée sur la machine du test,
-donc les structures liées aux noms (votes, identités, sessions de présence)
-sont restées vides, et aucune page web n'était ouverte. Ce test couvre la
-détection, le tracking et la reconnaissance ; pas l'attribution des noms ni
-les clients web. Le temps écoulé est mesuré sur l'horloge monotone : 8,27 h
-pour 8 h d'horloge murale, que WSL2 recale en arrière toutes les ~30 s.
+Dans ce premier run, aucune personne de CHIRLA n'était enrôlée : les
+structures liées aux noms (votes, identités, sessions de présence) sont
+restées vides, et aucune page web n'était ouverte. Le temps écoulé est mesuré
+sur l'horloge monotone : 8,27 h pour 8 h d'horloge murale, que WSL2 recale en
+arrière toutes les ~30 s.
+
+### Mesures du journal
+
+Depuis le 2026-10-03, chaque ligne du journal (`core/endurance.py`,
+`core/system_probe.py`) contient, en plus du FPS et de la mémoire :
+
+- **chaque étape** (détection, tracking, reconnaissance, orientation,
+  encodage, image complète, latence de bout en bout) : médiane, p95 et
+  maximum sur toute la minute écoulée, pas seulement la fenêtre glissante ;
+- **les images perdues** : jetées faute de place dans la file, sautées par
+  une source fichier en `realtime` ;
+- **le processus** : CPU (% d'un cœur), threads, descripteurs ouverts ;
+- **la VRAM de VisionCam** (`wsl_vram_mb`), lue dans les compteurs Windows :
+  tout WSL y apparaît sous le processus `vmwp`, et VisionCam est le seul
+  programme GPU de WSL pendant un run. Sous WSL2, NVML ne donne pas la
+  mémoire par processus ;
+- **le contexte**, affiché sans être jugé (`ctx_*`) : utilisation, mémoire,
+  température, fréquence et bridage du GPU entier (NVML) ; utilisation GPU
+  de WSL et des applications Windows, et la plus gourmande ; CPU et RAM de
+  la machine (Windows) et de WSL.
+
+Les compteurs Windows sont lus par `powershell.exe` dans un thread à part,
+une fois par intervalle (un appel prend ~7 s). Les utilisations GPU de NVML
+et de Windows ne se comparent pas entre elles : fenêtres et définitions
+différentes. Hors de WSL, les colonnes Windows sont absentes.
+
+### Second run : personnes enrôlées, page ouverte
+
+Même protocole sur `seq_026_camera_3` (7 754 images), avec les 13 identités
+CHIRLA enrôlées (cf. « Identité de bout en bout ») et la page Live ouverte
+dans Chromium headless pendant tout le run, le 2026-10-02.
+
+| Mesure | Après warm-up | Fin | Dérive sur 7 h 40 | Verdict |
+|:-------|--------------:|----:|------------------:|:--------|
+| FPS | 27,9 | 29,9 | +2,7 | stable |
+| RSS | 2 390,2 Mo | 2 391,0 Mo | +1,0 Mo | stable |
+| VRAM du GPU | 1 520 Mo | 1 520 Mo | 0 | stable |
+| Latence p50 / p95 (réception → publication) | 42 / 80 ms | 22 / 53 ms | en baisse | stable |
+| Structures internes (13), dont identités, votes, sessions ouvertes | — | — | maxima constants | bornées |
+
+Les structures liées aux noms travaillent cette fois (jusqu'à 4 identités, 18
+noms confirmés, 3 sessions ouvertes à la fois) et restent bornées.
+L'historique de présence passe de 20 à 36 Ko en 8 h. La page reste ouverte
+7 h 59 sans erreur JavaScript.
+
+850 719 images traitées, 28,9 i/s en moyenne : les 57 minutes sous 27 i/s
+tombent presque toutes entre 13 h et 17 h 30, quand d'autres calculs
+(suites de tests avec Chromium) tournaient sur la machine ; il en reste 4
+dans les 3 h 30 suivantes, sans autre charge.
+
+Le run a révélé deux défauts, sans effet sur la stabilité : un message de
+journal mal formaté (corrigé depuis) et un nom qui saute entre deux pistes
+d'une même personne (8 875 corrections d'identité en 8 h, cf. roadmap 1.8).
