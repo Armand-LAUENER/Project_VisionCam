@@ -47,6 +47,7 @@ from core.face_recognition import FaceRecognizer
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
 from core.presence_log import FaceConfirmedNames, PresenceLog
+from core.system_probe import Nvml, WindowsCounters, process_stats, system_stats
 from core.video_source import FileSource
 
 logging.basicConfig(
@@ -98,6 +99,10 @@ logger.info("Modules chargés")
 class AppState:
     def __init__(self):
         self.lock = threading.Lock()
+        # Images jetées faute de place dans la file (pipeline en retard), et
+        # sautées par une source fichier en realtime : compteurs du journal d'endurance.
+        self.frames_dropped = 0
+        self.source_skipped = 0
         # Réveille les flux MJPEG à chaque nouvelle frame (partage self.lock).
         self.frame_ready = threading.Condition(self.lock)
         self.frame_seq = 0
@@ -309,6 +314,8 @@ def camera_loop():
 
         consecutive_failures = 0
         item = (time.perf_counter(), frame)
+        if isinstance(cap, FileSource):
+            state.source_skipped = cap.skipped
 
         # every_frame : aucune image perdue, la lecture attend le pipeline.
         if isinstance(cap, FileSource) and cap.mode == "every_frame":
@@ -319,6 +326,7 @@ def camera_loop():
         try:
             _frame_queue.put_nowait(item)
         except queue.Full:
+            state.frames_dropped += 1
             try:
                 _frame_queue.get_nowait()
             except queue.Empty:
@@ -363,9 +371,12 @@ def processing_loop():
     tracks_log = (open(config.TRACKS_LOG_PATH, "w", newline="", buffering=1)
                   if config.TRACKS_LOG_PATH else None)
     tracks_writer = csv.writer(tracks_log) if tracks_log else None
-    endurance = (EnduranceLog(config.ENDURANCE_LOG_PATH, config.ENDURANCE_INTERVAL_S,
-                              lambda: _endurance_probe(frame_count, current_fps, persons_cache))
-                 if config.ENDURANCE_LOG_PATH else None)
+    endurance = probes = None
+    if config.ENDURANCE_LOG_PATH:
+        probes = _EnduranceProbes(config.ENDURANCE_INTERVAL_S)
+        endurance = EnduranceLog(config.ENDURANCE_LOG_PATH, config.ENDURANCE_INTERVAL_S,
+                                 lambda: _endurance_probe(frame_count, current_fps,
+                                                          persons_cache, probes))
 
     while state.running:
         try:
@@ -488,29 +499,47 @@ def processing_loop():
         tracks_log.close()
     if endurance:
         endurance.close()
+        probes.windows.stop()
     logger.info("Thread de traitement arrêté.")
 
 
-def _endurance_probe(frame_count, fps, persons) -> dict:
-    """Mesures du test d'endurance (cf. config.ENDURANCE_LOG_PATH).
+class _EnduranceProbes:
+    """Sources de mesure du journal d'endurance, créées seulement s'il est activé."""
 
-    gpu_used_mb est la VRAM occupée sur tout le GPU, autres programmes compris
-    (WSL2 ne donne pas la VRAM par processus) ; torch_reserved_mb ne compte que
-    l'allocateur de torch, sans TensorRT ni onnxruntime.
+    def __init__(self, interval_s: float) -> None:
+        import psutil
+
+        timings.track_intervals()
+        self.process = psutil.Process()
+        self.nvml = Nvml()
+        # Toutes les ~interval : un appel PowerShell prend quelques secondes.
+        self.windows = WindowsCounters(interval_s)
+        self.windows.start()
+        process_stats(self.process)   # amorce cpu_percent : la 1re valeur vaut 0
+        system_stats()
+
+
+def _endurance_probe(frame_count, fps, persons, probes) -> dict:
+    """Mesures du test d'endurance (cf. config.ENDURANCE_LOG_PATH, core/system_probe.py).
+
+    Colonnes `ctx_*` : environnement (GPU entier, Windows, WSL), affichées par
+    le rapport sans être jugées. torch_reserved_mb ne compte que l'allocateur
+    de torch, sans TensorRT ni onnxruntime ; wsl_vram_mb (compteurs Windows)
+    est la VRAM de tout WSL, donc de VisionCam pendant un run.
     """
-    import psutil
     import torch
 
-    row = {'frames': frame_count, 'fps': round(fps, 2),
-           'rss_mb': round(psutil.Process().memory_info().rss / 2**20, 1)}
+    row = {'frames': frame_count, 'frames_dropped': state.frames_dropped,
+           'source_skipped': state.source_skipped, 'fps': round(fps, 2),
+           'rss_mb': round(probes.process.memory_info().rss / 2**20, 1)}
+    row.update(process_stats(probes.process))
     if torch.cuda.is_available():
-        free, total = torch.cuda.mem_get_info()
-        row['gpu_used_mb'] = round((total - free) / 2**20)
         row['torch_reserved_mb'] = round(torch.cuda.memory_reserved() / 2**20)
-    latency = timings.summary().get('latency')
-    if latency:
-        row['latency_p50_ms'] = latency['median_ms']
-        row['latency_p95_ms'] = latency['p95_ms']
+    # Chaque étape sur toute la minute écoulée, latence de bout en bout comprise.
+    for stage, stats in timings.drain_intervals().items():
+        row[f'stage_{stage}_p50_ms'] = stats['median_ms']
+        row[f'stage_{stage}_p95_ms'] = stats['p95_ms']
+        row[f'stage_{stage}_max_ms'] = stats['max_ms']
     row['visible_tracks'] = len(persons)
     # Grossit normalement (sessions de présence) : affichée, pas jugée.
     if os.path.exists(config.PRESENCE_DB_PATH):
@@ -524,7 +553,11 @@ def _endurance_probe(frame_count, fps, persons) -> dict:
         'size_track_events': len(track_events._tracks),
         'size_event_subscribers': len(events._subscribers),
     })
+    row.update(probes.windows.latest())
+    row.update(probes.nvml.stats())
+    row.update(system_stats())
     return row
+
 
 
 def _log_tracks(writer, frame_count, persons) -> None:

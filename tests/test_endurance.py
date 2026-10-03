@@ -128,6 +128,29 @@ class TestAnalyze:
 
         assert verdicts(rows) == {"rss_mb": True}
 
+    def test_context_and_counters_are_not_judged(self):
+        """Le GPU entier et Windows bougent avec le reste de la machine : affichés, pas jugés."""
+        rows = make_rows(ctx_windows_gpu_pct=lambda t: 80 * t / HOUR, frames_dropped=lambda t: int(t),
+                         rss_mb=lambda t: 2400)
+
+        assert verdicts(rows) == {"rss_mb": True}
+
+    def test_slowing_stage_is_detected(self):
+        rows = make_rows(stage_recognition_p95_ms=lambda t: 20 + 10 * t / HOUR)
+
+        assert verdicts(rows) == {"stage_recognition_p95_ms": False}
+
+    def test_process_cpu_creep_is_detected(self):
+        rows = make_rows(proc_cpu_pct=lambda t: 120 + 5 * t / HOUR, size_threads=lambda t: 40)
+
+        assert verdicts(rows) == {"proc_cpu_pct": False, "size_threads": True}
+
+    def test_empty_cells_are_skipped(self):
+        """Mesure pas encore disponible sur les premières lignes : ni zéro ni texte."""
+        rows = make_rows(wsl_vram_mb=lambda t: "" if t < 2000 else 520)
+
+        assert verdicts(rows) == {"wsl_vram_mb": True}
+
     def test_too_short_run_is_not_judged(self):
         rows = make_rows(hours=0.5, rss_mb=lambda t: 2400)
 

@@ -62,10 +62,40 @@ class StageTimer:
         self._window = window
         self._samples: dict[str, deque] = {}
         self._lock = threading.Lock()
+        # Tous les échantillons depuis le dernier drain_intervals() ; None tant
+        # que track_intervals() n'est pas appelé, pour ne rien accumuler sans lecteur.
+        self._interval: dict[str, list] | None = None
 
     def record(self, stage: str, seconds: float) -> None:
         with self._lock:
             self._samples.setdefault(stage, deque(maxlen=self._window)).append(seconds)
+            if self._interval is not None:
+                self._interval.setdefault(stage, []).append(seconds)
+
+    def track_intervals(self) -> None:
+        """Garde chaque échantillon jusqu'au prochain drain_intervals() (journal d'endurance).
+
+        La fenêtre glissante ne couvre que ~10 s d'images à 30 i/s : un p95 lu
+        une fois par minute raterait les pics du reste de la minute.
+        """
+        with self._lock:
+            if self._interval is None:
+                self._interval = {}
+
+    def drain_intervals(self) -> dict[str, dict]:
+        """{étape: {median_ms, p95_ms, max_ms, samples}} depuis le dernier appel, puis remise à zéro."""
+        with self._lock:
+            if not self._interval:
+                return {}
+            snapshot, self._interval = self._interval, {}
+        result = {}
+        for stage, values in snapshot.items():
+            ordered = sorted(values)
+            result[stage] = {
+                "median_ms": round(statistics.median(ordered) * 1000, 2),
+                "p95_ms": round(ordered[min(int(len(ordered) * 0.95), len(ordered) - 1)] * 1000, 2),
+                "max_ms": round(ordered[-1] * 1000, 2), "samples": len(ordered)}
+        return result
 
     @contextmanager
     def measure(self, stage: str):
