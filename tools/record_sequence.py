@@ -104,7 +104,7 @@ def detect(seq_dir, count, det_path):
         for frame_id in range(1, count + 1):
             image = cv2.imread(frame_path(seq_dir, frame_id))
             for result in yolo.predict(image, classes=[0], conf=config.YOLO_CONF_THRESHOLD,
-                                       device=0, verbose=False):
+                                       iou=config.YOLO_NMS_IOU, device=0, verbose=False):
                 for (left, top, width, height), conf, *_ in FaceBodyTracker._parse_result(result):
                     out.write(f"{frame_id},-1,{left + 1:.2f},{top + 1:.2f},"
                               f"{width:.2f},{height:.2f},{conf:.4f},-1,-1,-1\n")

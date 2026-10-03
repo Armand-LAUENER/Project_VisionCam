@@ -208,6 +208,15 @@ YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8s-pose.pt")
 
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
 YOLO_CONF_THRESHOLD = 0.5
+# Recouvrement (IoU) au-delà duquel le NMS de YOLO fusionne deux boîtes (0,7
+# par défaut dans ultralytics). Une personne assise peut recevoir deux boîtes
+# qui se recouvrent à ~0,63 (corps entier, haut du corps) : à 0,7 elles
+# survivent, une seconde piste naît et le nom saute de l'une à l'autre
+# (roadmap 1.8). Mesuré dans l'application (cf. docs/tracking.md) : à 0,6,
+# corrections d'identité 86 → 68 sur CHIRLA seq_026, MOTA et IDF1 inchangés
+# sur DanceTrack (croisements proches) et MOT17 ; 0,5 en gagne un peu plus
+# mais perd 1,8 point d'IDF1 sur DanceTrack.
+YOLO_NMS_IOU = float(os.getenv("YOLO_NMS_IOU", "0.6"))
 
 # Confiance minimale d'un keypoint facial (COCO 0-4) pour le considérer visible.
 POSE_NOSE_CONF_THRESHOLD = 0.5

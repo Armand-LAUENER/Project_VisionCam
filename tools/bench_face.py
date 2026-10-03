@@ -120,7 +120,7 @@ def extract_crops(yolo, seq_dir, step):
             continue
         image = cv2.imread(eval_mot.frame_path(seq_dir, frame))
         result = yolo.predict(image, classes=[0], conf=config.YOLO_CONF_THRESHOLD,
-                              device=0, verbose=False)[0]
+                              iou=config.YOLO_NMS_IOU, device=0, verbose=False)[0]
         detections = FaceBodyTracker._parse_result(result)
         gt_boxes = [(x1, y1, x2, y2) for _, x1, y1, x2, y2 in gt[frame]]
         matches = match_tracks_to_detections(gt_boxes, [d[0] for d in detections], min_iou=0.5)

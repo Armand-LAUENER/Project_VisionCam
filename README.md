@@ -237,6 +237,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `USE_LOCAL_CAM` | `True` | Webcam locale si `True`, caméra IP sinon |
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
 | `CAMERA_ID` | `cam0` | Identifiant de la caméra dans le journal d'événements (table `events` de `presence.db`) |
+| `YOLO_NMS_IOU` | `0.6` | Recouvrement au-delà duquel YOLO fusionne deux boîtes ; 0,6 évite les pistes dédoublées d'une personne assise |
 | `VIDEO_FILE` | vide | Vidéo, motif d'images ou séquence MOT17 à la place de la caméra |
 | `VIDEO_MODE` | `realtime` | `realtime` : cadence d'origine, images sautées si le pipeline est lent ; `every_frame` : toutes les images, déterministe |
 | `VIDEO_LOOP` | `false` | Relire la vidéo en boucle (test d'endurance) |

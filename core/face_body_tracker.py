@@ -298,6 +298,7 @@ class FaceBodyTracker:
             frame,
             classes=[0],
             conf=config.YOLO_CONF_THRESHOLD,
+            iou=config.YOLO_NMS_IOU,
             device=0,
             verbose=False,
         )
