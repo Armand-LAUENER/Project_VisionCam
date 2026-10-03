@@ -217,6 +217,13 @@ YOLO_CONF_THRESHOLD = 0.5
 # sur DanceTrack (croisements proches) et MOT17 ; 0,5 en gagne un peu plus
 # mais perd 1,8 point d'IDF1 sur DanceTrack.
 YOLO_NMS_IOU = float(os.getenv("YOLO_NMS_IOU", "0.6"))
+# Boîte emboîtée : contenue à au moins NESTED_BOX_MIN_CONTAINED dans une autre
+# boîte de personne, avec une IoU d'au moins NESTED_BOX_MIN_IOU, elle est
+# écartée (haut du corps détecté en plus du corps entier, que le NMS laisse
+# passer). L'IoU minimale garde une petite personne plus loin derrière une
+# autre. NESTED_BOX_MIN_CONTAINED=0 désactive.
+NESTED_BOX_MIN_IOU = float(os.getenv("NESTED_BOX_MIN_IOU", "0.5"))
+NESTED_BOX_MIN_CONTAINED = float(os.getenv("NESTED_BOX_MIN_CONTAINED", "0.9"))
 
 # Confiance minimale d'un keypoint facial (COCO 0-4) pour le considérer visible.
 POSE_NOSE_CONF_THRESHOLD = 0.5

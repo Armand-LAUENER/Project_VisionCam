@@ -41,6 +41,40 @@ YOLO_ENGINE_EXPORT_COMMAND = (
 TRACK_DETECTION_MIN_IOU = 0.3
 
 
+def suppress_nested_boxes(detections: list, min_iou: float | None = None,
+                          min_contained: float | None = None) -> list:
+    """Écarte les boîtes emboîtées dans une boîte de personne plus sûre (roadmap 1.8).
+
+    Une personne assise reçoit parfois une seconde boîte (haut du corps)
+    contenue à ~93 % dans la première, avec une IoU de ~0,6 que le NMS laisse
+    passer : elle fait naître une seconde piste, et le nom saute de l'une à
+    l'autre. Détections au format de _parse_result : ([x, y, w, h], conf, …).
+    """
+    min_iou = config.NESTED_BOX_MIN_IOU if min_iou is None else min_iou
+    min_contained = config.NESTED_BOX_MIN_CONTAINED if min_contained is None else min_contained
+    if not min_contained:
+        return detections
+    order = sorted(range(len(detections)), key=lambda i: -detections[i][1])
+    kept: list[int] = []
+    for i in order:
+        x, y, w, h = detections[i][0]
+        nested = False
+        for j in kept:
+            kx, ky, kw, kh = detections[j][0]
+            inter = (max(0.0, min(x + w, kx + kw) - max(x, kx))
+                     * max(0.0, min(y + h, ky + kh) - max(y, ky)))
+            if not inter:
+                continue
+            small = min(w * h, kw * kh)
+            union = w * h + kw * kh - inter
+            if inter / small >= min_contained and inter / union >= min_iou:
+                nested = True
+                break
+        if not nested:
+            kept.append(i)
+    return [detections[i] for i in sorted(kept)]
+
+
 def match_tracks_to_detections(track_boxes: list, detection_boxes: list,
                                min_iou: float = TRACK_DETECTION_MIN_IOU) -> dict[int, int]:
     """Appariement un-pour-un piste → détection, par IoU décroissante.
@@ -337,7 +371,9 @@ class FaceBodyTracker:
             others = {'nose': nose, 'face_kps': face_kps, 'pose_kps': pose_kps}
             detections.append(([x1, y1, x2 - x1, y2 - y1], conf, 'person', others))
 
-        return detections
+        # Ici plutôt que dans _detect_bodies : les outils (bench_face,
+        # record_sequence) voient ainsi les mêmes détections que l'application.
+        return suppress_nested_boxes(detections)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Étape 3 — Reconnaissance faciale par crop dynamique centré sur le Nez
