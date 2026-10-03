@@ -101,7 +101,11 @@ tour l'une et l'autre (163 ↔ 216 : 39 bascules sur une séquence). À chaque
 bascule, l'anti-clonage déplace le nom : 8 875 corrections en 8 h. Sur cette
 personne : 569 images « Inconnu » et 145 avec un autre nom, sur 7 542.
 
-- [ ] Mesurer avant/après avec `tools/eval_identity.py` (rejeu `every_frame`).
+- [x] Mesurer avant/après avec `tools/eval_identity.py` (rejeu `every_frame`) :
+  MOTA, IDF1 et changements d'ID des pistes affichées.
+- [x] Cause 1 : deux boîtes YOLO sur la même personne (IoU ~0,63, sous le seuil
+  NMS de 0,7). `YOLO_NMS_IOU=0.6` : corrections 86 → 68 sur seq_026, sans
+  perte sur DanceTrack ni MOT17 (cf. docs/tracking.md).
 - [ ] Piste : quand le nom passe d'une piste en roue libre à une piste visible
   qui recouvre la même personne, fusionner plutôt que basculer ; ou réduire
   `max_age` pour les pistes sans détection.

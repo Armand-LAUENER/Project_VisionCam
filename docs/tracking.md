@@ -70,6 +70,33 @@ même identité à une personne pendant toute la vidéo, même après une longue
 sortie du champ, alors que DeepSORT ouvre une nouvelle piste passé `max_age`.
 Dans VisionCam, c'est la reconnaissance faciale qui redonne le nom au retour.
 
+### Seuil NMS de YOLO : pistes dédoublées (roadmap 1.8)
+
+Une personne assise derrière un bureau reçoit parfois deux boîtes YOLO qui se
+recouvrent à ~0,63 (corps entier, haut du corps). Au seuil NMS d'ultralytics
+(0,7), les deux survivent : une seconde piste naît, puis DeepSORT associe la
+boîte tantôt à l'une, tantôt à l'autre, et le nom saute à chaque bascule
+(8 875 corrections d'identité en 8 h d'endurance).
+
+Mesuré dans l'application complète, rejeu `every_frame`, pistes affichées
+comparées à la vérité terrain (`tools/eval_identity.py`) :
+
+| `YOLO_NMS_IOU` | CHIRLA seq_026 : corrections d'identité / changements d'ID | Personne assise : bon nom / « Inconnu » | DanceTrack (5 séq.) : MOTA / IDF1 | MOT17-04, -09, CHIRLA seq_025 |
+|---:|:---|:---|:---|:---|
+| 0,7 (avant) | 86 / 137 | 87,3 % / 7,3 % | 84,6 % / 61,2 % | — |
+| **0,6** | **68 / 124** | **88,9 % / 5,6 %** | **84,7 % / 61,1 %** | inchangés |
+| 0,5 | 59 / 106 | 89,8 % / 4,7 % | 84,6 % / 59,4 % | inchangés |
+
+0,6 est retenu : il réduit les corrections de 21 % sans rien coûter sur
+DanceTrack, où des danseurs se croisent de près (le cas où un NMS plus
+agressif risquerait de supprimer une vraie personne : le MOTA ne bouge pas).
+0,5 gagne un peu plus sur CHIRLA mais perd 1,8 point d'IDF1 sur DanceTrack.
+L'IDF1 d'une séquence varie de 3 à 7 points d'un réglage à l'autre : les
+écarts moyens de 1 à 2 points sont à la limite du bruit.
+
+Le NMS ne règle qu'une partie du problème : il reste 68 corrections sur
+seq_026, des pistes qui naissent sans deuxième boîte YOLO.
+
 Pour rejouer une séquence dans l'application complète, au lieu de la caméra,
 et garder les pistes affichées (deux exécutions en `every_frame` donnent les
 mêmes : vérifié sur 600 images de CHIRLA, 1 266 pistes-images identiques) :
