@@ -513,6 +513,9 @@ class FaceBodyTracker:
             une personne non enrôlée).
           - Confiance < RECOGNITION_THRESHOLD → rejeté.
           - Anti-clonage : une identité ne peut appartenir qu'à un seul corps.
+            Une piste visible reconnue sous ce nom depuis moins de
+            IDENTITY_PROTECT_FRAMES le garde, sauf reconnaissance nettement
+            plus sûre (IDENTITY_STEAL_MARGIN).
           - Vote buffer : consensus requis avant confirmation.
         """
         active_track_map = {t.track_id: t for t in active_tracks}
@@ -553,6 +556,18 @@ class FaceBodyTracker:
 
             avg_confidence = sum(votes[top_name]) / top_count
             new_name = top_name
+
+            # ── Hystérésis : la porteuse visible et récemment reconnue garde son nom ──
+            if any(old_tid != best_track_id and identity.get('name') == new_name
+                   and old_tid in active_track_map
+                   and frame_count - identity.get('last_face_frame', -1)
+                   <= config.IDENTITY_PROTECT_FRAMES
+                   and avg_confidence < identity.get('confidence', 0.0)
+                   + config.IDENTITY_STEAL_MARGIN
+                   for old_tid, identity in self._identity_map.items()):
+                logger.debug("'%s' reste au corps qui le porte : #%s refusé", new_name,
+                             best_track_id)
+                continue
 
             # ── Anti-clonage ────────────────────────────────────────────────
             for old_tid, identity in list(self._identity_map.items()):

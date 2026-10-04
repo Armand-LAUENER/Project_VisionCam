@@ -239,6 +239,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `CAMERA_ID` | `cam0` | Identifiant de la caméra dans le journal d'événements (table `events` de `presence.db`) |
 | `YOLO_NMS_IOU` | `0.6` | Recouvrement au-delà duquel YOLO fusionne deux boîtes ; 0,6 évite les pistes dédoublées d'une personne assise |
 | `NESTED_BOX_MIN_CONTAINED` | `0.9` | Une boîte contenue à ce point dans une autre plus sûre (et IoU ≥ `NESTED_BOX_MIN_IOU`, 0,5) est écartée ; `0` désactive |
+| `IDENTITY_PROTECT_FRAMES` | `90` | Une piste visible reconnue sous son nom depuis moins de ce nombre d'images le garde quand une autre l'obtient (sauf confiance plus haute de `IDENTITY_STEAL_MARGIN`, 0,05) |
 | `VIDEO_FILE` | vide | Vidéo, motif d'images ou séquence MOT17 à la place de la caméra |
 | `VIDEO_MODE` | `realtime` | `realtime` : cadence d'origine, images sautées si le pipeline est lent ; `every_frame` : toutes les images, déterministe |
 | `VIDEO_LOOP` | `false` | Relire la vidéo en boucle (test d'endurance) |

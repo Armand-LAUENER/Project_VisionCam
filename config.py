@@ -140,6 +140,15 @@ RECOGNITION_MIN_FACE_PX = int(os.getenv("RECOGNITION_MIN_FACE_PX", "40"))
 # un seul échec ne doit pas lui retirer son nom.
 RECOGNITION_UNKNOWN_STREAK = int(os.getenv("RECOGNITION_UNKNOWN_STREAK", "3"))
 
+# Hystérésis de l'anti-clonage (roadmap 1.8) : une piste visible dont le visage
+# a été reconnu sous son nom depuis moins de IDENTITY_PROTECT_FRAMES le garde
+# quand une autre piste l'obtient, sauf confiance moyenne plus haute d'au moins
+# IDENTITY_STEAL_MARGIN. Sans elle, le visage d'une voisine reconnu par moments
+# sous ce nom le faisait sauter d'une piste à l'autre. Une piste nommée repasse
+# en reconnaissance toutes les ~35 images : 90 couvrent deux passes.
+IDENTITY_PROTECT_FRAMES = int(os.getenv("IDENTITY_PROTECT_FRAMES", "90"))
+IDENTITY_STEAL_MARGIN = float(os.getenv("IDENTITY_STEAL_MARGIN", "0.05"))
+
 
 # =============================================================================
 # TRACKER & PERFORMANCE

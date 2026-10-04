@@ -143,7 +143,9 @@ def test_identity_move_is_logged_with_string_track_ids(caplog):
         track = make_track(i + 1)
         track.track_id = track_id
         tracks.append(track)
-    tracker._identity_map['1'] = {'name': 'Alice', 'confidence': 0.9, 'last_face_frame': 0}
+    # Visage pas reconnu récemment : la piste n'est plus protégée par l'hystérésis
+    # de l'anti-clonage, le nom peut passer à l'autre (cf. test_identity_ping_pong).
+    tracker._identity_map['1'] = {'name': 'Alice', 'confidence': 0.9, 'last_face_frame': -1000}
     faces = [{'name': 'Alice', 'confidence': 0.9, 'bbox': [0, 0, 1, 1], 'source_track_id': '51'}
              for _ in range(2)]
 
