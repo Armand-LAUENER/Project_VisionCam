@@ -261,3 +261,25 @@ dans les 3 h 30 suivantes, sans autre charge.
 Le run a révélé deux défauts, sans effet sur la stabilité : un message de
 journal mal formaté (corrigé depuis) et un nom qui saute entre deux pistes
 d'une même personne (8 875 corrections d'identité en 8 h, cf. roadmap 1.8).
+
+### Troisième run : 1 h après la roadmap 1.8
+
+Même protocole que le second run (seq_026 en boucle, personnes enrôlées, page
+ouverte), pendant 1 h, avec le seuil NMS à 0,6, la suppression des boîtes
+emboîtées et l'hystérésis de l'anti-clonage, le 2026-10-04.
+
+| Mesure | Second run (avant 1.8) | Troisième run (après 1.8) |
+|:-------|---:|---:|
+| Corrections d'identité par passe de la séquence | ~79 | **~11** |
+| Reconnaissance, p95 | — (32-38 ms sur un essai de 5 min) | **22-26 ms** |
+| Image complète, p95 | — (40-45 ms sur un essai de 5 min) | **34-36 ms** |
+
+Verdict stable sur toutes les mesures jugées, VRAM de VisionCam constante à
+521 Mo, page ouverte 1 h sans erreur JavaScript.
+
+Le FPS (27,3 i/s en moyenne, 9 507 images jetées) ne mesure pas VisionCam :
+un jeu tournait sous Windows pendant tout le run (15,5 % du GPU, 5,4 Go de
+VRAM), le CPU de la machine atteignait 88 % et sa RAM disponible tombait à
+442 Mo. Les mesures de contexte l'ont montré ; sans elles, la baisse aurait pu
+être attribuée à tort aux changements de 1.8. Un run sur machine libre doit
+encore donner la cadence propre.
