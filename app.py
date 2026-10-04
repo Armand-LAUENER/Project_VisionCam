@@ -410,6 +410,9 @@ def processing_loop():
                 }
 
         # ── Dessin + construction de la liste de présence ────────────────────
+        # Chaque bloc de la suite est chronométré : un blocage hors des étapes
+        # mesurées (jusqu'à 14 s en endurance) se lit ainsi dans le journal.
+        block_start = time.perf_counter()
         now = time.time()
         present_list = []
         present_ids = set()
@@ -437,7 +440,10 @@ def processing_loop():
                 else:
                     del state.last_seen[tid]
 
+        timings.record('present_list', time.perf_counter() - block_start)
+
         # ── Historique des présences ─────────────────────────────────────────
+        block_start = time.perf_counter()
         # Seuls les noms dont le visage a été reconnu récemment : une piste
         # nommée garde son nom de dos, y compris après un échange de pistes.
         # Une erreur de base de données ne doit pas arrêter le pipeline vidéo.
@@ -450,15 +456,20 @@ def processing_loop():
                 events.publish(event)
         except Exception as e:
             logger.warning("Historique de présence indisponible : %s: %s", type(e).__name__, e)
+        timings.record('presence', time.perf_counter() - block_start)
+        block_start = time.perf_counter()
         try:
             event_log.write(track_events.update(
                 [(p.track_id, p.name, p.last_face_frame) for p in persons_cache], event_clock()))
         except Exception as e:
             logger.warning("Journal d'événements indisponible : %s: %s", type(e).__name__, e)
+        timings.record('events', time.perf_counter() - block_start)
 
         # ── Alerte : personne visible restée inconnue ────────────────────────
+        block_start = time.perf_counter()
         for track_id in unknown_watcher.update([(p.track_id, p.name) for p in persons_cache], now):
             _publish('unknown', track_id=track_id)
+        timings.record('alerts', time.perf_counter() - block_start)
 
         # ── FPS ──────────────────────────────────────────────────────────────
         elapsed = time.monotonic() - fps_time

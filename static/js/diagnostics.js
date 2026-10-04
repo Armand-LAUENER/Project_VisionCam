@@ -7,6 +7,10 @@ const STAGES = {
     recognition: 'Reconnaissance',
     pose: 'Orientation',
     encode: 'Encodage vidéo',
+    present_list: 'Liste de présence',
+    presence: 'Historique de présence',
+    events: "Journal d'événements",
+    alerts: 'Alertes',
     frame: 'Image complète',
     latency: 'Latence (réception → affichage)',
 };
