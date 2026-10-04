@@ -277,9 +277,35 @@ emboîtées et l'hystérésis de l'anti-clonage, le 2026-10-04.
 Verdict stable sur toutes les mesures jugées, VRAM de VisionCam constante à
 521 Mo, page ouverte 1 h sans erreur JavaScript.
 
-Le FPS (27,3 i/s en moyenne, 9 507 images jetées) ne mesure pas VisionCam :
-un jeu tournait sous Windows pendant tout le run (15,5 % du GPU, 5,4 Go de
-VRAM), le CPU de la machine atteignait 88 % et sa RAM disponible tombait à
-442 Mo. Les mesures de contexte l'ont montré ; sans elles, la baisse aurait pu
-être attribuée à tort aux changements de 1.8. Un run sur machine libre doit
-encore donner la cadence propre.
+Le FPS de ce run (27,3 i/s en moyenne, 9 507 images jetées) a d'abord été
+attribué à un jeu qui tournait sous Windows. C'était faux : un run sur machine
+libre a montré les mêmes blocages (cf. ci-dessous).
+
+### Blocages des écritures SQLite (trouvés et corrigés le 2026-10-04)
+
+Sur les runs d'une heure, 35 à 42 minutes sur 55 contenaient une image de
+plus de 300 ms, jusqu'à 14 s, alors que toutes les étapes chronométrées
+restaient sous 130 ms. Une fois le reste de la boucle chronométré, les
+blocages sont apparus dans l'historique de présence (jusqu'à 4,2 s) et le
+journal d'événements (jusqu'à 5,3 s) : une connexion SQLite et un fsync par
+écriture, dans la boucle vidéo. Isolées, 1 586 écritures ne dépassent pas
+38 ms : le fsync n'attend que quand d'autres programmes écrivent sur le même
+système de fichiers (ici, Chromium avec la page ouverte), ce qui sous ext4
+l'oblige à attendre leurs écritures. Même sans blocage, le journal
+d'événements coûtait 24 ms au p95 par image concernée.
+
+Correctif (`core/db_writer.py`) : un thread unique écrit `presence.db`, avec
+une connexion gardée ouverte, en WAL et `synchronous=NORMAL` ; la boucle
+dépose ses écritures et repart. 30 min, page ouverte, même séquence :
+
+| Mesure | Avant | Après |
+|:-------|---:|---:|
+| FPS moyen | 26,4 | **30,0** |
+| Images jetées | 5 044 | **18** |
+| Minutes avec une image > 300 ms | 16 / 27 | **0** |
+| Pire image | 8 818 ms | **109 ms** |
+| Historique / journal, pire temps dans la boucle | 4 182 / 5 324 ms | **0 / 0 ms** |
+
+Les runs d'endurance faits entre l'ajout du journal d'événements (roadmap 2.1)
+et ce correctif ont un FPS tiré vers le bas par ces blocages ; leurs mesures
+de mémoire et de structures internes restent valables.
