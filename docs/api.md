@@ -18,7 +18,7 @@ demandent une session (cf. [README](../README.md#accès-protégé)).
 | `POST` | `/api/people/<nom>/rename` | Renommer (`{"new_name": …}`) : dossiers et base ensemble |
 | `DELETE` | `/api/people/<nom>` | Supprimer photos et entrées (droit à l'effacement) |
 | `POST` | `/api/people/<nom>/photos` | Ajouter des photos ; l'embedding est recalculé sur toutes |
-| `GET` | `/api/history` | Sessions de présence (`name`, `from`, `to` en AAAA-MM-JJ, `limit`) |
+| `GET` | `/api/history` | Sessions de présence (`name`, `from`, `to` en AAAA-MM-JJ, `limit`), recalculées du journal d'événements |
 | `GET` | `/api/history.csv` | Mêmes filtres, export CSV |
 | `GET` | `/api/events` | Server-Sent Events : état toutes les 0,5 s, arrivées, départs, inconnus, enrôlements |
 | `GET` | `/api/diagnostics` | FPS, temps par étape (médiane/p95), GPU, modèles et réglages actifs |

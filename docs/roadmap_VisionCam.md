@@ -151,9 +151,13 @@ novembre.
 - [x] Table d'événements bruts en ajout seul dans SQLite : `camera_id`,
   `track_id`, horodatage, type (apparition, entrée/sortie de zone,
   identification, fin de piste), zone.
-- [ ] Sessions de présence recalculées à partir des événements (vue dérivée,
-  plus donnée source).
-- [ ] Horloge unique monotone à la réception ; mesurer le décalage des caméras IP.
+- [x] Sessions de présence recalculées à partir des événements (vue dérivée,
+  plus donnée source). `/api/history` et l'export CSV les recalculent à chaque
+  requête (core/history.py) ; la table `sessions` n'est plus qu'un cache,
+  lue seulement pour l'historique antérieur au premier événement. Validé :
+  sessions identiques au calcul au fil de l'eau (simulations et rejeu CHIRLA).
+- [x] Horloge unique monotone à la réception (ForwardClock). La mesure du
+  décalage des caméras IP passe en 2.2 : elle demande plusieurs caméras.
 - [x] RGPD : rétention courte pour les événements des pistes inconnues,
   effacement d'une personne étendu à ses événements. (Choix : même rétention
   que l'historique, 30 jours.)
@@ -164,6 +168,7 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
 
 - [ ] Un thread de capture et un `FaceBodyTracker` par caméra, interface
   multi-flux.
+- [ ] Mesurer le décalage d'horloge des caméras IP (reporté de 2.1).
 - [ ] Partage du GPU : lots d'images de plusieurs caméras ou cadence réduite
   par caméra.
 
