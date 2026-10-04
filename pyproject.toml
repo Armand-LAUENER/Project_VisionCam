@@ -12,6 +12,7 @@ dependencies = [
     "numpy==1.26.4",
     "onnxruntime-gpu==1.24.4",         # retombe sur le CPU sans GPU (CI)
     "opencv-python==4.11.0.86",        # dernière version compatible numpy 1.x
+    "psutil==7.2.2",                   # journal d'endurance (core/system_probe.py) ; déjà tiré par ultralytics
     "python-dotenv==1.2.2",
     "scikit-learn==1.8.0",
     "scipy==1.17.1",
