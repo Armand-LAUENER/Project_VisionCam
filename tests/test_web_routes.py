@@ -269,7 +269,7 @@ class TestStatus:
         res = client.get('/status')
         assert res.status_code == 200
         assert set(res.get_json()) == {'currently_present', 'fps', 'total_known',
-                                       'tracks', 'frame_size'}
+                                       'tracks', 'frame_size', 'camera', 'cameras'}
 
     def test_boites_des_personnes_visibles(self, client):
         with visioncam.state.lock:
@@ -657,7 +657,7 @@ class TestDiagnostics:
         data = client.get('/api/diagnostics').get_json()
 
         assert set(data) == {'auth_enabled', 'uptime_s', 'fps', 'timings', 'gpu', 'models', 'recognition',
-                             'tracking', 'camera', 'clients'}
+                             'tracking', 'camera', 'clients', 'cameras'}
         assert data['timings']['detection']['median_ms'] == 6.0
         assert data['recognition']['min_face_px'] == visioncam.config.RECOGNITION_MIN_FACE_PX
         assert data['tracking']['n_init'] == visioncam.config.DEEPSORT_N_INIT
@@ -868,3 +868,93 @@ def test_tracks_log_has_one_row_per_visible_track(tmp_path):
         rows = list(csv.reader(f))
     assert rows == [["12", "3", "10", "20", "40", "100", "Alice"],
                     ["12", "7", "200", "30", "60", "120", "Inconnu"]]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Plusieurs caméras (roadmap 2.2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def second_camera(monkeypatch):
+    """Une seconde caméra, « porte », à côté de la première, le temps du test."""
+    from core.cameras import CameraSpec
+
+    camera = visioncam.Camera(CameraSpec("porte", "/tmp/porte.mp4", True), visioncam.CameraState(),
+                              MagicMock(), queue.Queue(maxsize=2))
+    monkeypatch.setattr(visioncam, "cameras", [visioncam.cameras[0], camera])
+    monkeypatch.setattr(visioncam, "cameras_by_id",
+                        {visioncam.cameras[0].id: visioncam.cameras[0], "porte": camera})
+    return camera
+
+
+def tracked(track_id, name, bbox):
+    return SimpleNamespace(track_id=track_id, name=name, body_bbox=bbox)
+
+
+class TestSeveralCameras:
+
+    def test_status_of_the_requested_camera(self, client, second_camera):
+        with second_camera.state.lock:
+            second_camera.state.bench_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            second_camera.state.bench_persons = [tracked(4, 'Alice', [10, 20, 110, 220])]
+            second_camera.state.currently_present = [{'name': 'Alice', 'track_id': 4, 'pose': None}]
+
+        data = client.get('/status?camera=porte').get_json()
+
+        assert data['camera'] == 'porte'
+        assert data['cameras'] == [visioncam.cameras[0].id, 'porte']
+        assert data['frame_size'] == [640, 480]
+        assert [t['name'] for t in data['tracks']] == ['Alice']
+
+    def test_default_camera_is_the_first(self, client, second_camera):
+        assert client.get('/status').get_json()['camera'] == visioncam.cameras[0].id
+
+    def test_presence_covers_every_camera(self, client, second_camera):
+        with visioncam.state.lock:
+            visioncam.state.currently_present = [{'name': 'Bob', 'track_id': 1, 'pose': None}]
+        with second_camera.state.lock:
+            second_camera.state.currently_present = [{'name': 'Alice', 'track_id': 4, 'pose': None}]
+
+        present = client.get('/status').get_json()['currently_present']
+
+        assert {(p['name'], p['camera']) for p in present} == {
+            ('Bob', visioncam.cameras[0].id), ('Alice', 'porte')}
+
+    @pytest.mark.parametrize("method, path", [
+        ('get', '/status?camera=absente'), ('get', '/video?camera=absente'),
+        ('get', '/api/events?camera=absente'), ('get', '/api/diagnostics?camera=absente'),
+    ])
+    def test_unknown_camera_is_404(self, client, second_camera, method, path):
+        res = getattr(client, method)(path)
+
+        assert res.status_code == 404
+        assert res.get_json()['cameras'] == [visioncam.cameras[0].id, 'porte']
+
+    def test_capture_on_an_unknown_camera_is_404(self, client, second_camera):
+        res = client.post('/api/capture', json={'name': 'Alice', 'track_id': '4', 'camera': 'absente'})
+
+        assert res.status_code == 404
+
+    def test_file_camera_fills_its_own_queue(self, tmp_path, monkeypatch):
+        """Deux caméras, deux files : la capture de « porte » ne touche pas celle de la première."""
+        from core.cameras import CameraSpec
+
+        monkeypatch.setattr(visioncam.config, "VIDEO_MODE", "every_frame")
+        monkeypatch.setattr(visioncam.config, "VIDEO_LOOP", False)
+        camera = visioncam.Camera(CameraSpec("porte", make_sequence(tmp_path), True),
+                                  visioncam.CameraState(), MagicMock(), queue.Queue(maxsize=2))
+        thread = threading.Thread(target=visioncam.camera_loop, args=(camera,), daemon=True)
+        thread.start()
+
+        frames = [index_of(camera.queue.get(timeout=5)[1]) for _ in range(N_FRAMES)]
+        thread.join(timeout=5)
+
+        assert frames == list(range(1, N_FRAMES + 1))
+        assert visioncam._frame_queue.empty()
+
+    def test_one_tracks_log_per_camera(self, second_camera):
+        assert visioncam._per_camera_path("data/tracks.csv", second_camera) == "data/tracks-porte.csv"
+
+
+def test_single_camera_keeps_its_tracks_log_path():
+    assert visioncam._per_camera_path("data/tracks.csv", visioncam.cameras[0]) == "data/tracks.csv"

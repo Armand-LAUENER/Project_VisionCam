@@ -14,6 +14,9 @@
 
 <div class="live-layout">
     <section>
+        <label class="camera-select" id="cameraPicker" hidden>Caméra
+            <select id="cameraSelect" aria-label="Caméra affichée"></select>
+        </label>
         <div class="video-wrap">
             <img id="video" src="{{ url_for('video_feed') }}" alt="Flux de la caméra">
             <canvas id="overlay" aria-label="Cliquer sur une personne pour l'enrôler"></canvas>

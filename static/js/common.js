@@ -83,10 +83,25 @@ export function onEvent(type, handler) {
     return () => handlers.get(type).delete(handler);
 }
 
+// Caméra dont l'état est reçu (roadmap 2.2) ; null : la première.
+let eventCamera = null;
+
+/** Change la caméra suivie par le flux d'événements (page Live). */
+export function setEventCamera(cameraId) {
+    if (cameraId === eventCamera) return;
+    eventCamera = cameraId;
+    if (source) {
+        source.close();
+        source = null;
+        connect();
+    }
+}
+
 function connect() {
     if (source) return;
     const pill = document.getElementById('livePill');
-    source = new EventSource('/api/events');
+    const query = eventCamera ? `?camera=${encodeURIComponent(eventCamera)}` : '';
+    source = new EventSource(`/api/events${query}`);
     source.onopen = () => {
         pill?.classList.add('connected');
         if (pill) pill.textContent = 'En direct';

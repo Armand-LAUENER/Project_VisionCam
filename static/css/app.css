@@ -238,3 +238,6 @@ dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .timing .mono { grid-column: 1 / -1; }
     .hide-mobile { display: none; }
 }
+
+/* Choix de la caméra, page Live (affiché s'il y en a plusieurs) */
+.camera-select { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }

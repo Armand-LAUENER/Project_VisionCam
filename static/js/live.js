@@ -1,5 +1,5 @@
 // Page Live : flux vidéo, boîtes cliquables, capture d'enrôlement, présents et événements.
-import { api, formatTime, h, onEvent, toast } from './common.js';
+import { api, formatTime, h, onEvent, setEventCamera, toast } from './common.js';
 
 const video = document.getElementById('video');
 const canvas = document.getElementById('overlay');
@@ -99,8 +99,30 @@ function renderStatus() {
     draw();
 }
 
+// ── Choix de la caméra (affiché s'il y en a plusieurs) ────────────────────
+
+const cameraPicker = document.getElementById('cameraPicker');
+const cameraSelect = document.getElementById('cameraSelect');
+let camera = null;
+
+function renderCameras(cameras) {
+    cameraPicker.hidden = cameras.length < 2;
+    const current = [...cameraSelect.options].map((o) => o.value).join();
+    if (current === cameras.join()) return;
+    cameraSelect.replaceChildren(...cameras.map((id) => h('option', { value: id }, id)));
+    cameraSelect.value = camera || cameras[0];
+}
+
+cameraSelect.addEventListener('change', () => {
+    camera = cameraSelect.value;
+    video.src = `/video?camera=${encodeURIComponent(camera)}`;
+    status = { tracks: [], frame_size: null, currently_present: status.currently_present };
+    setEventCamera(camera);
+});
+
 onEvent('status', (event) => {
     status = event;
+    renderCameras(event.cameras || []);
     renderStatus();
 });
 
@@ -109,7 +131,7 @@ onEvent('status', (event) => {
 const EVENT_TEXT = {
     arrival: (e) => ['ok', `${e.name} est arrivé(e)`],
     departure: (e) => ['', `${e.name} est parti(e)`],
-    unknown: (e) => ['warn', `Personne inconnue à l'écran (#${e.track_id})`],
+    unknown: (e) => ['warn', `Personne inconnue à l'écran (#${e.track_id}${e.camera ? `, ${e.camera}` : ''})`],
     enrolled: (e) => ['ok', `${e.name} enrôlé(e)`],
     renamed: (e) => ['', `${e.old_name} renommé(e) en ${e.name}`],
     deleted: (e) => ['danger', `${e.name} supprimé(e)`],
@@ -168,7 +190,8 @@ async function capture(label) {
         return false;
     }
     const { ok, data } = await api('/api/capture', {
-        method: 'POST', json: { name, track_id: target.track_id, ...(label ? { label } : {}) },
+        method: 'POST',
+        json: { name, track_id: target.track_id, ...(camera ? { camera } : {}), ...(label ? { label } : {}) },
     });
     toast(data.message || (ok ? 'Enrôlé.' : 'Échec de la capture.'), ok ? 'ok' : 'error');
     return ok;

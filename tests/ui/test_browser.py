@@ -183,3 +183,41 @@ def test_pages_fit_a_phone_screen(browser, server, path):
         assert overflow <= 0, f"{path} déborde de {overflow}px en largeur"
     finally:
         context.close()
+
+
+def test_live_page_switches_camera(page, monkeypatch):
+    """Deux caméras : le sélecteur apparaît et bascule flux et état sur l'autre (roadmap 2.2)."""
+    import queue
+    from unittest.mock import MagicMock
+
+    from core.cameras import CameraSpec
+
+    porte = visioncam.Camera(CameraSpec("porte", "/tmp/porte.mp4", True), visioncam.CameraState(),
+                             MagicMock(), queue.Queue(maxsize=2))
+    people = [type("Person", (), {"track_id": tid, "name": "Inconnu",
+                                  "body_bbox": [100 * tid, 100, 100 * tid + 80, 400]})()
+              for tid in (1, 2)]
+    with porte.state.lock:
+        porte.state.bench_frame = np.zeros((FRAME_H, FRAME_W, 3), dtype=np.uint8)
+        porte.state.bench_persons = people
+        porte.state.fps = 12.0
+    first = visioncam.cameras[0]
+    monkeypatch.setattr(visioncam, "cameras", [first, porte])
+    monkeypatch.setattr(visioncam, "cameras_by_id", {first.id: first, "porte": porte})
+
+    page.goto("/", wait_until="domcontentloaded")
+    playwright_api.expect(page.locator("#cameraPicker")).to_be_visible()
+    playwright_api.expect(page.locator("#statVisible")).to_have_text("1")
+
+    page.select_option("#cameraSelect", "porte")
+
+    playwright_api.expect(page.locator("#statVisible")).to_have_text("2")
+    playwright_api.expect(page.locator("#statFps")).to_have_text("12")
+    assert page.locator("#video").get_attribute("src").endswith("/video?camera=porte")
+
+
+def test_single_camera_hides_the_picker(page):
+    page.goto("/", wait_until="domcontentloaded")
+    playwright_api.expect(page.locator("#statVisible")).to_have_text("1")
+
+    playwright_api.expect(page.locator("#cameraPicker")).to_be_hidden()

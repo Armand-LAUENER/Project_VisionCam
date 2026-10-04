@@ -39,6 +39,10 @@ CAMERA_SOURCE = LOCAL_SOURCE if USE_LOCAL_CAM else REMOTE_SOURCE
 #   every_frame : chaque image traitée, dans l'ordre (déterministe, tests)
 # Identifiant de la caméra dans le journal d'événements (core/event_log.py).
 CAMERA_ID = os.getenv("CAMERA_ID", "cam0")
+# Plusieurs caméras (roadmap 2.2, core/cameras.py) : "id=source;id=source",
+# source = numéro de webcam, URL (http, rtsp) ou chemin de vidéo / séquence
+# MOT17. Vide : une seule caméra, CAMERA_ID, avec VIDEO_FILE ou CAMERA_SOURCE.
+CAMERAS = os.getenv("CAMERAS", "")
 # Au plus un événement « visage reconnu » par piste et par intervalle (s), en
 # plus du dernier avant expiration de PRESENCE_FACE_MAX_AGE_S : ~60 lignes par
 # heure et par personne nommée, et des sessions reconstruites exactes.
