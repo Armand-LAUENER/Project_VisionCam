@@ -112,8 +112,27 @@ IDF1 recule par rapport au NMS 0,6 seul (41,6 → 34,0 %, au-dessus des 31,7 %
 d'origine) ; sur cette séquence il ne varie pas de façon régulière, quand les
 changements d'ID baissent à chaque étape (137, 124, 105).
 
-Il reste 59 corrections : surtout un nom qui passe d'une personne à une autre
-assise à côté (son visage reconnu par moments sous ce nom), cf. roadmap 1.8.
+Il restait 59 corrections : un nom qui passait à la voisine assise à côté
+(son visage reconnu par moments sous ce nom), à une boîte partielle dont le
+crop attrapait le visage, ou à une piste dédoublée non emboîtée. Point commun :
+le nom était pris à une piste visible qui venait d'être reconnue. L'hystérésis
+de l'anti-clonage le lui laisse : une piste visible dont le visage a été
+reconnu sous ce nom depuis moins de `IDENTITY_PROTECT_FRAMES` (90 images) le
+garde, sauf reconnaissance plus sûre d'au moins `IDENTITY_STEAL_MARGIN`
+(0,05). En roue libre ou sans visage récent, elle le perd comme avant.
+
+| Variante | seq_026 : corrections | Personne assise : bon nom / « Inconnu » / mauvais | Enrôlés : bon nom / mauvais nom |
+|:---------|---:|:---|:---|
+| NMS 0,6 + boîtes emboîtées | 59 | 89,8 % / 4,7 % / 1,8 % | 37,9 % / 1,1 % |
+| **+ hystérésis** | **16** | **90,8 % / 3,7 %** / 1,8 % | 37,4 % / **0,7 %** |
+
+Pistes, MOTA et IDF1 inchangés sur les 9 séquences : l'hystérésis ne touche
+que les noms. Elle n'est mise à l'épreuve que sur seq_026, seule séquence avec
+des personnes enrôlées qui se côtoient.
+
+Bilan sur seq_026, depuis l'origine : corrections d'identité 86 → 16 (−81 %),
+changements d'ID 137 → 105, « Inconnu » sur la personne assise 7,3 → 3,7 %,
+mauvais noms des enrôlés 1,1 → 0,7 %, MOTA inchangé.
 
 Pour rejouer une séquence dans l'application complète, au lieu de la caméra,
 et garder les pistes affichées (deux exécutions en `every_frame` donnent les

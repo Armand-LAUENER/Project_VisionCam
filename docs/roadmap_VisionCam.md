@@ -109,9 +109,14 @@ personne : 569 images « Inconnu » et 145 avec un autre nom, sur 7 542.
 - [x] Cause 2 : boîte emboîtée (haut du corps dans le corps entier, IoU ~0,6).
   Écartée si contenue à 90 % dans une boîte plus sûre : corrections 68 → 59,
   changements d'ID 124 → 105, DanceTrack inchangé.
-- [ ] Cause 3 : le nom passe à une autre personne assise à côté, dont le
+- [x] Cause 3 : le nom passe à une autre personne assise à côté, dont le
   visage est par moments reconnu sous ce nom ; l'anti-clonage lui donne le nom
-  puis le rend. Piste : hystérésis de l'anti-clonage.
+  puis le rend. Hystérésis de l'anti-clonage : corrections 59 → 16, mauvais
+  noms des enrôlés 1,1 → 0,7 %.
+
+Résultat (2026-10-04) : sur seq_026, corrections d'identité 86 → 16,
+changements d'ID 137 → 105, « Inconnu » sur la personne assise 7,3 → 3,7 %,
+MOTA inchangé partout, IDF1 31,7 → 34,0 %.
 - [ ] Piste : quand le nom passe d'une piste en roue libre à une piste visible
   qui recouvre la même personne, fusionner plutôt que basculer ; ou réduire
   `max_age` pour les pistes sans détection.
