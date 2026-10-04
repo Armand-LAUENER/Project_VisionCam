@@ -194,8 +194,10 @@ class TestRetention:
     def test_purge_runs_at_most_once_per_interval(self, tmp_path, monkeypatch):
         log = self.make(tmp_path)
         calls = []
-        real_purge = log.purge
-        monkeypatch.setattr(log, "purge", lambda now=None: calls.append(now) or real_purge(now))
+        # update() dépose la purge dans la file d'écriture sans l'attendre
+        # (core/db_writer.py) : on compte les purges déposées.
+        real_task = log._purge_task
+        monkeypatch.setattr(log, "_purge_task", lambda now: calls.append(now) or real_task(now))
 
         feed(log, [(offset, []) for offset in range(0, self.DAY + 1, 600)])
 

@@ -39,6 +39,7 @@ from flask import (
 from werkzeug.security import check_password_hash
 
 import config
+from core.db_writer import DbWriter
 from core.endurance import EnduranceLog
 from core.event_log import EventLog, ForwardClock, TrackEvents
 from core.events import EventBus, StageTimer, UnknownWatcher
@@ -121,14 +122,19 @@ class AppState:
         self.bench_persons: list = []
 
 state = AppState()
+# Toutes les écritures de presence.db passent par un seul thread : la boucle
+# vidéo ne les attend jamais (un fsync bloquait des images jusqu'à 14 s).
+db_writer = DbWriter(config.PRESENCE_DB_PATH, background=True)
 presence_log = PresenceLog(config.PRESENCE_DB_PATH, gap=config.PRESENCE_LOG_GAP_S,
-                           retention=config.PRESENCE_RETENTION_DAYS * 86400 or None)
+                           retention=config.PRESENCE_RETENTION_DAYS * 86400 or None,
+                           writer=db_writer)
 face_confirmed = FaceConfirmedNames(config.PRESENCE_FACE_MAX_AGE_S)
 # Journal d'événements bruts (roadmap 2.1), même base que l'historique. Une
 # piste est finie après PRESENCE_TIMEOUT sans être visible.
 event_clock = ForwardClock()
 event_log = EventLog(config.PRESENCE_DB_PATH, run_id=uuid.uuid4().hex[:12], clock=event_clock,
-                     retention=config.PRESENCE_RETENTION_DAYS * 86400 or None)
+                     retention=config.PRESENCE_RETENTION_DAYS * 86400 or None,
+                     writer=db_writer)
 track_events = TrackEvents(config.CAMERA_ID, config.PRESENCE_TIMEOUT,
                            face_max_age=config.PRESENCE_FACE_MAX_AGE_S,
                            face_interval=config.FACE_EVENT_INTERVAL_S)
@@ -1284,3 +1290,5 @@ if __name__ == '__main__':
         # Ferme les sessions et les pistes en cours à leur dernière heure vue.
         presence_log.close_all()
         event_log.write(track_events.finish())
+        # Vide la file d'écriture avant de quitter : rien n'est perdu à l'arrêt.
+        db_writer.close()

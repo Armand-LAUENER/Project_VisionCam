@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import csv
 import io
-import os
-import sqlite3
 import threading
 import time
 from datetime import datetime
+
+from core.db_writer import DbWriter
 
 UNKNOWN = "Inconnu"
 
@@ -51,7 +51,7 @@ def _iso(timestamp: float | None) -> str | None:
 class PresenceLog:
     def __init__(self, db_path: str, gap: float = 60.0, flush_interval: float = 10.0,
                  clock=time.time, retention: float | None = None,
-                 purge_interval: float = 3600.0) -> None:
+                 purge_interval: float = 3600.0, writer: DbWriter | None = None) -> None:
         self.db_path = db_path
         self.gap = gap
         self.flush_interval = flush_interval
@@ -61,115 +61,127 @@ class PresenceLog:
         self._last_purge: float | None = None
         self._lock = threading.Lock()
         self._ready = False
-        # { nom: [id de session, dernière vue, dernière vue écrite] }
+        # Écritures déléguées (core/db_writer.py) : en arrière-plan dans
+        # l'application, pour ne jamais faire attendre la boucle vidéo ; tout
+        # de suite dans le thread appelant sinon (tests, outils).
+        self._writer = writer or DbWriter(db_path)
+        # { nom: [clé de session, dernière vue, dernière vue écrite] }. La clé
+        # est attribuée ici ; le numéro SQLite, connu seulement à l'écriture,
+        # est retrouvé par le thread d'écriture dans _rowids.
         self._open: dict[str, list] = {}
+        self._next_key = 0
+        self._rowids: dict[int, int] = {}
 
     # ─────────────────────────────────────────────────────────────────────
-    # Connexion
+    # Écriture (sous _lock ; les requêtes partent au thread d'écriture)
     # ─────────────────────────────────────────────────────────────────────
 
-    def _connect(self) -> sqlite3.Connection:
-        """Connexion courte, ouverte à chaque opération (appelée sous _lock).
+    def _ensure_ready(self) -> None:
+        """Crée la base au premier usage : importer l'application ne touche pas le disque."""
+        if self._ready:
+            return
 
-        La base n'est créée qu'au premier usage : importer l'application ne
-        touche pas le disque.
-        """
-        if not self._ready:
-            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        if not self._ready:
-            conn.execute("PRAGMA journal_mode=WAL")
+        def init(conn):
             conn.executescript(_SCHEMA)
             # Sessions laissées ouvertes par un arrêt brutal.
             conn.execute("UPDATE sessions SET departed = last_seen WHERE departed IS NULL")
-            conn.commit()
-            self._ready = True
-        return conn
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Écriture
-    # ─────────────────────────────────────────────────────────────────────
+        self._writer.submit(init)
+        self._ready = True
+
+    def _insert(self, key, name, now):
+        def run(conn):
+            cursor = conn.execute(
+                "INSERT INTO sessions (name, arrived, last_seen) VALUES (?, ?, ?)",
+                (name, now, now))
+            self._rowids[key] = cursor.lastrowid
+        return run
+
+    def _set_last_seen(self, key, last_seen, departed: bool):
+        def run(conn):
+            rowid = self._rowids.get(key)
+            if rowid is None:       # session effacée entre-temps (forget)
+                return
+            if departed:
+                conn.execute("UPDATE sessions SET last_seen = ?, departed = ? WHERE id = ?",
+                             (last_seen, last_seen, rowid))
+                del self._rowids[key]
+            else:
+                conn.execute("UPDATE sessions SET last_seen = ? WHERE id = ?", (last_seen, rowid))
+        return run
 
     def update(self, names, now: float | None = None) -> list[dict]:
         """Enregistre les noms vus à cet instant ; retourne arrivées et départs."""
         now = self._clock() if now is None else now
-        if self.retention and (self._last_purge is None
-                               or now - self._last_purge >= self.purge_interval):
-            self.purge(now)
         seen = {n for n in names if n and n != UNKNOWN}
-        events = []
+        events, tasks = [], []
         with self._lock:
-            conn = None
-            try:
-                for name in sorted(seen):
-                    session = self._open.get(name)
-                    if session is None:
-                        conn = conn or self._connect()
-                        cursor = conn.execute(
-                            "INSERT INTO sessions (name, arrived, last_seen) VALUES (?, ?, ?)",
-                            (name, now, now))
-                        self._open[name] = [cursor.lastrowid, now, now]
-                        events.append({"type": "arrival", "name": name, "time": _iso(now)})
-                    else:
-                        session[1] = now
-                        if now - session[2] >= self.flush_interval:
-                            conn = conn or self._connect()
-                            conn.execute("UPDATE sessions SET last_seen = ? WHERE id = ?",
-                                         (now, session[0]))
-                            session[2] = now
-                for name, (session_id, last_seen, _) in list(self._open.items()):
-                    if name not in seen and now - last_seen > self.gap:
-                        conn = conn or self._connect()
-                        conn.execute("UPDATE sessions SET last_seen = ?, departed = ? WHERE id = ?",
-                                     (last_seen, last_seen, session_id))
-                        del self._open[name]
-                        events.append({"type": "departure", "name": name,
-                                       "time": _iso(last_seen)})
-                if conn is not None:
-                    conn.commit()
-            finally:
-                if conn is not None:
-                    conn.close()
+            self._ensure_ready()
+            if self.retention and (self._last_purge is None
+                                   or now - self._last_purge >= self.purge_interval):
+                self._last_purge = now
+                tasks.append(self._purge_task(now))
+            for name in sorted(seen):
+                session = self._open.get(name)
+                if session is None:
+                    key, self._next_key = self._next_key, self._next_key + 1
+                    tasks.append(self._insert(key, name, now))
+                    self._open[name] = [key, now, now]
+                    events.append({"type": "arrival", "name": name, "time": _iso(now)})
+                else:
+                    session[1] = now
+                    if now - session[2] >= self.flush_interval:
+                        tasks.append(self._set_last_seen(session[0], now, departed=False))
+                        session[2] = now
+            for name, (key, last_seen, _) in list(self._open.items()):
+                if name not in seen and now - last_seen > self.gap:
+                    tasks.append(self._set_last_seen(key, last_seen, departed=True))
+                    del self._open[name]
+                    events.append({"type": "departure", "name": name,
+                                   "time": _iso(last_seen)})
+            if tasks:
+                self._writer.submit(lambda conn: [task(conn) for task in tasks])
         return events
 
     def close_all(self) -> None:
         """Ferme les sessions ouvertes à leur dernière heure vue (arrêt propre)."""
         with self._lock:
-            if not self._open:
-                return
-            conn = self._connect()
-            try:
-                for session_id, last_seen, _ in self._open.values():
-                    conn.execute("UPDATE sessions SET last_seen = ?, departed = ? WHERE id = ?",
-                                 (last_seen, last_seen, session_id))
-                conn.commit()
-            finally:
-                conn.close()
+            tasks = [self._set_last_seen(key, last_seen, departed=True)
+                     for key, last_seen, _ in self._open.values()]
             self._open.clear()
+            if tasks:
+                self._writer.submit(lambda conn: [task(conn) for task in tasks])
+        self._writer.flush()
 
     def rename(self, old: str, new: str) -> None:
         with self._lock:
-            conn = self._connect()
-            try:
-                conn.execute("UPDATE sessions SET name = ? WHERE name = ?", (new, old))
-                conn.commit()
-            finally:
-                conn.close()
+            self._ensure_ready()
             if old in self._open:
                 self._open[new] = self._open.pop(old)
+            self._writer.call(lambda conn: conn.execute(
+                "UPDATE sessions SET name = ? WHERE name = ?", (new, old)))
 
     def forget(self, name: str) -> int:
-        """Efface tout l'historique d'une personne (droit à l'effacement)."""
+        """Efface tout l'historique d'une personne (droit à l'effacement), avant de rendre la main."""
         with self._lock:
-            conn = self._connect()
-            try:
-                deleted = conn.execute("DELETE FROM sessions WHERE name = ?", (name,)).rowcount
-                conn.commit()
-            finally:
-                conn.close()
-            self._open.pop(name, None)
-        return deleted
+            self._ensure_ready()
+            session = self._open.pop(name, None)
+
+            def run(conn):
+                if session is not None:
+                    self._rowids.pop(session[0], None)
+                return conn.execute("DELETE FROM sessions WHERE name = ?", (name,)).rowcount
+
+            return self._writer.call(run)
+
+    def _purge_task(self, now):
+        cutoff = now - self.retention
+
+        def run(conn):
+            return conn.execute(
+                "DELETE FROM sessions WHERE departed IS NOT NULL AND departed < ?",
+                (cutoff,)).rowcount
+        return run
 
     def purge(self, now: float | None = None) -> int:
         """Supprime les sessions terminées depuis plus de `retention` secondes.
@@ -181,18 +193,11 @@ class PresenceLog:
             self._last_purge = now
             if not self.retention:
                 return 0
-            conn = self._connect()
-            try:
-                deleted = conn.execute(
-                    "DELETE FROM sessions WHERE departed IS NOT NULL AND departed < ?",
-                    (now - self.retention,)).rowcount
-                conn.commit()
-            finally:
-                conn.close()
-        return deleted
+            self._ensure_ready()
+            return self._writer.call(self._purge_task(now))
 
     # ─────────────────────────────────────────────────────────────────────
-    # Lecture
+    # Lecture (après les écritures en attente)
     # ─────────────────────────────────────────────────────────────────────
 
     def sessions(self, name: str | None = None, start: float | None = None,
@@ -214,14 +219,18 @@ class PresenceLog:
             params.append(end)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._lock:
-            conn = self._connect()
-            try:
+            self._ensure_ready()
+            live_by_key = {key: last for key, last, _ in self._open.values()}
+
+            def read(conn):
                 rows = conn.execute(
                     f"SELECT id, name, arrived, last_seen, departed FROM sessions {where} "
                     "ORDER BY arrived DESC LIMIT ?", (*params, limit)).fetchall()
-            finally:
-                conn.close()
-            live = {session_id: last for session_id, last, _ in self._open.values()}
+                live = {self._rowids[k]: last for k, last in live_by_key.items()
+                        if k in self._rowids}
+                return rows, live
+
+            rows, live = self._writer.call(read)
         result = []
         for row in rows:
             last_seen = live.get(row["id"], row["last_seen"])
@@ -236,11 +245,9 @@ class PresenceLog:
 
     def names(self) -> list[str]:
         with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute("SELECT DISTINCT name FROM sessions ORDER BY name").fetchall()
-            finally:
-                conn.close()
+            self._ensure_ready()
+            rows = self._writer.call(lambda conn: conn.execute(
+                "SELECT DISTINCT name FROM sessions ORDER BY name").fetchall())
         return [row["name"] for row in rows]
 
     @staticmethod

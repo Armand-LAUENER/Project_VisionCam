@@ -38,11 +38,11 @@ Même fichier que l'historique de présence (core/presence_log.py), table à par
 
 from __future__ import annotations
 
-import os
-import sqlite3
 import threading
 import time
 from collections import defaultdict
+
+from core.db_writer import DbWriter
 
 UNKNOWN = "Inconnu"
 
@@ -210,7 +210,8 @@ def sessions_from_events(events, gap: float, face_max_age: float,
 
 class EventLog:
     def __init__(self, db_path: str, run_id: str, clock=time.time,
-                 retention: float | None = None, purge_interval: float = 3600.0) -> None:
+                 retention: float | None = None, purge_interval: float = 3600.0,
+                 writer: DbWriter | None = None) -> None:
         self.db_path = db_path
         self.run_id = run_id
         self.retention = retention
@@ -219,81 +220,67 @@ class EventLog:
         self._last_purge: float | None = None
         self._lock = threading.Lock()
         self._ready = False
+        # Écritures déléguées (core/db_writer.py) : en arrière-plan dans
+        # l'application, tout de suite dans le thread appelant sinon.
+        self._writer = writer or DbWriter(db_path)
 
-    def _connect(self) -> sqlite3.Connection:
-        """Connexion courte, ouverte à chaque opération (appelée sous _lock)."""
+    def _ensure_ready(self) -> None:
+        """Crée la table au premier usage (appelée sous _lock)."""
         if not self._ready:
-            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        if not self._ready:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(_SCHEMA)
+            self._writer.submit(lambda conn: conn.executescript(_SCHEMA))
             self._ready = True
-        return conn
 
     def write(self, events: list[dict]) -> None:
-        """Ajoute les événements ; rien n'est écrit (ni la base créée) sans événement."""
+        """Ajoute les événements sans attendre le disque ; rien n'est écrit sans événement."""
         if not events:
             return
+        rows = [(e["time"], self.run_id, e["camera_id"], e["track_id"], e["type"],
+                 e.get("name"), e.get("zone")) for e in events]
         now = self._clock()
-        if self.retention and (self._last_purge is None
-                               or now - self._last_purge >= self.purge_interval):
-            self.purge(now)
         with self._lock:
-            conn = self._connect()
-            try:
-                conn.executemany(
-                    "INSERT INTO events (time, run_id, camera_id, track_id, type, name, zone) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    [(e["time"], self.run_id, e["camera_id"], e["track_id"], e["type"],
-                      e.get("name"), e.get("zone")) for e in events])
-                conn.commit()
-            finally:
-                conn.close()
+            self._ensure_ready()
+            if self.retention and (self._last_purge is None
+                                   or now - self._last_purge >= self.purge_interval):
+                self._last_purge = now
+                cutoff = now - self.retention
+                self._writer.submit(lambda conn: conn.execute(
+                    "DELETE FROM events WHERE time < ?", (cutoff,)))
+            self._writer.submit(lambda conn: conn.executemany(
+                "INSERT INTO events (time, run_id, camera_id, track_id, type, name, zone) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)", rows))
 
     def events(self) -> list[dict]:
-        """Tous les événements, dans l'ordre d'écriture."""
+        """Tous les événements, dans l'ordre d'écriture (après les écritures en attente)."""
         with self._lock:
-            conn = self._connect()
-            try:
-                return [dict(row) for row in conn.execute("SELECT * FROM events ORDER BY id")]
-            finally:
-                conn.close()
+            self._ensure_ready()
+            return self._writer.call(lambda conn: [
+                dict(row) for row in conn.execute("SELECT * FROM events ORDER BY id")])
 
     def forget(self, name: str) -> int:
-        """Efface tous les événements des pistes qui ont porté ce nom ; retourne leur nombre."""
+        """Efface tous les événements des pistes qui ont porté ce nom ; retourne leur nombre.
+
+        Fait avant de rendre la main (droit à l'effacement).
+        """
         with self._lock:
-            conn = self._connect()
-            try:
-                cursor = conn.execute(
-                    "DELETE FROM events WHERE (run_id, camera_id, track_id) IN "
-                    "(SELECT run_id, camera_id, track_id FROM events WHERE name = ?)", (name,))
-                conn.commit()
-                return cursor.rowcount
-            finally:
-                conn.close()
+            self._ensure_ready()
+            return self._writer.call(lambda conn: conn.execute(
+                "DELETE FROM events WHERE (run_id, camera_id, track_id) IN "
+                "(SELECT run_id, camera_id, track_id FROM events WHERE name = ?)",
+                (name,)).rowcount)
 
     def rename(self, old: str, new: str) -> None:
         with self._lock:
-            conn = self._connect()
-            try:
-                conn.execute("UPDATE events SET name = ? WHERE name = ?", (new, old))
-                conn.commit()
-            finally:
-                conn.close()
+            self._ensure_ready()
+            self._writer.call(lambda conn: conn.execute(
+                "UPDATE events SET name = ? WHERE name = ?", (new, old)))
 
     def purge(self, now: float | None = None) -> int:
         """Supprime les événements plus anciens que la rétention ; retourne leur nombre."""
         now = self._clock() if now is None else now
-        self._last_purge = now
-        if not self.retention:
-            return 0
         with self._lock:
-            conn = self._connect()
-            try:
-                cursor = conn.execute("DELETE FROM events WHERE time < ?", (now - self.retention,))
-                conn.commit()
-                return cursor.rowcount
-            finally:
-                conn.close()
+            self._last_purge = now
+            if not self.retention:
+                return 0
+            self._ensure_ready()
+            return self._writer.call(lambda conn: conn.execute(
+                "DELETE FROM events WHERE time < ?", (now - self.retention,)).rowcount)
