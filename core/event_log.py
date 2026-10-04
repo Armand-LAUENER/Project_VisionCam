@@ -163,7 +163,7 @@ class _Track:
 
 def sessions_from_events(events, gap: float, face_max_age: float,
                          now: float | None = None) -> list[dict]:
-    """Sessions de présence {name, arrived, departed} recalculées à partir des événements.
+    """Sessions de présence {name, arrived, departed, last_seen} recalculées des événements.
 
     Une piste encore ouverte (sans `ended`) compte jusqu'à `now` (par défaut,
     le dernier événement) ; ses sessions ont departed=None.
@@ -202,9 +202,11 @@ def sessions_from_events(events, gap: float, face_max_age: float,
                 if e >= end:
                     end, open_ = e, o
             else:
-                sessions.append({"name": name, "arrived": start, "departed": None if open_ else end})
+                sessions.append({"name": name, "arrived": start,
+                                 "departed": None if open_ else end, "last_seen": end})
                 start, end, open_ = s, e, o
-        sessions.append({"name": name, "arrived": start, "departed": None if open_ else end})
+        sessions.append({"name": name, "arrived": start,
+                         "departed": None if open_ else end, "last_seen": end})
     return sorted(sessions, key=lambda s: (s["arrived"], s["name"]))
 
 
@@ -249,12 +251,14 @@ class EventLog:
                 "INSERT INTO events (time, run_id, camera_id, track_id, type, name, zone) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)", rows))
 
-    def events(self) -> list[dict]:
-        """Tous les événements, dans l'ordre d'écriture (après les écritures en attente)."""
+    def events(self, until: float | None = None) -> list[dict]:
+        """Événements (antérieurs à `until`), dans l'ordre d'écriture, après les écritures en attente."""
+        where, params = ("WHERE time < ?", (until,)) if until is not None else ("", ())
         with self._lock:
             self._ensure_ready()
             return self._writer.call(lambda conn: [
-                dict(row) for row in conn.execute("SELECT * FROM events ORDER BY id")])
+                dict(row) for row in conn.execute(
+                    f"SELECT * FROM events {where} ORDER BY id", params)])
 
     def forget(self, name: str) -> int:
         """Efface tous les événements des pistes qui ont porté ce nom ; retourne leur nombre.

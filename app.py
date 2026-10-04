@@ -45,6 +45,7 @@ from core.event_log import EventLog, ForwardClock, TrackEvents
 from core.events import EventBus, StageTimer, UnknownWatcher
 from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
+from core.history import history_names, presence_history
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
 from core.presence_log import FaceConfirmedNames, PresenceLog
@@ -1221,7 +1222,10 @@ def _history_query():
         limit = max(1, min(int(request.args.get('limit', 1000)), 10000))
     except ValueError:
         return None, (jsonify({'message': 'Filtres invalides : dates AAAA-MM-JJ, limit entier.'}), 400)
-    sessions = presence_log.sessions(
+    # Recalculées du journal d'événements, la donnée source (roadmap 2.1).
+    sessions = presence_history(
+        presence_log, event_log, config.PRESENCE_LOG_GAP_S, config.PRESENCE_FACE_MAX_AGE_S,
+        event_clock(),
         name=request.args.get('name') or None,
         start=start.timestamp() if start else None,
         end=end.timestamp() if end else None,
@@ -1241,7 +1245,7 @@ def api_history():
     sessions, error = _history_query()
     if error:
         return error
-    return jsonify({'sessions': sessions, 'names': presence_log.names()})
+    return jsonify({'sessions': sessions, 'names': history_names(presence_log, event_log)})
 
 
 @app.route('/api/history.csv')

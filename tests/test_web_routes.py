@@ -725,6 +725,20 @@ class TestHistoryApi:
 
         assert history.names() == ['Alicia', 'Bob']
 
+    def test_l_historique_vient_du_journal_d_evenements(self, client):
+        """Roadmap 2.1 : une visite connue seulement des événements apparaît dans l'historique."""
+        transitions = visioncam.TrackEvents("cam0", 5.0, face_max_age=300.0, face_interval=60.0)
+        now = visioncam.event_clock()
+        for i in range(61):
+            visioncam.event_log.write(transitions.update([(1, 'Dora', i)], now - 600 + i))
+        visioncam.event_log.write(transitions.finish())
+
+        data = client.get('/api/history?name=Dora').get_json()
+
+        assert [(s['name'], s['duration_s'], s['ongoing']) for s in data['sessions']] == [
+            ('Dora', 60, False)]
+        assert 'Dora' in data['names']
+
     def _person_events(self):
         visioncam.event_log.write(visioncam.track_events.update([(1, 'Inconnu'), (2, 'Bob')], 0.0)
                                   + visioncam.track_events.update([(1, 'Alice'), (2, 'Bob')], 1.0))

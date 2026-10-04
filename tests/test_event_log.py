@@ -303,7 +303,7 @@ def test_open_track_gives_an_ongoing_session():
 
     sessions = sessions_from_events(events, 60.0, 300.0, now=T0 + 20)
 
-    assert sessions == [{"name": "Alice", "arrived": T0, "departed": None}]
+    assert sessions == [{"name": "Alice", "arrived": T0, "departed": None, "last_seen": T0 + 20}]
 
 
 def test_check_sessions_pairs_by_name_and_arrival():
