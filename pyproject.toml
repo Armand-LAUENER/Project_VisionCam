@@ -57,7 +57,7 @@ torchvision = [
     { index = "pytorch-cu121", group = "cu121" },
     { index = "pytorch-cpu", group = "cpu" },
 ]
-deepsort-rs = { git = "https://github.com/Armand-LAUENER/deepsort-rs", rev = "6f12a5d0eed2a83b7e0e3c739fe87f865db0ae7c" }
+deepsort-rs = { git = "https://github.com/Armand-LAUENER/deepsort-rs", rev = "8484623ba64a3ee97cc2244533e7676abe865821" }
 
 # explicit : seuls torch et torchvision sont cherchés sur ces index, jamais
 # les autres paquets (contrairement à --extra-index-url).
