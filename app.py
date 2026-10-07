@@ -8,7 +8,6 @@ import os
 # explicite de l'environnement.
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 
-import csv
 import hmac
 import json
 import logging
@@ -16,13 +15,14 @@ import queue
 import secrets
 import signal
 import statistics
+import subprocess
 import sys
 import threading
 import time
 import uuid
 from collections import defaultdict, deque
-from dataclasses import dataclass
 from datetime import datetime, timedelta
+from multiprocessing.connection import Listener
 
 import cv2
 import numpy as np
@@ -40,6 +40,8 @@ from flask import (
 from werkzeug.security import check_password_hash
 
 import config
+from core import camera_worker as worker_module
+from core import capture
 from core.cameras import parse_cameras
 from core.db_writer import DbWriter
 from core.endurance import EnduranceLog
@@ -47,12 +49,12 @@ from core.event_log import EventLog, ForwardClock, TrackEvents
 from core.events import EventBus, StageTimer, UnknownWatcher
 from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
+from core.frame_pipeline import FramePipeline, FrameResult, build_pose_estimator
 from core.history import history_names, presence_history
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
 from core.presence_log import FaceConfirmedNames, PresenceLog
 from core.system_probe import Nvml, WindowsCounters, process_stats, system_stats
-from core.video_source import FileSource
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,15 +84,15 @@ face_recognizer = FaceRecognizer(
     threshold=config.RECOGNITION_THRESHOLD,
     cache_path=config.EMBEDDINGS_CACHE_PATH,
 )
-tracker = FaceBodyTracker(face_recognizer)
-if config.POSE_SOURCE == "yolo":
-    pose_estimator = KeypointPoseEstimator()
-elif config.POSE_SOURCE == "mediapipe":
-    pose_estimator = PoseEstimator()
-else:
+if config.CAMERA_WORKERS not in ("thread", "process"):
     raise ValueError(
-        f"POSE_SOURCE invalide : {config.POSE_SOURCE!r} — attendu 'mediapipe' ou 'yolo'."
+        f"CAMERA_WORKERS invalide : {config.CAMERA_WORKERS!r} — attendu 'thread' ou 'process'."
     )
+# En mode process, les trackers (YOLO, embedder) vivent dans les processus de
+# caméras : l'application n'en charge aucun.
+WORKER_PROCESSES = config.CAMERA_WORKERS == "process"
+tracker = None if WORKER_PROCESSES else FaceBodyTracker(face_recognizer)
+pose_estimator = build_pose_estimator()
 logger.info("Source d'orientation : %s", config.POSE_SOURCE)
 
 logger.info("Visages connus : %s", list(face_recognizer.known_names))
@@ -121,6 +123,9 @@ class CameraState:
         # pas du JPEG annoté envoyé au navigateur.
         self.bench_frame = None
         self.bench_persons: list = []
+        # (largeur, hauteur) de la dernière image : connue même quand l'image
+        # brute reste dans un processus de caméras.
+        self.frame_size = None
 
 
 class AppState(CameraState):
@@ -184,6 +189,11 @@ class Camera:
         self.unknown_watcher = UnknownWatcher(config.UNKNOWN_ALERT_S)
         # FramePipeline de la caméra, créé par son thread de traitement.
         self.pipeline = None
+        # En mode process : images reçues du worker, tailles de ses structures
+        # internes (journal d'endurance), état du flux annoncé au worker.
+        self.results_count = 0
+        self.worker_sizes: dict = {}
+        self.stream_announced = False
 
     @property
     def is_file(self) -> bool:
@@ -204,7 +214,8 @@ for _index, _spec in enumerate(parse_cameras(config.CAMERAS, config.CAMERA_ID)):
     if _index == 0:
         cameras.append(Camera(_spec, state, tracker, _frame_queue, track_events))
     else:
-        cameras.append(Camera(_spec, CameraState(), FaceBodyTracker(face_recognizer),
+        cameras.append(Camera(_spec, CameraState(),
+                              None if WORKER_PROCESSES else FaceBodyTracker(face_recognizer),
                               queue.Queue(maxsize=2)))
 cameras_by_id = {camera.id: camera for camera in cameras}
 face_confirmed = cameras[0].face_confirmed
@@ -216,342 +227,18 @@ if len(cameras) > 1:
 # ══════════════════════════════════════════
 # HELPERS PIPELINE
 # ══════════════════════════════════════════
-def _estimate_pose_safe(frame, person):
-    """
-    Calcule l'orientation d'une personne, avec log explicite en cas d'échec.
-
-    Deux sources selon config.POSE_SOURCE : les keypoints YOLO déjà produits
-    sur GPU, ou une inférence Mediapipe sur le crop du corps.
-    """
-    try:
-        if config.POSE_SOURCE == "yolo":
-            return pose_estimator.estimate(person.pose_kps)
-
-        x1, y1, x2, y2 = person.body_bbox
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            return None
-        return pose_estimator.estimate(crop)
-    except Exception as e:
-        logger.warning("Échec pose sur track #%s : %s: %s",
-                       person.track_id, type(e).__name__, e)
-        return None
-
-
-def _draw_person(display_frame, person, pose, frame_count):
-    """
-    Dessine bbox + label + pose pour une TrackedPerson.
-
-    Modes d'affichage selon l'état d'identification :
-      - Vert  (0, 245, 160) : visage reconnu récemment (< FACE_FRESHNESS_FRAMES)
-      - Orange(0, 165, 255) : identité connue mais visage perdu — tracking par corps
-      - Bleu  (100, 100, 255): personne inconnue
-    """
-    x1, y1, x2, y2 = person.body_bbox
-
-    frames_since_face = frame_count - person.last_face_frame
-
-    if person.name == 'Inconnu':
-        color = (100, 100, 255)
-        mode_tag = None
-    elif frames_since_face <= config.FACE_FRESHNESS_FRAMES:
-        color = (0, 245, 160)
-        mode_tag = None
-    else:
-        color = (0, 165, 255)
-        mode_tag = "BODY"
-
-    cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-
-    label = f"{person.name} #{person.track_id}"
-    if person.confidence > 0:
-        label += f" ({person.confidence * 100:.0f}%)"
-    if mode_tag:
-        label += f" [{mode_tag}]"
-
-    label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-    cv2.rectangle(display_frame, (x1, y1 - 30), (x1 + label_size[0] + 10, y1), color, -1)
-    cv2.putText(display_frame, label, (x1 + 5, y1 - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-
-    if pose:
-        cv2.putText(display_frame, f"Pose: {pose}",
-                    (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-
-
-def _open_camera(camera=None):
-    """
-    Ouvre la caméra avec un timeout court pour ne pas bloquer le thread.
-    Retourne un objet VideoCapture ouvert, ou None si l'ouverture échoue.
-    Une source fichier (VIDEO_FILE, ou un chemin dans CAMERAS) remplace la caméra,
-    avec la même interface.
-    """
-    camera = camera or cameras[0]
-    if camera.is_file:
-        source = FileSource(camera.source, mode=config.VIDEO_MODE, loop=config.VIDEO_LOOP)
-        if not source.isOpened():
-            logger.error("Vidéo illisible : %s", camera.source)
-            return None
-        logger.info("[%s] Vidéo à la place de la caméra : %s (%s, %.0f i/s%s)", camera.id,
-                    camera.source, config.VIDEO_MODE, source.fps,
-                    ", en boucle" if config.VIDEO_LOOP else "")
-        return source
-
-    cap = cv2.VideoCapture(camera.source)
-
-    # Timeout de connexion et de lecture (ms). Sans ça, VideoCapture sur HTTP
-    # peut bloquer jusqu'à 30s sans aucun log — invisible pour l'utilisateur.
-    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, config.CAM_OPEN_TIMEOUT_MS)
-    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, config.CAM_READ_TIMEOUT_MS)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.DISPLAY_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.DISPLAY_HEIGHT)
-
-    if not cap.isOpened():
-        cap.release()
-        return None
-    logger.info("[%s] Caméra ouverte : %dx%d", camera.id, int(cap.get(3)), int(cap.get(4)))
-    return cap
-
-
-def _reconnect_camera(cap, camera=None):
-    """
-    Tente de rouvrir la caméra avec exponential backoff (1s → 30s max).
-    Bloque jusqu'à la reconnexion ou l'arrêt de l'application.
-    Retourne un nouveau VideoCapture ouvert, ou None si state.running devient False.
-    """
-    if cap is not None:
-        cap.release()
-
-    delay = 1.0
-    attempt = 0
-    while state.running:
-        attempt += 1
-        logger.warning("Reconnexion tentative #%d dans %.0fs...", attempt, delay)
-        time.sleep(delay)
-
-        new_cap = _open_camera(camera)
-        if new_cap is not None:
-            logger.info("Reconnexion réussie après %d tentative(s)", attempt)
-            return new_cap
-
-        delay = min(delay * 2, 30.0)
-
-    return None
-
-
 # ══════════════════════════════════════════
 # THREAD A — LECTURE CAMÉRA
 # ══════════════════════════════════════════
 def camera_loop(camera=None):
-    """
-    Lit les frames depuis la caméra et les pousse dans _frame_queue, avec
-    leur heure de réception (perf_counter) pour mesurer la latence.
-    Entièrement découplé du pipeline AI : cap.read() ne bloque jamais
-    le calcul YOLO/InsightFace. La queue conserve toujours la frame
-    la plus récente (drop oldest si pleine).
-    """
+    """Lit les images d'une caméra dans sa file (core/capture.py)."""
     camera = camera or cameras[0]
-    camera_state, frame_queue = camera.state, camera.queue
-    logger.info("[%s] Thread caméra démarré.", camera.id)
-    cap = _open_camera(camera)
-    if cap is None and camera.is_file:
-        return   # un fichier illisible ne se répare pas en réessayant
-    if cap is None:
-        logger.error("[%s] Impossible d'ouvrir la caméra au démarrage : %s",
-                     camera.id, camera.source)
-        cap = _reconnect_camera(None, camera)
-        if cap is None:
-            return
-
-    consecutive_failures = 0
-
-    while state.running:
-        ret, frame = cap.read()
-        if not ret and isinstance(cap, FileSource):
-            logger.info("[%s] Fin de la vidéo : %s", camera.id, camera.source)
-            break
-        if not ret:
-            consecutive_failures += 1
-            if consecutive_failures == 1:
-                logger.warning("Frame perdue...")
-            elif consecutive_failures >= config.CAM_MAX_FAILURES:
-                logger.error("%d échecs consécutifs — déconnexion détectée.", consecutive_failures)
-                cap = _reconnect_camera(cap, camera)
-                if cap is None:
-                    break
-                consecutive_failures = 0
-            else:
-                time.sleep(0.05)
-            continue
-
-        consecutive_failures = 0
-        item = (time.perf_counter(), frame)
-        if isinstance(cap, FileSource):
-            camera_state.source_skipped = cap.skipped
-
-        # every_frame : aucune image perdue, la lecture attend le pipeline.
-        if isinstance(cap, FileSource) and cap.mode == "every_frame":
-            _put_waiting(frame_queue, item)
-            continue
-
-        # Toujours garder la frame la plus fraîche : drop oldest si queue pleine.
-        try:
-            frame_queue.put_nowait(item)
-        except queue.Full:
-            camera_state.frames_dropped += 1
-            try:
-                frame_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                frame_queue.put_nowait(item)
-            except queue.Full:
-                pass
-
-    cap.release()
-    logger.info("[%s] Thread caméra arrêté.", camera.id)
-
-
-def _put_waiting(frame_queue, item) -> None:
-    """Met l'image en file en attendant qu'une place se libère (mode every_frame)."""
-    while state.running:
-        try:
-            frame_queue.put(item, timeout=0.5)
-            return
-        except queue.Full:
-            continue
+    capture.capture_loop(camera, camera.queue, lambda: state.running, camera.state)
 
 
 # ══════════════════════════════════════════
 # THREAD B — PIPELINE AI
 # ══════════════════════════════════════════
-@dataclass
-class FrameResult:
-    """Ce que le pipeline d'une caméra produit pour une image.
-
-    Frontière entre le traitement d'image (tracker, pose, dessin) et ce qui en
-    découle pour toute l'application (historique, journal d'événements,
-    alertes, flux web) : la première partie pourra tourner dans un autre
-    processus que la seconde.
-    """
-    frame: np.ndarray            # image brute, pour /api/capture et /bench/pose
-    display_frame: np.ndarray    # image envoyée au flux MJPEG
-    persons: list                # TrackedPerson visibles sur cette image
-    present_list: list           # présents, PRESENCE_TIMEOUT compris
-    fps: float
-    received: float              # réception par le thread caméra (perf_counter)
-    frame_start: float           # début du traitement (perf_counter)
-
-
-class FramePipeline:
-    """Traitement des images d'une caméra : tracker, pose, présents, FPS, dessin.
-
-    Ne touche à aucun état partagé de l'application : les durées des étapes
-    passent par `record`, le reste sort dans le FrameResult.
-    """
-
-    def __init__(self, camera_id, camera_tracker, record, tracks_path=""):
-        self.camera_id = camera_id
-        self.tracker = camera_tracker
-        self.record = record
-        self.frame_count = 0
-        self.fps = 0.0
-        # Horloge monotone : sous WSL2, l'horloge murale recule de ~0,8 s toutes
-        # les 30 s environ, ce qui faisait bondir le FPS affiché.
-        self._fps_time = time.monotonic()
-        self._fps_counter = 0
-        self.persons = []
-        self._pose_cache = {}
-        # PRESENCE_TIMEOUT : { track_id: (person_dict, last_seen_timestamp) }
-        self.last_seen: dict = {}
-        # Écrit ligne par ligne (buffering=1) : un arrêt par SIGTERM ne perd rien.
-        self._tracks_log = (open(tracks_path, "w", newline="", buffering=1)
-                            if tracks_path else None)
-        self._tracks_writer = csv.writer(self._tracks_log) if self._tracks_log else None
-
-    def process(self, received, frame) -> FrameResult:
-        self.frame_count += 1
-        self._fps_counter += 1
-        frame_start = time.perf_counter()
-        # Sans annotations, la frame brute part telle quelle dans le flux : ni
-        # copie ni dessin (l'interface web dessine ses boîtes elle-même).
-        display_frame = frame.copy() if config.MJPEG_ANNOTATE else frame
-
-        # ── Pipeline Body-First (YOLO + DeepSORT + InsightFace) ──────────────
-        try:
-            self.persons = self.tracker.update(frame, self.frame_count)
-            for stage, seconds in self.tracker.last_timings.items():
-                self.record(stage, seconds)
-            if self._tracks_writer:
-                _log_tracks(self._tracks_writer, self.frame_count, self.persons)
-        except Exception as e:
-            logger.error("[%s] Erreur traitement : %s: %s", self.camera_id, type(e).__name__, e)
-
-        # ── Pose estimation (toutes les FRAME_SKIP frames, sur le crop corps) ─
-        if self.frame_count % config.FRAME_SKIP == 0:
-            pose_start = time.perf_counter()
-            self._pose_cache = {
-                p.track_id: _estimate_pose_safe(frame, p)
-                for p in self.persons
-            }
-            self.record('pose', time.perf_counter() - pose_start)
-
-        # ── Dessin + construction de la liste de présence ────────────────────
-        # Chaque bloc de la suite est chronométré : un blocage hors des étapes
-        # mesurées (jusqu'à 14 s en endurance) se lit ainsi dans le journal.
-        block_start = time.perf_counter()
-        now = time.time()
-        present_list = []
-        present_ids = set()
-
-        for person in self.persons:
-            pose = self._pose_cache.get(person.track_id)
-            if config.MJPEG_ANNOTATE:
-                _draw_person(display_frame, person, pose, self.frame_count)
-            entry = {
-                'name': person.name,
-                'track_id': person.track_id,
-                'confidence': person.confidence,
-                'pose': pose,
-                'last_face_frame': person.last_face_frame,
-            }
-            present_list.append(entry)
-            present_ids.add(person.track_id)
-            self.last_seen[person.track_id] = (entry, now)
-
-        # ── PRESENCE_TIMEOUT : réinjecter les personnes récemment vues ───────
-        for tid, (person_entry, last_time) in list(self.last_seen.items()):
-            if tid not in present_ids:
-                if now - last_time <= config.PRESENCE_TIMEOUT:
-                    present_list.append(person_entry)
-                else:
-                    del self.last_seen[tid]
-
-        self.record('present_list', time.perf_counter() - block_start)
-
-        # ── FPS ──────────────────────────────────────────────────────────────
-        elapsed = time.monotonic() - self._fps_time
-        if elapsed >= 1.0:
-            self.fps = self._fps_counter / elapsed
-            self._fps_counter = 0
-            self._fps_time = time.monotonic()
-
-        if config.MJPEG_ANNOTATE:
-            cv2.putText(display_frame, f"FPS: {self.fps:.1f}",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 212, 255), 2)
-            cv2.putText(display_frame, f"Personnes: {len(present_list)}",
-                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 245, 160), 2)
-
-        return FrameResult(frame=frame, display_frame=display_frame, persons=self.persons,
-                           present_list=present_list, fps=self.fps, received=received,
-                           frame_start=frame_start)
-
-    def close(self):
-        self.tracker.release()
-        if self._tracks_log:
-            self._tracks_log.close()
-
-
 def _apply_frame_result(camera, result: FrameResult) -> None:
     """Répercute une image traitée sur l'application : historique, journal
     d'événements, alertes, flux MJPEG et état de la caméra.
@@ -594,8 +281,11 @@ def _apply_frame_result(camera, result: FrameResult) -> None:
     timings.record('alerts', time.perf_counter() - block_start)
 
     # ── Mise à jour de l'état global ─────────────────────────────────────────
-    with timings.measure('encode'):
-        _publish_display_frame(result.display_frame, camera_state)
+    if result.jpeg is not None:
+        _publish_jpeg(result.jpeg, camera_state)
+    elif result.display_frame is not None:
+        with timings.measure('encode'):
+            _publish_display_frame(result.display_frame, camera_state)
     timings.record('frame', time.perf_counter() - result.frame_start)
     # Réception par le thread caméra → image et noms publiés pour les pages :
     # attente en file comprise. En every_frame, l'attente est voulue.
@@ -605,6 +295,7 @@ def _apply_frame_result(camera, result: FrameResult) -> None:
         camera_state.fps = result.fps
         camera_state.bench_frame = result.frame
         camera_state.bench_persons = persons
+        camera_state.frame_size = result.frame_size
 
 
 def processing_loop(camera=None):
@@ -617,7 +308,7 @@ def processing_loop(camera=None):
     logger.info("[%s] Thread de traitement démarré.", camera.id)
 
     pipeline = FramePipeline(
-        camera.id, camera.tracker, timings.record,
+        camera.id, camera.tracker, timings.record, pose_estimator,
         _per_camera_path(config.TRACKS_LOG_PATH, camera) if config.TRACKS_LOG_PATH else "")
     camera.pipeline = pipeline
     endurance = probes = None
@@ -647,6 +338,135 @@ def processing_loop(camera=None):
         endurance.close()
         probes.windows.stop()
     logger.info("[%s] Thread de traitement arrêté.", camera.id)
+
+
+# ══════════════════════════════════════════
+# PROCESSUS DE CAMÉRAS (CAMERA_WORKERS=process)
+# ══════════════════════════════════════════
+class WorkerProcess:
+    """Un processus de caméras (core/camera_worker.py), vu de l'application."""
+
+    CONNECT_TIMEOUT_S = 60
+    STOP_TIMEOUT_S = 15
+
+    def __init__(self, worker_cameras):
+        self.cameras = worker_cameras
+        self.name = "+".join(c.id for c in worker_cameras)
+        self.proc = None
+        self.results = None
+        self.commands = None
+        self._commands_lock = threading.Lock()
+
+    def start(self) -> None:
+        """Lance le processus et attend ses deux connexions (résultats, commandes)."""
+        key = secrets.token_bytes(32)
+        listener = Listener(family='AF_UNIX', authkey=key)
+        env = {**os.environ, worker_module.ADDRESS_ENV: listener.address,
+               worker_module.KEY_ENV: key.hex()}
+        specs = worker_module.encode_specs([
+            worker_module.WorkerCamera(
+                c.id, c.source, c.is_file,
+                _per_camera_path(config.TRACKS_LOG_PATH, c) if config.TRACKS_LOG_PATH else "")
+            for c in self.cameras])
+        self.proc = subprocess.Popen([sys.executable, "-m", "core.camera_worker", specs],
+                                     cwd=os.path.dirname(os.path.abspath(__file__)), env=env)
+        connections = []
+        # Listener.accept n'a pas de délai : il attend dans un thread, pour ne
+        # pas rester bloqué si le processus meurt avant de se connecter.
+        accepting = threading.Thread(
+            target=lambda: connections.extend(listener.accept() for _ in range(2)), daemon=True)
+        accepting.start()
+        accepting.join(self.CONNECT_TIMEOUT_S)
+        listener.close()
+        if len(connections) != 2:
+            self.proc.kill()
+            raise RuntimeError(f"Processus de caméras {self.name} : pas de connexion "
+                               f"(code {self.proc.poll()})")
+        self.results, self.commands = connections
+        logger.info("Processus de caméras %s démarré (PID %d)", self.name, self.proc.pid)
+
+    def send(self, command) -> None:
+        try:
+            with self._commands_lock:
+                self.commands.send(command)
+        except (OSError, EOFError):
+            pass   # processus déjà arrêté : son thread consommateur le signale
+
+    def stop(self) -> None:
+        self.send(("stop",))
+        try:
+            self.proc.wait(self.STOP_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            logger.warning("Processus de caméras %s : arrêt forcé", self.name)
+            self.proc.kill()
+            self.proc.wait()
+        self.results.close()
+        self.commands.close()
+
+
+def _apply_worker_result(camera, result) -> None:
+    """Résultat venu d'un processus de caméras : mesures, puis effets sur l'application."""
+    stats = result.stats or {}
+    for stage, seconds in stats.get('timings', ()):
+        timings.record(stage, seconds)
+    camera.state.frames_dropped = stats.get('frames_dropped', 0)
+    camera.state.source_skipped = stats.get('source_skipped', 0)
+    camera.worker_sizes = stats.get('sizes', {})
+    camera.results_count += 1
+    _apply_frame_result(camera, result)
+
+
+def worker_consumer_loop(worker: WorkerProcess) -> None:
+    """Reçoit les résultats d'un processus de caméras et les applique.
+
+    Relaie aussi au worker si le flux de chacune de ses caméras est regardé :
+    sans page ouverte, il n'encode pas de JPEG.
+    """
+    endurance = probes = None
+    first = cameras[0]
+    if config.ENDURANCE_LOG_PATH and first in worker.cameras:
+        probes = _EnduranceProbes(config.ENDURANCE_INTERVAL_S)
+        endurance = EnduranceLog(config.ENDURANCE_LOG_PATH, config.ENDURANCE_INTERVAL_S,
+                                 lambda: _endurance_probe(first.results_count, first.state.fps,
+                                                          first.state.bench_persons, probes))
+    while state.running:
+        try:
+            if not worker.results.poll(1.0):
+                if worker.proc.poll() is not None:
+                    logger.error("Processus de caméras %s arrêté (code %s)",
+                                 worker.name, worker.proc.returncode)
+                    break
+                continue
+            result = worker.results.recv()
+        except (OSError, EOFError):
+            if state.running:
+                logger.error("Processus de caméras %s injoignable", worker.name)
+            break
+        camera = cameras_by_id.get(result.camera_id)
+        if camera is None:
+            continue
+        _apply_worker_result(camera, result)
+        wanted = camera.state.stream_clients > 0
+        if wanted != camera.stream_announced:
+            worker.send(("stream", camera.id, wanted))
+            camera.stream_announced = wanted
+        if endurance and camera is first:
+            try:
+                endurance.maybe_write()
+            except Exception as e:
+                logger.warning("Journal d'endurance indisponible : %s: %s", type(e).__name__, e)
+    if endurance:
+        endurance.close()
+        probes.windows.stop()
+
+
+def start_worker_processes() -> list[WorkerProcess]:
+    """Un processus par groupe de CAMERAS_PER_WORKER caméras, lancés l'un après l'autre."""
+    size = max(1, config.CAMERAS_PER_WORKER)
+    workers = [WorkerProcess(cameras[i:i + size]) for i in range(0, len(cameras), size)]
+    for worker in workers:
+        worker.start()
+    return workers
 
 
 def _per_camera_path(path: str, camera) -> str:
@@ -704,11 +524,14 @@ def _endurance_probe(frame_count, fps, persons, probes) -> dict:
         row['presence_db_kb'] = round(os.path.getsize(config.PRESENCE_DB_PATH) / 1024)
     sizes: dict = {}
     for c in cameras:
-        for k, v in c.tracker.state_sizes().items():
+        camera_sizes = (c.tracker.state_sizes() if c.tracker
+                        else {k: v for k, v in c.worker_sizes.items() if k != 'last_seen'})
+        for k, v in camera_sizes.items():
             sizes[k] = sizes.get(k, 0) + v
     row.update({f'size_{k}': v for k, v in sizes.items()})
     row.update({
-        'size_last_seen': sum(len(c.pipeline.last_seen) for c in cameras if c.pipeline),
+        'size_last_seen': sum(len(c.pipeline.last_seen) if c.pipeline
+                              else c.worker_sizes.get('last_seen', 0) for c in cameras),
         'size_unknown_watcher': sum(len(c.unknown_watcher._first_unknown)
                                     + len(c.unknown_watcher._alerted) for c in cameras),
         'size_face_confirmed': sum(len(c.face_confirmed._recognized) for c in cameras),
@@ -721,13 +544,6 @@ def _endurance_probe(frame_count, fps, persons, probes) -> dict:
     row.update(system_stats())
     return row
 
-
-
-def _log_tracks(writer, frame_count, persons) -> None:
-    """Une ligne par piste visible : image,track_id,x,y,largeur,hauteur,nom."""
-    for p in persons:
-        x1, y1, x2, y2 = p.body_bbox
-        writer.writerow([frame_count, p.track_id, x1, y1, x2 - x1, y2 - y1, p.name])
 
 
 # ══════════════════════════════════════════
@@ -749,8 +565,13 @@ def _publish_display_frame(display_frame, camera_state=None):
     _, buffer = cv2.imencode(
         '.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, config.MJPEG_QUALITY]
     )
+    _publish_jpeg(buffer.tobytes(), camera_state)
+
+
+def _publish_jpeg(jpeg: bytes, camera_state) -> None:
+    """Publie un JPEG déjà encodé pour le flux MJPEG et réveille les clients."""
     with camera_state.frame_ready:
-        camera_state.current_frame = buffer.tobytes()
+        camera_state.current_frame = jpeg
         camera_state.frame_seq += 1
         camera_state.frame_ready.notify_all()
 
@@ -1204,6 +1025,13 @@ def status():
     return jsonify(_status_payload(camera))
 
 
+def _frame_size(camera_state):
+    """[largeur, hauteur] de la dernière image de la caméra, ou None (sous son verrou)."""
+    if camera_state.bench_frame is not None:
+        return [camera_state.bench_frame.shape[1], camera_state.bench_frame.shape[0]]
+    return list(camera_state.frame_size) if camera_state.frame_size else None
+
+
 def _status_payload(camera=None):
     camera = camera or cameras[0]
     present = []
@@ -1216,13 +1044,13 @@ def _status_payload(camera=None):
         tracks = [{'track_id': str(p.track_id), 'name': p.name,
                    'bbox': [int(v) for v in p.body_bbox], 'pose': poses.get(p.track_id)}
                   for p in camera_state.bench_persons]
-        frame = camera_state.bench_frame
+        frame_size = _frame_size(camera_state)
         return {
             'currently_present': present,
             'fps': camera_state.fps,
             'total_known': state.total_known,
             'tracks': tracks,
-            'frame_size': [frame.shape[1], frame.shape[0]] if frame is not None else None,
+            'frame_size': frame_size,
             'camera': camera.id,
             'cameras': [c.id for c in cameras],
         }
@@ -1296,7 +1124,7 @@ def api_diagnostics():
         return _unknown_camera()
     with camera.state.lock:
         fps = camera.state.fps
-        frame = camera.state.bench_frame
+        frame_size = _frame_size(camera.state)
     video_clients = sum(c.state.stream_clients for c in cameras)
     return jsonify({
         'auth_enabled': auth_enabled(),
@@ -1325,7 +1153,7 @@ def api_diagnostics():
         'camera': {
             'id': camera.id,
             'source': _source_label(camera),
-            'frame_size': [frame.shape[1], frame.shape[0]] if frame is not None else None,
+            'frame_size': frame_size,
         },
         'cameras': [{'id': c.id, 'source': _source_label(c), 'fps': c.state.fps}
                     for c in cameras],
@@ -1467,13 +1295,21 @@ def api_history_csv():
 # LANCEMENT
 # ══════════════════════════════════════════
 if __name__ == '__main__':
-    # Deux threads par caméra : lecture, et traitement (roadmap 2.2).
     threads = []
-    for camera in cameras:
-        threads += [threading.Thread(target=camera_loop, args=(camera,), daemon=True,
-                                     name=f"camera-{camera.id}"),
-                    threading.Thread(target=processing_loop, args=(camera,), daemon=True,
-                                     name=f"processing-{camera.id}")]
+    workers = []
+    if WORKER_PROCESSES:
+        # Processus de caméras, chacun avec son GIL ; un thread par processus
+        # en reçoit les résultats (roadmap 2.2).
+        workers = start_worker_processes()
+        threads = [threading.Thread(target=worker_consumer_loop, args=(worker,), daemon=True,
+                                    name=f"worker-{worker.name}") for worker in workers]
+    else:
+        # Deux threads par caméra : lecture, et traitement (roadmap 2.2).
+        for camera in cameras:
+            threads += [threading.Thread(target=camera_loop, args=(camera,), daemon=True,
+                                         name=f"camera-{camera.id}"),
+                        threading.Thread(target=processing_loop, args=(camera,), daemon=True,
+                                         name=f"processing-{camera.id}")]
     for thread in threads:
         thread.start()
     _persist_secret_key()
@@ -1495,6 +1331,8 @@ if __name__ == '__main__':
               threads=config.SERVER_THREADS, ident="VisionCam")
     finally:
         state.running = False
+        for worker in workers:
+            worker.stop()
         # Attendre la fin des threads : quitter pendant une inférence GPU
         # interrompait le processus (« terminate called without an active
         # exception »), et une frame traitée après close_all rouvrirait une session.

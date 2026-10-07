@@ -57,6 +57,7 @@ _mock_pose_module.PoseEstimator = MagicMock(return_value=MagicMock())
 sys.modules['core.pose_estimation'] = _mock_pose_module
 
 import app as visioncam  # noqa: E402
+from core import capture, frame_pipeline  # noqa: E402
 
 
 @pytest.fixture
@@ -837,7 +838,7 @@ class TestFileSourceInCameraLoop:
     def test_end_of_video_stops_without_reconnecting(self, file_source, monkeypatch):
         file_source("realtime")
         reconnect = []
-        monkeypatch.setattr(visioncam, "_reconnect_camera", lambda cap: reconnect.append(cap))
+        monkeypatch.setattr(capture, "reconnect", lambda cap, *_: reconnect.append(cap))
 
         thread = start_camera_loop()
         thread.join(timeout=5)
@@ -848,7 +849,7 @@ class TestFileSourceInCameraLoop:
     def test_unreadable_video_is_not_retried(self, file_source, monkeypatch, tmp_path):
         file_source("every_frame", path=str(tmp_path / "absent.mp4"))
         reconnect = []
-        monkeypatch.setattr(visioncam, "_reconnect_camera", lambda cap: reconnect.append(cap))
+        monkeypatch.setattr(capture, "reconnect", lambda cap, *_: reconnect.append(cap))
 
         thread = start_camera_loop()
         thread.join(timeout=5)
@@ -862,7 +863,7 @@ def test_tracks_log_has_one_row_per_visible_track(tmp_path):
                SimpleNamespace(track_id=7, body_bbox=[200, 30, 260, 150], name="Inconnu")]
     path = tmp_path / "tracks.csv"
     with open(path, "w", newline="") as f:
-        visioncam._log_tracks(csv.writer(f), 12, persons)
+        frame_pipeline.log_tracks(csv.writer(f), 12, persons)
 
     with open(path, newline="") as f:
         rows = list(csv.reader(f))
@@ -980,7 +981,8 @@ class TestFramePipeline:
         tracker = MagicMock()
         tracker.update.side_effect = list(batches)
         tracker.last_timings = {'detection': 0.01}
-        return visioncam.FramePipeline("cam0", tracker, record or (lambda *_: None)), tracker
+        return (visioncam.FramePipeline("cam0", tracker, record or (lambda *_: None),
+                                        MagicMock()), tracker)
 
     def frame(self):
         return np.zeros((8, 8, 3), dtype=np.uint8)
@@ -1045,3 +1047,29 @@ def test_a_frame_result_updates_the_camera_state():
         assert visioncam.state.fps == 12.5
         assert visioncam.state.bench_frame is frame
         assert [p.track_id for p in visioncam.state.bench_persons] == ['1']
+
+
+def test_a_worker_result_feeds_timings_counters_and_stream():
+    now = time.perf_counter()
+    result = visioncam.FrameResult(
+        frame=None, display_frame=None, persons=[], present_list=[], fps=30.0,
+        received=now, frame_start=now, frame_size=(1280, 720), jpeg=b'\xff\xd8jpeg',
+        stats={'timings': [('detection', 0.01)], 'frames_dropped': 3, 'source_skipped': 1,
+               'sizes': {'vote_buffer': 2, 'last_seen': 4}},
+        camera_id='cam0')
+    camera = visioncam.cameras[0]
+    recorded = []
+    timings = MagicMock(record=lambda stage, seconds: recorded.append(stage))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(visioncam, 'timings', timings)
+        mp.setattr(camera, 'worker_sizes', {})
+        visioncam._apply_worker_result(camera, result)
+        assert camera.worker_sizes == {'vote_buffer': 2, 'last_seen': 4}
+
+    assert 'detection' in recorded
+    with visioncam.state.lock:
+        assert visioncam.state.current_frame == b'\xff\xd8jpeg'
+        assert visioncam.state.frames_dropped == 3
+        assert visioncam.state.frame_size == (1280, 720)
+    assert visioncam._frame_size(visioncam.state) == [1280, 720]

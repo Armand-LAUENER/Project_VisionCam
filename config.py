@@ -43,6 +43,13 @@ CAMERA_ID = os.getenv("CAMERA_ID", "cam0")
 # source = numéro de webcam, URL (http, rtsp) ou chemin de vidéo / séquence
 # MOT17. Vide : une seule caméra, CAMERA_ID, avec VIDEO_FILE ou CAMERA_SOURCE.
 CAMERAS = os.getenv("CAMERAS", "")
+# Où tourne le traitement des caméras : "thread" (un thread par caméra, dans
+# l'application) ou "process" (des processus de caméras, CAMERAS_PER_WORKER
+# caméras chacun). Les threads d'un processus partagent un GIL, qui plafonne
+# vers 72 i/s au total ; deux processus de deux caméras en tiennent 120
+# (docs/performance.md). Chaque processus coûte ~2,4 Go de RAM et ~230 Mo de VRAM.
+CAMERA_WORKERS = os.getenv("CAMERA_WORKERS", "thread").strip().lower()
+CAMERAS_PER_WORKER = int(os.getenv("CAMERAS_PER_WORKER", "2"))
 # Au plus un événement « visage reconnu » par piste et par intervalle (s), en
 # plus du dernier avant expiration de PRESENCE_FACE_MAX_AGE_S : ~60 lignes par
 # heure et par personne nommée, et des sessions reconstruites exactes.
