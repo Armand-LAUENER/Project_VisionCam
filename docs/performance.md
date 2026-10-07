@@ -339,3 +339,24 @@ mesurées, toutes caméras confondues. CPU du processus : en % d'un cœur.
   GIL entre les threads de traitement. Cette mesure ne les départage pas.
 - **Chaque caméra coûte ~240 Mo de VRAM** : chaque `FaceBodyTracker` charge
   son propre moteur YOLO et son embedder d'apparence.
+
+### GPU ou GIL : 4 caméras en 2 processus
+
+Mêmes 4 vidéos, même protocole, mais réparties sur deux instances de
+l'application (2 caméras chacune, un GIL chacune) qui partagent le GPU :
+
+| | 1 processus, 4 caméras | 2 processus × 2 caméras |
+|:--|---:|---:|
+| i/s par caméra | 14,8–19,4 | 29,9–30,0 |
+| i/s au total | 71,4 | **119,9** |
+| Image p50 / p95 | 50,2 / 111,3 ms | 13,5–16,3 / 35 ms |
+| Latence p50 / p95 | 97,8 / 163,1 ms | 13,9–16,9 / 38–39 ms |
+| Détection p50 | 35,0 ms | 7,9–10,8 ms |
+| Images jetées | 11 860 | 2 |
+| Utilisation GPU de WSL (Windows) | 98 % | 83 % |
+| VRAM de WSL (`wsl_vram_mb`) | 1 251 Mo | 1 483 Mo (les deux) |
+
+Le GPU suit les 4 caméras à pleine cadence dès qu'elles ne partagent plus un
+GIL : **le plafond d'un processus vient du GIL**, pas du GPU. Les étapes
+« GPU » ralentissaient parce que leur partie Python (préparation, lecture des
+sorties) attendait le GIL. Le second contexte CUDA coûte ~230 Mo de VRAM.
