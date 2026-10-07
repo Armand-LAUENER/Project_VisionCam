@@ -958,3 +958,90 @@ class TestSeveralCameras:
 
 def test_single_camera_keeps_its_tracks_log_path():
     assert visioncam._per_camera_path("data/tracks.csv", visioncam.cameras[0]) == "data/tracks.csv"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline d'une caméra : image → FrameResult → état de l'application
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _tracked(track_id='1', name='Alice'):
+    return SimpleNamespace(track_id=track_id, name=name, confidence=0.9, last_face_frame=1,
+                           body_bbox=(0, 0, 4, 4), pose_kps=None)
+
+
+class TestFramePipeline:
+    @pytest.fixture(autouse=True)
+    def no_drawing_no_pose(self, monkeypatch):
+        monkeypatch.setattr(visioncam.config, "MJPEG_ANNOTATE", False)
+        monkeypatch.setattr(visioncam.config, "FRAME_SKIP", 1000)
+
+    @staticmethod
+    def make_pipeline(*batches, record=None):
+        tracker = MagicMock()
+        tracker.update.side_effect = list(batches)
+        tracker.last_timings = {'detection': 0.01}
+        return visioncam.FramePipeline("cam0", tracker, record or (lambda *_: None)), tracker
+
+    def frame(self):
+        return np.zeros((8, 8, 3), dtype=np.uint8)
+
+    def test_a_person_just_lost_stays_present_until_the_timeout(self, monkeypatch):
+        monkeypatch.setattr(visioncam.config, "PRESENCE_TIMEOUT", 60)
+        pipeline, _ = self.make_pipeline([_tracked()], [])
+
+        pipeline.process(time.perf_counter(), self.frame())
+        result = pipeline.process(time.perf_counter(), self.frame())
+
+        assert result.persons == []
+        assert [p['track_id'] for p in result.present_list] == ['1']
+
+    def test_a_person_lost_for_longer_than_the_timeout_is_gone(self, monkeypatch):
+        monkeypatch.setattr(visioncam.config, "PRESENCE_TIMEOUT", -1)
+        pipeline, _ = self.make_pipeline([_tracked()], [])
+
+        pipeline.process(time.perf_counter(), self.frame())
+        result = pipeline.process(time.perf_counter(), self.frame())
+
+        assert result.present_list == []
+        assert pipeline.last_seen == {}
+
+    def test_tracker_and_block_durations_go_through_record(self):
+        recorded = []
+        pipeline, _ = self.make_pipeline([_tracked()], record=lambda s, v: recorded.append(s))
+
+        pipeline.process(time.perf_counter(), self.frame())
+
+        assert recorded == ['detection', 'present_list']
+
+    def test_a_tracker_error_keeps_the_previous_persons(self):
+        pipeline, _ = self.make_pipeline([_tracked()], RuntimeError("GPU"))
+
+        pipeline.process(time.perf_counter(), self.frame())
+        result = pipeline.process(time.perf_counter(), self.frame())
+
+        assert [p.track_id for p in result.persons] == ['1']
+
+    def test_close_releases_the_tracker(self):
+        pipeline, tracker = self.make_pipeline()
+
+        pipeline.close()
+
+        tracker.release.assert_called_once()
+
+
+def test_a_frame_result_updates_the_camera_state():
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    present = [{'name': 'Inconnu', 'track_id': '1', 'confidence': 0.0, 'pose': None,
+                'last_face_frame': -1}]
+    now = time.perf_counter()
+    result = visioncam.FrameResult(frame=frame, display_frame=frame,
+                                   persons=[_tracked(name='Inconnu')], present_list=present,
+                                   fps=12.5, received=now, frame_start=now)
+
+    visioncam._apply_frame_result(visioncam.cameras[0], result)
+
+    with visioncam.state.lock:
+        assert visioncam.state.currently_present == present
+        assert visioncam.state.fps == 12.5
+        assert visioncam.state.bench_frame is frame
+        assert [p.track_id for p in visioncam.state.bench_persons] == ['1']
