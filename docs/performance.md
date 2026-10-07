@@ -360,3 +360,37 @@ Le GPU suit les 4 caméras à pleine cadence dès qu'elles ne partagent plus un
 GIL : **le plafond d'un processus vient du GIL**, pas du GPU. Les étapes
 « GPU » ralentissaient parce que leur partie Python (préparation, lecture des
 sorties) attendait le GIL. Le second contexte CUDA coûte ~230 Mo de VRAM.
+
+### Tracker Rust à 4 caméras
+
+Même protocole, un seul processus, `TRACKER_BACKEND=rust` (deepsort-rs) au
+lieu du tracker Python :
+
+| 4 caméras, 1 processus | Python | Rust |
+|:--|---:|---:|
+| i/s par caméra | 14,8–19,4 | 22,6–24,8 |
+| i/s au total | 71,4 | **96,4** |
+| Tracking p50 | 10,7 ms | 6,4 ms |
+| Latence p50 / p95 | 97,8 / 163,1 ms | 83,6 / 131,4 ms |
+| Images jetées | 11 860 | 5 744 |
+| CPU du processus | 141 % | 214 % |
+
+Moins de temps sous le GIL : +35 % de débit, mais toujours sous les 120 i/s
+de deux processus. Le reste du pipeline Python garde le plafond.
+
+Ce gain dépend du nombre de personnes par image. Sur MOT17-04 (une foule,
+détections publiques, `tools.eval_mot`), les deux backends donnent les mêmes
+pistes (MOTA 73,6 %, IDF1 72,3 %, 102 changements d'identité) mais le Rust
+prend 138–145 ms par image contre 40–42 ms (deux runs, application
+arrêtée). L'association seule, sur des personnes synthétiques (300 images,
+budget 100) :
+
+| Personnes par image | Python | Rust |
+|---:|---:|---:|
+| 3 | 0,69 ms | 0,26 ms |
+| 10 | 2,14 ms | 2,65 ms |
+| 40 | 9,74 ms | 43,12 ms |
+
+Le Rust gagne sur les scènes de CHIRLA (quelques personnes) et perd dès une
+dizaine : son coût croît bien plus vite que celui de deep_sort_realtime,
+dont les distances passent par numpy.
