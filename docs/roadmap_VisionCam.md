@@ -178,9 +178,11 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
   réduite : `CAMERA_WORKERS=process`, un processus par `CAMERAS_PER_WORKER`
   caméras (core/camera_worker.py) ; 4 caméras à 30 i/s chacune
   (docs/performance.md).
-- [ ] Processus de caméras, suite : image brute à la demande pour
-  /api/capture et /bench/pose, rechargement de la base de visages après
-  enrôlement / renommage / suppression, relance d'un processus mort.
+- [x] Processus de caméras, suite : image brute demandée au processus pour
+  /api/capture et /bench/pose (commande "frame"), base de visages relue par
+  les processus après enrôlement, renommage, suppression ou reconstruction
+  (commande "reload", `FaceRecognizer.reload_cache`), processus mort relancé
+  (délai de 5 s doublé jusqu'à 60 s ; relancé en 6 s après un `kill -9`).
 
 ### 2.3 Identités globales
 

@@ -16,8 +16,18 @@ tracker par caméra et l'écriture SQLite.
 Deux connexions vers l'application (multiprocessing.connection, socket Unix
 authentifiée) :
   - résultats : worker → application, un FrameResult par image ;
-  - commandes : application → worker, ("stream", caméra, bool) et ("stop",).
+  - commandes : application → worker :
+      ("stream", caméra, bool)  le flux de la caméra est-il regardé ;
+      ("frame", requête, caméra) renvoyer la dernière image brute
+                                 (FrameSnapshot, pour /api/capture et /bench/pose) ;
+      ("reload",)               relire la base de visages (embeddings.npz) ;
+      ("stop",).
     Si l'application disparaît, la connexion se ferme et le worker s'arrête.
+
+Tout ce qui traverse la connexion (FrameResult, FrameSnapshot) est défini dans
+core/frame_pipeline.py, pas ici : lancé avec -m, ce module s'appelle
+`__main__` dans le worker, et l'application ne saurait pas désérialiser une
+classe `__main__.X`.
 
 L'adresse et la clé arrivent par l'environnement (VISIONCAM_WORKER_ADDRESS,
 VISIONCAM_WORKER_KEY), les caméras par la ligne de commande (JSON).
@@ -39,7 +49,7 @@ import cv2
 
 import config
 from core import capture
-from core.frame_pipeline import FramePipeline, build_pose_estimator
+from core.frame_pipeline import FramePipeline, FrameSnapshot, build_pose_estimator
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +95,12 @@ def strip_for_transfer(result, jpeg, timings, counters, sizes):
 class Worker:
     """Les caméras d'un processus : un thread de lecture et un de traitement chacune."""
 
-    def __init__(self, cameras: list[WorkerCamera], results, build_tracker, pose_estimator):
+    def __init__(self, cameras: list[WorkerCamera], results, build_tracker, pose_estimator,
+                 reload_faces=lambda: None):
         self.cameras = cameras
+        self._reload_faces = reload_faces
+        # Dernière image brute et personnes de chaque caméra : ("frame", …).
+        self._latest: dict = {}
         self._results = results
         self._send_lock = threading.Lock()
         self._build_tracker = build_tracker
@@ -106,6 +120,12 @@ class Worker:
             _, camera_id, wanted = command
             if camera_id in self._stream:
                 self._stream[camera_id] = bool(wanted)
+        elif command[0] == "frame":
+            _, request_id, camera_id = command
+            frame, persons = self._latest.get(camera_id, (None, []))
+            self.send(FrameSnapshot(request_id, camera_id, frame, persons))
+        elif command[0] == "reload":
+            self._reload_faces()
         elif command[0] == "stop":
             self.stop()
         else:
@@ -149,6 +169,7 @@ class Worker:
             except queue.Empty:
                 continue
             result = pipeline.process(received, frame)
+            self._latest[camera.id] = (result.frame, result.persons)
             jpeg = None
             if self._stream[camera.id]:
                 start = time.perf_counter()
@@ -183,7 +204,7 @@ def main(argv: list[str]) -> int:
     recognizer = FaceRecognizer(config.KNOWN_FACES_DIR, threshold=config.RECOGNITION_THRESHOLD,
                                 cache_path=config.EMBEDDINGS_CACHE_PATH)
     worker = Worker(cameras, results, lambda: FaceBodyTracker(recognizer),
-                    build_pose_estimator())
+                    build_pose_estimator(), recognizer.reload_cache)
     threads = worker.start()
     logger.info("Processus de caméras %d : %s", os.getpid(), ", ".join(c.id for c in cameras))
 

@@ -263,6 +263,28 @@ class FaceRecognizer:
             raise
         logger.debug("Cache sauvegardé : %s", self.cache_path)
 
+    def reload_cache(self) -> bool:
+        """Relit la base depuis le cache, réécrit par un autre processus.
+
+        Les processus de caméras (core/camera_worker.py) ont leur propre
+        reconnaisseur : l'application, qui seule modifie la base, leur demande
+        de relire le cache après chaque enrôlement, renommage, suppression ou
+        reconstruction. Un cache illisible laisse la base en mémoire intacte.
+        """
+        try:
+            with np.load(self.cache_path, allow_pickle=False) as data:
+                names = [str(name) for name in data['names']]
+                embeddings = list(data['embeddings'])
+            if len(names) != len(embeddings):
+                raise ValueError(f"{len(names)} nom(s) pour {len(embeddings)} embedding(s)")
+        except (EOFError, ValueError, KeyError, OSError, zipfile.BadZipFile) as e:
+            logger.warning("Cache illisible, base inchangée (%s: %s)", type(e).__name__, e)
+            return False
+        with self._lock:
+            self.known_embeddings, self.known_names = embeddings, names
+        logger.info("Base relue depuis le cache : %d entrée(s)", len(names))
+        return True
+
     def rebuild_database(self):
         """Force la reconstruction complète de la base depuis les images sur disque."""
         with self._maintenance():

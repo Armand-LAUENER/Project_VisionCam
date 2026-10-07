@@ -213,3 +213,38 @@ class TestCacheWriteIsAtomic:
         assert reloaded.known_names == ["Hélène", "Armand#Profil"]
         np.testing.assert_array_equal(np.stack(reloaded.known_embeddings),
                                       np.stack(recognizer.known_embeddings))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Relecture par un processus de caméras (reload_cache)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_reload_picks_up_a_cache_written_by_another_process(tmp_path):
+    recognizer = make_recognizer(tmp_path)
+    recognizer.known_names = ["Ancien"]
+    recognizer.known_embeddings = [np.ones(512, dtype=np.float32)]
+    write_cache(recognizer, ["Alice", "Bob"])
+
+    assert recognizer.reload_cache()
+    assert recognizer.known_names == ["Alice", "Bob"]
+    assert len(recognizer.known_embeddings) == 2
+
+
+def test_reload_of_an_emptied_base_leaves_no_one(tmp_path):
+    recognizer = make_recognizer(tmp_path)
+    recognizer.known_names = ["Alice"]
+    recognizer.known_embeddings = [np.ones(512, dtype=np.float32)]
+    write_cache(recognizer, [], np.empty((0, 0), dtype=np.float32))
+
+    assert recognizer.reload_cache()
+    assert recognizer.known_names == []
+
+
+def test_an_unreadable_cache_keeps_the_base_in_memory(tmp_path):
+    recognizer = make_recognizer(tmp_path)
+    recognizer.known_names = ["Alice"]
+    recognizer.known_embeddings = [np.ones(512, dtype=np.float32)]
+    open(recognizer.cache_path, "wb").close()
+
+    assert not recognizer.reload_cache()
+    assert recognizer.known_names == ["Alice"]

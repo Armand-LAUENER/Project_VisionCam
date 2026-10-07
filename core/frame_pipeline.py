@@ -130,6 +130,16 @@ class FrameResult:
     camera_id: str = ""
 
 
+@dataclass
+class FrameSnapshot:
+    """Dernière image brute d'une caméra et ses personnes : réponse d'un processus
+    de caméras à ("frame", …), pour /api/capture et /bench/pose."""
+    request_id: int
+    camera_id: str
+    frame: np.ndarray | None     # None avant la première image
+    persons: list
+
+
 class FramePipeline:
     """Traitement des images d'une caméra : tracker, pose, présents, FPS, dessin.
 

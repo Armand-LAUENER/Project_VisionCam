@@ -49,7 +49,7 @@ from core.event_log import EventLog, ForwardClock, TrackEvents
 from core.events import EventBus, StageTimer, UnknownWatcher
 from core.face_body_tracker import FaceBodyTracker
 from core.face_recognition import FaceRecognizer
-from core.frame_pipeline import FramePipeline, FrameResult, build_pose_estimator
+from core.frame_pipeline import FramePipeline, FrameResult, FrameSnapshot, build_pose_estimator
 from core.history import history_names, presence_history
 from core.pose_estimation import PoseEstimator
 from core.pose_from_keypoints import KeypointPoseEstimator
@@ -194,6 +194,7 @@ class Camera:
         self.results_count = 0
         self.worker_sizes: dict = {}
         self.stream_announced = False
+        self.worker = None
 
     @property
     def is_file(self) -> bool:
@@ -343,6 +344,12 @@ def processing_loop(camera=None):
 # ══════════════════════════════════════════
 # PROCESSUS DE CAMÉRAS (CAMERA_WORKERS=process)
 # ══════════════════════════════════════════
+WORKER_RESTART_MIN_S = 5
+WORKER_RESTART_MAX_S = 60
+# Processus de caméras lancés (vide en mode thread).
+worker_processes: list = []
+
+
 class WorkerProcess:
     """Un processus de caméras (core/camera_worker.py), vu de l'application."""
 
@@ -356,6 +363,10 @@ class WorkerProcess:
         self.results = None
         self.commands = None
         self._commands_lock = threading.Lock()
+        # Demandes d'image brute en attente : { requête: [Event, FrameSnapshot] }.
+        self._requests: dict = {}
+        self._requests_lock = threading.Lock()
+        self._next_request = 0
 
     def start(self) -> None:
         """Lance le processus et attend ses deux connexions (résultats, commandes)."""
@@ -391,6 +402,40 @@ class WorkerProcess:
                 self.commands.send(command)
         except (OSError, EOFError):
             pass   # processus déjà arrêté : son thread consommateur le signale
+
+    def request_frame(self, camera_id, timeout=2.0):
+        """Dernière image brute d'une caméra du worker (FrameSnapshot), ou None."""
+        with self._requests_lock:
+            self._next_request += 1
+            request_id = self._next_request
+            pending = self._requests[request_id] = [threading.Event(), None]
+        self.send(("frame", request_id, camera_id))
+        pending[0].wait(timeout)
+        with self._requests_lock:
+            self._requests.pop(request_id, None)
+        return pending[1]
+
+    def fulfil(self, snapshot) -> None:
+        """Réponse du worker à request_frame (thread consommateur)."""
+        with self._requests_lock:
+            pending = self._requests.get(snapshot.request_id)
+        if pending:
+            pending[1] = snapshot
+            pending[0].set()
+
+    def restart(self) -> None:
+        """Relance un processus mort : nouvelles connexions, flux à réannoncer."""
+        for conn in (self.results, self.commands):
+            try:
+                conn.close()
+            except OSError:
+                pass
+        if self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.wait()
+        for camera in self.cameras:
+            camera.stream_announced = False
+        self.start()
 
     def stop(self) -> None:
         self.send(("stop",))
@@ -429,35 +474,67 @@ def worker_consumer_loop(worker: WorkerProcess) -> None:
         endurance = EnduranceLog(config.ENDURANCE_LOG_PATH, config.ENDURANCE_INTERVAL_S,
                                  lambda: _endurance_probe(first.results_count, first.state.fps,
                                                           first.state.bench_persons, probes))
+    delay = WORKER_RESTART_MIN_S
     while state.running:
         try:
             if not worker.results.poll(1.0):
-                if worker.proc.poll() is not None:
-                    logger.error("Processus de caméras %s arrêté (code %s)",
-                                 worker.name, worker.proc.returncode)
-                    break
+                if worker.proc.poll() is None:
+                    continue
+                logger.error("Processus de caméras %s arrêté (code %s)",
+                             worker.name, worker.proc.returncode)
+            else:
+                result = worker.results.recv()
+                delay = WORKER_RESTART_MIN_S
+                if isinstance(result, FrameSnapshot):
+                    worker.fulfil(result)
+                    continue
+                camera = cameras_by_id.get(result.camera_id)
+                if camera is not None:
+                    _apply_worker_result_and_announce(worker, camera, result, endurance)
                 continue
-            result = worker.results.recv()
         except (OSError, EOFError):
-            if state.running:
-                logger.error("Processus de caméras %s injoignable", worker.name)
-            break
-        camera = cameras_by_id.get(result.camera_id)
-        if camera is None:
+            if not state.running:
+                break
+            logger.error("Processus de caméras %s injoignable", worker.name)
+        except Exception:
+            # Un message illisible ne doit pas arrêter la réception : sans ce
+            # thread, plus aucune image de ces caméras ni relance du processus.
+            logger.exception("Message illisible de %s", worker.name)
             continue
-        _apply_worker_result(camera, result)
-        wanted = camera.state.stream_clients > 0
-        if wanted != camera.stream_announced:
-            worker.send(("stream", camera.id, wanted))
-            camera.stream_announced = wanted
-        if endurance and camera is first:
-            try:
-                endurance.maybe_write()
-            except Exception as e:
-                logger.warning("Journal d'endurance indisponible : %s: %s", type(e).__name__, e)
+        # Processus mort : relance, avec un délai qui double jusqu'à
+        # WORKER_RESTART_MAX_S tant qu'il ne repart pas.
+        if not _wait_while_running(delay):
+            break
+        try:
+            worker.restart()
+        except Exception as e:
+            logger.error("Relance de %s impossible : %s: %s", worker.name, type(e).__name__, e)
+            delay = min(delay * 2, WORKER_RESTART_MAX_S)
     if endurance:
         endurance.close()
         probes.windows.stop()
+
+
+def _wait_while_running(seconds) -> bool:
+    """Attend `seconds` ; False si l'application s'arrête entre-temps."""
+    deadline = time.monotonic() + seconds
+    while state.running and time.monotonic() < deadline:
+        time.sleep(0.5)
+    return state.running
+
+
+def _apply_worker_result_and_announce(worker, camera, result, endurance) -> None:
+    """Applique un résultat, annonce au worker si le flux est regardé, tient l'endurance."""
+    _apply_worker_result(camera, result)
+    wanted = camera.state.stream_clients > 0
+    if wanted != camera.stream_announced:
+        worker.send(("stream", camera.id, wanted))
+        camera.stream_announced = wanted
+    if endurance and camera is cameras[0]:
+        try:
+            endurance.maybe_write()
+        except Exception as e:
+            logger.warning("Journal d'endurance indisponible : %s: %s", type(e).__name__, e)
 
 
 def start_worker_processes() -> list[WorkerProcess]:
@@ -466,7 +543,30 @@ def start_worker_processes() -> list[WorkerProcess]:
     workers = [WorkerProcess(cameras[i:i + size]) for i in range(0, len(cameras), size)]
     for worker in workers:
         worker.start()
+        for camera in worker.cameras:
+            camera.worker = worker
+    worker_processes[:] = workers
     return workers
+
+
+def _camera_snapshot(camera):
+    """(image brute, personnes visibles) de la dernière image traitée d'une caméra.
+
+    En mode process, l'image reste dans le processus de la caméra : elle est
+    demandée à la volée (core/camera_worker.py, commande "frame").
+    """
+    if camera.worker is not None:
+        snapshot = camera.worker.request_frame(camera.id)
+        return (snapshot.frame, list(snapshot.persons)) if snapshot else (None, [])
+    with camera.state.lock:
+        return camera.state.bench_frame, list(camera.state.bench_persons)
+
+
+def _faces_changed(event_type, **fields) -> None:
+    """Base de visages modifiée : prévient les pages et fait relire le cache aux workers."""
+    _publish(event_type, **fields)
+    for worker in worker_processes:
+        worker.send(("reload",))
 
 
 def _per_camera_path(path: str, camera) -> str:
@@ -770,7 +870,7 @@ def rebuild():
             with state.lock:
                 state.total_known = len(face_recognizer.known_names)
             logger.info("Rebuild terminé : %d entrée(s)", state.total_known)
-            _publish('rebuilt', total_known=state.total_known)
+            _faces_changed('rebuilt', total_known=state.total_known)
         finally:
             _rebuild_lock.release()
 
@@ -836,7 +936,7 @@ def api_rename_person(name):
     if status == 'ok' and new_name != name:
         presence_log.rename(name, new_name)
         event_log.rename(name, new_name)
-        _publish('renamed', name=new_name, old_name=name)
+        _faces_changed('renamed', name=new_name, old_name=name)
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
 
 
@@ -850,7 +950,7 @@ def api_delete_person(name):
         presence_log.forget(name)
         event_log.forget(name)
         _refresh_total_known()
-        _publish('deleted', name=name)
+        _faces_changed('deleted', name=name)
     return jsonify({'success': status == 'ok', 'message': message}), _PEOPLE_STATUS[status]
 
 
@@ -871,7 +971,7 @@ def api_add_photos(name):
         return jsonify({'success': False, 'message': 'Aucune image lisible (champ "images").'}), 400
     success, message = face_recognizer.enroll_person_average(name, images)
     if success:
-        _publish('enrolled', name=name)
+        _faces_changed('enrolled', name=name)
     _refresh_total_known()
     return jsonify({'success': success, 'message': message,
                     'total_known': state.total_known}), 200 if success else 422
@@ -940,9 +1040,7 @@ def bench_pose():
         agree = compared = mp_silent = kp_silent = 0
 
         for _ in range(samples):
-            with camera.state.lock:
-                frame = camera.state.bench_frame
-                persons = list(camera.state.bench_persons)
+            frame, persons = _camera_snapshot(camera)
 
             if frame is None or not persons:
                 time.sleep(0.05)
@@ -1200,10 +1298,8 @@ def api_capture():
     camera = _requested_camera(body.get('camera'))
     if camera is None:
         return _unknown_camera()
-    with camera.state.lock:
-        frame = camera.state.bench_frame
-        person = next((p for p in camera.state.bench_persons
-                       if str(p.track_id) == track_id), None)
+    frame, persons = _camera_snapshot(camera)
+    person = next((p for p in persons if str(p.track_id) == track_id), None)
     if frame is None or person is None:
         return jsonify({'success': False,
                         'message': "Cette personne n'est plus visible : cliquez à nouveau."}), 404
@@ -1232,7 +1328,7 @@ def api_capture():
     else:
         success, message = face_recognizer.enroll_person_multitemplate(name, {label: crop})
     if success:
-        _publish('enrolled', name=name)
+        _faces_changed('enrolled', name=name)
     _refresh_total_known()
     code = 200 if success else (400 if message.startswith(('Nom invalide', 'Label')) else 422)
     return jsonify({'success': success, 'message': message,

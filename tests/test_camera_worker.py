@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core import camera_worker
+from core import camera_worker, frame_pipeline
 from core.camera_worker import Worker, WorkerCamera, decode_specs, encode_specs
 from tests.test_video_source import N_FRAMES, make_sequence
 
@@ -111,7 +111,7 @@ def test_the_worker_stops_when_the_app_stops_listening(tmp_path, every_frame):
 def test_unknown_commands_are_ignored(worker):
     w, _ = worker
 
-    w.handle(("reload",))
+    w.handle(("inconnue",))
     w.handle(("stream", "ailleurs", True))
 
     assert w.running()
@@ -128,3 +128,46 @@ def test_only_one_thread_sends_at_a_time(worker):
         t.join()
 
     assert sorted(sent) == list(range(20))
+
+
+def test_frame_command_returns_the_last_raw_image(worker):
+    w, conn = worker
+    w.start()
+    receive(conn, 2)
+
+    w.handle(("frame", 7, "porte"))
+    snapshot = next(r for r in receive(conn, 5) if isinstance(r, frame_pipeline.FrameSnapshot))
+
+    assert snapshot.request_id == 7 and snapshot.camera_id == "porte"
+    assert snapshot.frame.shape == (48, 64, 3)
+
+
+def test_frame_command_before_any_image_returns_none(worker):
+    w, conn = worker
+
+    w.handle(("frame", 1, "porte"))
+    snapshot = receive(conn, 1)[0]
+
+    assert snapshot.frame is None and snapshot.persons == []
+
+
+def test_reload_command_rereads_the_faces(tmp_path, every_frame):
+    reloads = []
+    app_end, worker_end = Pipe(duplex=False)
+    w = Worker([WorkerCamera("porte", make_sequence(tmp_path), True)], worker_end,
+               fake_tracker, MagicMock(), reload_faces=lambda: reloads.append(1))
+
+    w.handle(("reload",))
+
+    assert reloads == [1]
+
+
+def test_messages_are_defined_outside_the_worker_module():
+    """Lancé avec -m, core.camera_worker s'appelle __main__ dans le worker :
+    une classe définie là arrive dans l'application comme __main__.X, qu'elle
+    ne sait pas désérialiser (régression : FrameSnapshot, /bench/pose vide et
+    thread de réception tué)."""
+    for message in (frame_pipeline.FrameResult, frame_pipeline.FrameSnapshot):
+        assert message.__module__ == "core.frame_pipeline"
+    assert not hasattr(camera_worker, "FrameSnapshot") or \
+        camera_worker.FrameSnapshot.__module__ == "core.frame_pipeline"

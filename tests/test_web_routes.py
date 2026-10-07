@@ -1073,3 +1073,55 @@ def test_a_worker_result_feeds_timings_counters_and_stream():
         assert visioncam.state.frames_dropped == 3
         assert visioncam.state.frame_size == (1280, 720)
     assert visioncam._frame_size(visioncam.state) == [1280, 720]
+
+
+class TestWorkerProcessesSide:
+    """Côté application du mode process, sans lancer de processus."""
+
+    def test_a_frame_request_returns_the_worker_answer(self):
+        from core.frame_pipeline import FrameSnapshot
+        worker = visioncam.WorkerProcess([visioncam.cameras[0]])
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        worker.send = lambda cmd: threading.Thread(
+            target=worker.fulfil, args=(FrameSnapshot(cmd[1], cmd[2], frame, []),)).start()
+
+        snapshot = worker.request_frame("cam0", timeout=2)
+
+        assert snapshot.frame is frame
+
+    def test_an_unanswered_frame_request_gives_up(self):
+        worker = visioncam.WorkerProcess([visioncam.cameras[0]])
+        worker.send = lambda cmd: None
+
+        assert worker.request_frame("cam0", timeout=0.05) is None
+        assert worker._requests == {}
+
+    def test_capture_snapshot_comes_from_the_worker_in_process_mode(self, monkeypatch):
+        camera = visioncam.cameras[0]
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        fake = MagicMock()
+        fake.request_frame.return_value = SimpleNamespace(frame=frame, persons=[_tracked()])
+        monkeypatch.setattr(camera, 'worker', fake)
+
+        got_frame, persons = visioncam._camera_snapshot(camera)
+
+        assert got_frame is frame and [p.track_id for p in persons] == ['1']
+
+    def test_without_worker_the_snapshot_is_the_local_frame(self):
+        frame = np.zeros((4, 4, 3), dtype=np.uint8)
+        with visioncam.state.lock:
+            visioncam.state.bench_frame = frame
+            visioncam.state.bench_persons = [_tracked()]
+
+        got_frame, persons = visioncam._camera_snapshot(visioncam.cameras[0])
+
+        assert got_frame is frame and len(persons) == 1
+
+    def test_a_face_change_makes_every_worker_reload(self, monkeypatch):
+        workers = [MagicMock(), MagicMock()]
+        monkeypatch.setattr(visioncam, 'worker_processes', workers)
+
+        visioncam._faces_changed('deleted', name='Alice')
+
+        for worker in workers:
+            worker.send.assert_called_once_with(("reload",))
