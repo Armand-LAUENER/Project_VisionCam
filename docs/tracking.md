@@ -170,3 +170,60 @@ Pour régler DeepSORT sur ses propres scènes plutôt que valider :
 uv run -m tools.sweep_deepsort --only-updated --tune ~/datasets/visioncam/scene-01 \
     --grid init=3,5 --validate ~/datasets/visioncam/scene-02
 ```
+
+## DeepSORT, ByteTrack ou BoT-SORT
+
+ByteTrack et BoT-SORT sont aujourd'hui plus courants que DeepSORT, et
+ultralytics les fournit déjà (`TRACKER_BACKEND=bytetrack|botsort|botsort-reid`,
+`UltralyticsBackend` dans core/tracker_backends.py). Pour comparer les
+trackers et non leurs conventions : les pistes perdues sont renvoyées comme
+les pistes DeepSORT en roue libre (sinon leur nom serait purgé), YOLO descend
+à `BYTETRACK_LOW_THRESH` (0,1) pour le second passage de ByteTrack, seuil
+principal et création de piste à 0,5 comme DeepSORT, `track_buffer` = 70
+images comme `max_age`, pas de compensation de mouvement (caméra fixe).
+`botsort-reid` branche le MobileNetV2 de DeepSORT comme ré-identification.
+Le 2026-10-07.
+
+**Tracker seul**, détections publiques (`tools/eval_mot.py`) :
+
+| | MOT17-04 : MOTA / IDF1 / IDs / ms par image | DanceTrack val (5 séq.) : MOTA / IDF1 / IDs |
+|:--|:--|:--|
+| DeepSORT (Python) | 73,6 % / 72,3 % / 102 / 38,8 | 69,5 % / 56,5 % / 108 |
+| ByteTrack | 75,5 % / 75,9 % / **60** / **2,6** | 63,9 % / 40,6 % / 120 |
+| BoT-SORT | **75,7 %** / 75,6 % / 64 / 2,8 | 64,6 % / 43,9 % / 118 |
+
+Sur MOT17-04 (foule), ByteTrack et BoT-SORT font mieux sur tout, et 15 fois
+plus vite (pas d'embedder d'apparence). Sur DanceTrack, ils perdent 5 points de
+MOTA et 13 à 16 d'IDF1 : les seuils de DeepSORT ont été réglés sur ce jeu
+(`n_init=5`, cf. plus haut), ceux d'ultralytics non.
+
+**Application complète**, CHIRLA, rejeu `every_frame`, 13 identités enrôlées
+(`tools/eval_identity.py`, protocole de docs/performance.md) :
+
+| `seq_026_camera_3` | MOTA | IDF1 | IDs | Bons noms | Mauvais noms | Sans piste |
+|:--|---:|---:|---:|---:|---:|---:|
+| **DeepSORT** | 67,7 % | 34,0 % | 105 | **39,6 %** | **0,7 %** | 25,4 % |
+| ByteTrack | 71,3 % | 32,6 % | 88 | 38,7 % | 1,0 % | 15,2 % |
+| BoT-SORT | 71,6 % | 32,4 % | 89 | 38,3 % | 1,0 % | 14,8 % |
+| BoT-SORT + ré-identification | 71,8 % | 45,7 % | 91 | 38,2 % | 1,2 % | 14,8 % |
+| BoT-SORT sans second passage (`BYTETRACK_LOW_THRESH=0.5`) | 68,7 % | 33,0 % | 87 | 38,1 % | 0,8 % | 24,3 % |
+
+Sur `seq_025_camera_2`, les noms ne bougent pas (visages trop petits) ; le
+suivi s'améliore (MOTA 84,4 → 86,1–87,9 %, aucun mauvais nom).
+
+**DeepSORT reste le défaut.** Les trackers d'ultralytics suivent mieux
+(MOTA +4, 15 % de changements d'identité en moins, 10 points de couverture
+en plus), mais ce qu'ils couvrent en plus, ce sont des personnes de dos ou
+masquées, qui restent « Inconnu » : les bons noms ne montent pas, et les
+mauvais noms montent de 0,7 à 1,0–1,2 %. Une mauvaise identité coûte plus
+cher qu'un « Inconnu ». Cause : les détections faibles du second passage
+prolongent une piste à travers une occultation, parfois jusque sur la
+personne voisine ; sans elles, BoT-SORT revient à 0,8 % mais ne nomme pas
+mieux. La ré-identification de BoT-SORT gonfle l'IDF1 sans aider les noms : elle
+ne départage que des boîtes qui se recouvrent déjà.
+
+Un run par configuration, deux séquences d'un même bureau : les écarts de
+bons noms (±1,5 point) sont dans le bruit, celui des mauvais noms est plus
+net mais indicatif. À refaire sur une scène où les visages restent visibles
+mais où le suivi casse (foule, croisements), ou avec des identités globales
+(roadmap 2.3).
