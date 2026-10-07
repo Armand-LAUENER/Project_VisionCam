@@ -5,7 +5,10 @@ Sans dépendance à l'application : utilisé par les threads de app.py comme par
 les processus de caméras (core/camera_worker.py). `camera` est tout objet qui
 expose `id`, `source` et `is_file` ; `running()` dit s'il faut continuer, et
 `counters` reçoit les images jetées et sautées (`frames_dropped`,
-`source_skipped`) pour le journal d'endurance.
+`source_skipped`) pour le journal d'endurance, et `record(étape, secondes)`
+le coût de lecture de chaque image : « decode » pour une vidéo (décodage seul,
+hors attente de l'heure de l'image), « read » pour une caméra (attente de
+l'image comprise : OpenCV ne sépare pas les deux).
 """
 
 from __future__ import annotations
@@ -81,7 +84,32 @@ def reconnect(cap, camera, running):
     return None
 
 
-def capture_loop(camera, frame_queue, running, counters):
+class Throttle:
+    """Laisse passer au plus `max_fps` images par seconde, en moyenne exacte.
+
+    Une grille de temps (prochaine échéance += 1/max_fps) plutôt qu'un délai
+    depuis la dernière image : avec une source à 30 i/s et 10 i/s visés, un
+    délai de 100 ms ne laisserait passer qu'une image sur 4 (7,5 i/s).
+    """
+
+    def __init__(self, max_fps: float, clock=time.monotonic):
+        self.interval = 1.0 / max_fps if max_fps > 0 else 0.0
+        self._clock = clock
+        self._next = None
+
+    def allow(self) -> bool:
+        if not self.interval:
+            return True
+        now = self._clock()
+        if self._next is None or self._next < now - self.interval:
+            self._next = now          # premier passage, ou retard : on repart d'ici
+        if now < self._next:
+            return False
+        self._next += self.interval
+        return True
+
+
+def capture_loop(camera, frame_queue, running, counters, record=lambda stage, seconds: None):
     """
     Lit les frames depuis la caméra et les pousse dans frame_queue, avec
     leur heure de réception (perf_counter) pour mesurer la latence.
@@ -101,9 +129,17 @@ def capture_loop(camera, frame_queue, running, counters):
             return
 
     consecutive_failures = 0
+    every_frame = isinstance(cap, FileSource) and cap.mode == "every_frame"
+    throttle = Throttle(0 if every_frame else config.CAMERA_MAX_FPS)
 
     while running():
+        read_start = time.perf_counter()
         ret, frame = cap.read()
+        if ret:
+            if isinstance(cap, FileSource):
+                record('decode', cap.last_decode_s)
+            else:
+                record('read', time.perf_counter() - read_start)
         if not ret and isinstance(cap, FileSource):
             logger.info("[%s] Fin de la vidéo : %s", camera.id, camera.source)
             break
@@ -122,12 +158,14 @@ def capture_loop(camera, frame_queue, running, counters):
             continue
 
         consecutive_failures = 0
+        if not throttle.allow():
+            continue
         item = (time.perf_counter(), frame)
         if isinstance(cap, FileSource):
             counters.source_skipped = cap.skipped
 
         # every_frame : aucune image perdue, la lecture attend le pipeline.
-        if isinstance(cap, FileSource) and cap.mode == "every_frame":
+        if every_frame:
             put_waiting(frame_queue, item, running)
             continue
 

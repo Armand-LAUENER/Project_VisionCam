@@ -234,7 +234,8 @@ if len(cameras) > 1:
 def camera_loop(camera=None):
     """Lit les images d'une caméra dans sa file (core/capture.py)."""
     camera = camera or cameras[0]
-    capture.capture_loop(camera, camera.queue, lambda: state.running, camera.state)
+    capture.capture_loop(camera, camera.queue, lambda: state.running, camera.state,
+                         timings.record)
 
 
 # ══════════════════════════════════════════

@@ -237,6 +237,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `USE_LOCAL_CAM` | `True` | Webcam locale si `True`, caméra IP sinon |
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
 | `CAMERAS` | vide | Plusieurs caméras : `id=source;id=source` (webcam, URL, vidéo ou séquence) ; vide = une seule, `CAMERA_ID` |
+| `CAMERA_MAX_FPS` | `0` | Cadence maximale traitée par caméra (0 : toutes les images) ; à 5-10 i/s, la machine suit 8 flux au lieu de 4 |
 | `CAMERA_WORKERS` | `thread` | `process` : caméras traitées dans des processus à part, `CAMERAS_PER_WORKER` (2) chacun ; au-delà de 2 caméras, seul `process` tient 30 i/s |
 | `CAMERA_ID` | `cam0` | Identifiant de la caméra dans le journal d'événements (table `events` de `presence.db`) |
 | `YOLO_NMS_IOU` | `0.6` | Recouvrement au-delà duquel YOLO fusionne deux boîtes ; 0,6 évite les pistes dédoublées d'une personne assise |

@@ -42,6 +42,7 @@ import queue
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from multiprocessing.connection import Client
 
@@ -146,20 +147,25 @@ class Worker:
         for camera in self.cameras:
             frames: queue.Queue = queue.Queue(maxsize=2)
             counters = _Counters()
+            # Durées des étapes, lecture comprise : deque, que le thread de
+            # capture remplit pendant que celui de traitement la vide.
+            timings: deque = deque()
             threads += [
                 threading.Thread(target=capture.capture_loop,
-                                 args=(camera, frames, self.running, counters),
+                                 args=(camera, frames, self.running, counters,
+                                       lambda stage, seconds, t=timings: t.append((stage, seconds))),
                                  daemon=True, name=f"camera-{camera.id}"),
-                threading.Thread(target=self._process_loop, args=(camera, frames, counters),
+                threading.Thread(target=self._process_loop,
+                                 args=(camera, frames, counters, timings),
                                  daemon=True, name=f"processing-{camera.id}"),
             ]
         for thread in threads:
             thread.start()
         return threads
 
-    def _process_loop(self, camera: WorkerCamera, frames: queue.Queue, counters) -> None:
+    def _process_loop(self, camera: WorkerCamera, frames: queue.Queue, counters,
+                      timings: deque) -> None:
         logger.info("[%s] Thread de traitement démarré (processus %d).", camera.id, os.getpid())
-        timings: list = []
         pipeline = FramePipeline(camera.id, self._build_tracker(),
                                  lambda stage, seconds: timings.append((stage, seconds)),
                                  self._pose_estimator, camera.tracks_path)
@@ -178,7 +184,7 @@ class Worker:
                 jpeg = buffer.tobytes()
                 timings.append(('encode', time.perf_counter() - start))
             sizes = {**pipeline.tracker.state_sizes(), 'last_seen': len(pipeline.last_seen)}
-            batch, timings[:] = list(timings), []
+            batch = [timings.popleft() for _ in range(len(timings))]
             if not self.send(strip_for_transfer(result, jpeg, batch, counters, sizes)):
                 break
         pipeline.close()

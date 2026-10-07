@@ -52,6 +52,10 @@ CAMERAS = os.getenv("CAMERAS", "")
 # (docs/performance.md). Chaque processus coûte ~2,4 Go de RAM et ~230 Mo de VRAM.
 CAMERA_WORKERS = os.getenv("CAMERA_WORKERS", "thread").strip().lower()
 CAMERAS_PER_WORKER = int(os.getenv("CAMERAS_PER_WORKER", "2"))
+# Cadence maximale traitée par caméra (i/s) ; 0 : toutes les images reçues.
+# Une caméra n'a souvent pas besoin de 30 i/s : à 5 ou 10, une même machine
+# suit plus de flux (tools/bench_load.py). Sans effet en VIDEO_MODE=every_frame.
+CAMERA_MAX_FPS = float(os.getenv("CAMERA_MAX_FPS", "0"))
 # Au plus un événement « visage reconnu » par piste et par intervalle (s), en
 # plus du dernier avant expiration de PRESENCE_FACE_MAX_AGE_S : ~60 lignes par
 # heure et par personne nommée, et des sessions reconstruites exactes.

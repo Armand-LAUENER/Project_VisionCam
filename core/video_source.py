@@ -69,6 +69,9 @@ class FileSource:
         self._start: float | None = None   # heure de l'image 0
         self._next = 0                      # numéro de la prochaine image, boucles comprises
         self.skipped = 0                    # images sautées en mode realtime
+        # Durée du dernier read() hors attente de l'heure de l'image : le coût
+        # de décodage, images sautées comprises (étape « decode »).
+        self.last_decode_s = 0.0
         self.loops = 0                      # retours au début
         self.ended = False
 
@@ -99,6 +102,7 @@ class FileSource:
             last = max(self._next,
                        int((self._clock() - self._start) * self.fps + _EPSILON))
 
+        decode_start = time.perf_counter()
         frame = None
         restarted = False
         while self._next <= last:
@@ -118,6 +122,7 @@ class FileSource:
             frame = image
             self._next += 1
 
+        self.last_decode_s = time.perf_counter() - decode_start
         if frame is None:
             self.ended = True
             return False, None
