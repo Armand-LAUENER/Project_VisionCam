@@ -186,10 +186,14 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
 
 ### 2.3 Identités globales
 
-- [ ] Personnes enrôlées : nom global via la reconnaissance faciale (déjà
-  disponible).
-- [ ] Évaluation inter-caméras sur CHIRLA (multi-caméras, identités cohérentes
-  entre caméras).
+- [x] Personnes enrôlées : nom global via la reconnaissance faciale. Vérifié :
+  aucun conflit ni clone entre caméras ; plusieurs caméras nomment plus de
+  moments qu'une seule (7,9 % contre 4,4 % sur `seq_025`). Champs de vision
+  qui se recouvrent : l'anti-clonage reste propre à chaque caméra.
+- [x] Évaluation inter-caméras sur CHIRLA : `tools/eval_global_identity.py`
+  (docs/performance.md). Passer un nom d'une caméra à l'autre rapporterait au
+  mieux 3,3 % des suivis en « Inconnu » : à garder en tête pour prioriser
+  2.4 et 2.5.
 
 ### 2.4 Topologie des caméras
 

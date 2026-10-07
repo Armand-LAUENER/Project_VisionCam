@@ -206,7 +206,41 @@ indicatifs) ; « sans piste » mêle les personnes non détectées et les boîte
 dont l'IoU avec la vérité terrain reste sous 0,5 (personne assise en partie
 masquée, id 5 : 72 %).
 
-## Endurance
+### Plusieurs caméras : noms cohérents entre caméras (roadmap 2.3)
+
+Les caméras d'une séquence CHIRLA filment les mêmes personnes en même temps,
+avec des identités annotées communes et des vidéos démarrées ensemble.
+L'application rejoue toutes les caméras d'une séquence à la fois
+(`CAMERAS`, `CAMERA_WORKERS=process`, `every_frame`, mêmes 13 identités
+enrôlées), puis `tools/eval_global_identity.py` juge chaque moment (image,
+personne) sur l'ensemble des caméras, le 2026-10-07 :
+
+| | `seq_025`, caméras 2, 3, 5 | `seq_026`, caméras 3, 5 |
+|:--|---:|---:|
+| Moments (image, personne enrôlée) | 21 810 | 30 955 |
+| Nommée sur la meilleure caméra seule | 4,4 % | 25,9 % |
+| **Nommée sur au moins une caméra** | **7,9 %** | **26,5 %** |
+| Mauvais nom sur au moins une caméra | 0,1 % | 0,5 % |
+| Noms en conflit entre caméras | 0,0 % | 0,0 % |
+| Clones (même nom, deux personnes, même instant) | 0 | 0 |
+| Non enrôlées nommées | 0,0 % | 0,0 % |
+| Suivis en « Inconnu » nommés ailleurs au même instant | 3,3 % | 0,0 % |
+
+Chaque caméra garde exactement ses chiffres du rejeu seul (caméras 2 de
+`seq_025` et 3 de `seq_026` : mêmes MOTA, IDF1 et taux de noms).
+
+- **Le nom global par la reconnaissance faciale fonctionne tel quel** : une
+  base de visages commune donne le même nom sur toutes les caméras, sans
+  conflit ni clone. Plusieurs caméras nomment plus de moments qu'une seule
+  (×1,8 sur `seq_025`), parce que l'une voit le visage quand l'autre voit le dos.
+- **Les champs de vision se recouvrent** : une même personne est souvent
+  visible sur deux caméras à la fois (21 810 moments pour 29 276
+  images-personnes). Un anti-clonage entre caméras (« un nom sur une seule
+  caméra à la fois ») serait donc faux ici : il reste propre à chaque caméra.
+- **Passer un nom d'une caméra à l'autre rapporterait peu sur CHIRLA** : au
+  mieux 3,3 % des suivis en « Inconnu » sur `seq_025`, rien sur `seq_026`. La
+  limite reste le nombre de visages exploitables, pas leur partage.
+
 
 L'application complète tourne 8 h d'affilée sur une vidéo en boucle, avec une
 mesure par minute (`ENDURANCE_LOG_PATH`), puis
