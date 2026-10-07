@@ -309,3 +309,33 @@ dépose ses écritures et repart. 30 min, page ouverte, même séquence :
 Les runs d'endurance faits entre l'ajout du journal d'événements (roadmap 2.1)
 et ce correctif ont un FPS tiré vers le bas par ces blocages ; leurs mesures
 de mémoire et de structures internes restent valables.
+
+## Plusieurs caméras (roadmap 2.2)
+
+N vidéos CHIRLA rejouées en même temps (`CAMERAS`, `realtime`, en boucle,
+30 i/s chacune) : `seq_025` caméras 2, 3 et 5 (filmées en même temps), plus
+`seq_026_camera_3` pour la quatrième. 5 min par palier, la première minute
+écartée ; i/s par caméra lus sur `/api/diagnostics` toutes les 10 s, le reste
+dans le journal d'endurance (une ligne toutes les 30 s, médiane des lignes).
+Configuration déployée (YOLO, embedder et InsightFace en TensorRT), aucune
+page ouverte, RTX 4060 sous WSL2, le 2026-10-07.
+
+| Caméras | i/s par caméra (min–max) | i/s au total | Image p50 / p95 | Latence p50 / p95 | Détection p50 | Reconnaissance p50 | Images jetées | VRAM (`wsl_vram_mb`) | CPU du processus |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 30,0 (30,0–30,0) | 30,0 | 13,2 / 31,4 ms | 13,4 / 38,8 ms | 9,6 ms | 10,4 ms | 7 | 522 Mo | 50 % |
+| 2 | 29,4 (29,3–29,4) | 58,7 | 15,1 / 41,4 ms | 16,4 / 59,7 ms | 9,7 ms | 9,6 ms | 266 | 835 Mo | 87 % |
+| 3 | 24,3 (23,6–25,0) | 72,9 | 33,6 / 74,5 ms | 74,1 / 124,4 ms | 21,4 ms | 21,8 ms | 3 871 | 1 071 Mo | 133 % |
+| 4 | 17,9 (14,8–19,4) | 71,4 | 50,2 / 111,3 ms | 97,8 / 163,1 ms | 35,0 ms | 38,5 ms | 11 860 | 1 251 Mo | 141 % |
+
+Images jetées : faute de place dans la file d'une caméra, sur les 4 min
+mesurées, toutes caméras confondues. CPU du processus : en % d'un cœur.
+
+- **Deux caméras tiennent la cadence** (29,4 i/s chacune). Au-delà, le débit
+  total plafonne vers 72 i/s : chaque caméra ajoutée ralentit les autres.
+- **Les étapes GPU ralentissent avec le nombre de caméras** : la détection
+  passe de 9,6 à 35 ms par image, la reconnaissance de 10 à 38 ms, alors que
+  chaque image demande le même travail. Une ressource partagée sature : le
+  GPU (l'utilisation de WSL vue par Windows monte à 98 % à 4 caméras), ou le
+  GIL entre les threads de traitement. Cette mesure ne les départage pas.
+- **Chaque caméra coûte ~240 Mo de VRAM** : chaque `FaceBodyTracker` charge
+  son propre moteur YOLO et son embedder d'apparence.

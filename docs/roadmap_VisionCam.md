@@ -170,8 +170,8 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
   multi-flux. `CAMERAS="id=source;…"` (core/cameras.py), un thread de capture
   et un de traitement par caméra, reconnaissance et journaux partagés ;
   `?camera=` sur /video, /status, /api/events, /api/capture, /bench/pose ;
-  sélecteur sur la page Live. Deux vidéos rejouées : 30,2 et 29,9 i/s,
-  VRAM 741 Mo (521 avec une caméra).
+  sélecteur sur la page Live. Deux caméras tiennent la cadence (29,4 i/s
+  chacune), le total plafonne vers 72 i/s au-delà (docs/performance.md).
 - [ ] Mesurer le décalage d'horloge des caméras IP (reporté de 2.1).
 - [ ] Partage du GPU : lots d'images de plusieurs caméras ou cadence réduite
   par caméra.
