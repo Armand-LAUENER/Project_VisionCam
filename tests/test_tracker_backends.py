@@ -18,6 +18,7 @@ Lancer : pytest tests/test_tracker_backends.py -v
 
 import importlib
 import pathlib
+import sys
 
 import numpy as np
 import pytest
@@ -388,6 +389,17 @@ def _walker(frame, score=0.9):
     return ([100 + 5 * frame, 200, 80, 240], score, "person", None)
 
 
+@pytest.fixture
+def real_ultralytics(monkeypatch):
+    """Le vrai ultralytics, même si un test de régression l'a remplacé par un
+    MagicMock dans sys.modules (setdefault) : retiré le temps du test, rétabli après."""
+    from unittest.mock import MagicMock
+    for name in [n for n in sys.modules if n == "ultralytics" or n.startswith("ultralytics.")]:
+        if isinstance(sys.modules[name], MagicMock):
+            monkeypatch.delitem(sys.modules, name)
+
+
+@pytest.mark.usefixtures("real_ultralytics")
 @pytest.mark.parametrize("kind", ["bytetrack", "botsort"])
 class TestUltralyticsBackend:
     def make(self, kind):
