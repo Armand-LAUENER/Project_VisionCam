@@ -173,6 +173,102 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
 
 - [ ] **Séquences webcam annotées** — cf. section 3, à enregistrer sur la machine.
 
+## 6. Observations à creuser (2026-10-07)
+
+Relevées pendant les mesures de la 2.2, 2.3 et 2.7 ; rien n'est décidé ici.
+Chiffres et protocoles dans docs/performance.md et docs/tracking.md.
+
+### Charge et ressources
+
+- **Le GIL plafonne chaque processus de caméras** vers 72-76 images traitées
+  par seconde. À 8 caméras par processus, c'est pire : ~50-58 i/s par
+  processus, la détection passe de ~10 à ~66 ms par image (attente du GIL).
+  → Mesurer le nombre de caméras par processus qui maximise le débit ;
+  regarder quelles parties Python tiennent le GIL (py-spy, profil par étape).
+- **Un processus de caméras pèse ~2,6 Go de RAM**, l'application ~2 Go
+  (torch, ultralytics, onnxruntime chargés partout). C'est ce qui borne le
+  nombre de processus, donc de flux (16 flux : impossible de passer à 4
+  processus dans les 15 Go de WSL). → Piste : un worker sans torch (moteurs
+  TensorRT appelés directement, prétraitement et NMS en numpy) ; en mode
+  process, l'application n'a pas non plus besoin de charger
+  core.face_body_tracker (ultralytics, torch). Mesurer le gain de RAM avant.
+- **Le GPU baisse sa fréquence à faible charge** (360 MHz à 2 × 5 i/s contre
+  2 790 à pleine charge) : la latence est plus haute à 5 i/s qu'à 30 (p95
+  100 ms contre 38). Le débit n'en souffre pas. → Voir si le verrouillage des
+  fréquences (`nvidia-smi -lgc`) est possible sous WSL2, et si ça vaut la
+  consommation.
+- **Le « GPU de WSL » vu par Windows n'est pas fiable** pour juger une
+  saturation (97 % à 2 × 30, 82 % à 4 × 30, 31 % puis 88 % à charges
+  voisines). NVML et les i/s tenus le sont plus. → Le documenter comme
+  contexte seulement.
+- **`wsl_vram_mb` varie d'un run à l'autre** à configuration égale (742 puis
+  835 Mo à 2 caméras). → Plusieurs runs avant de comparer des VRAM.
+- **Démarrage d'un processus de caméras : 10 à 45 s** avant la pleine
+  cadence (moteurs, première inférence). → Mesurer précisément, et voir si
+  une inférence de chauffe au lancement le réduit.
+- **Décodage mesuré sur des AVI 1280×720 : 0,4-1,4 ms.** Le coût d'un vrai
+  flux RTSP H.264 n'est pas mesuré (étape `read` : attente comprise). → À
+  mesurer avec une caméra IP ; NVDEC à considérer au-delà de quelques flux.
+- **Pas de contre-pression worker → application.** Si l'application traite
+  les résultats moins vite qu'ils n'arrivent, le worker bloque sur l'envoi :
+  ces images-là ne sont comptées nulle part. → Mesurer à 16 flux, compter les
+  envois bloqués.
+- **`/bench/pose` en mode process** demande une image au worker à chaque
+  échantillon (délai 2 s chacun) : coût et durée non mesurés.
+
+### Suivi
+
+- **deepsort-rs 8484623** : 15 fois plus rapide à 40 personnes, mais aucun
+  gain sur CHIRLA (3 à 6 personnes) : le « tracking » y est surtout
+  l'embedder d'apparence (6,4 ms sur GPU), pas l'association.
+  → Si le tracking compte, c'est l'embedder qu'il faut alléger ou espacer.
+- **ByteTrack / BoT-SORT** suivent mieux (MOTA +4, −15 % de changements d'ID,
+  10 points de couverture en plus) mais montent les mauvais noms (0,7 →
+  1,0-1,2 %) à cause du second passage sur détections faibles.
+  → Pistes non testées : réglage des seuils d'ultralytics (non réglés,
+  contrairement à DeepSORT sur DanceTrack) ; second passage seulement pour
+  prolonger une piste sans nom ; ne pas reconnaître de visage sur une boîte
+  issue d'une détection faible.
+- **La ré-identification de BoT-SORT ne joue qu'entre boîtes qui se
+  recouvrent** (IoU ≥ 0,5) : elle ne rattache pas une personne sortie du champ.
+- **DanceTrack a été enregistré avec YOLO à 0,5** : le second passage de
+  ByteTrack n'y est pas testable. → Réenregistrer à 0,1 si on reprend la
+  comparaison.
+- **Le rejeu multi-caméras en `every_frame` reproduit exactement** les
+  chiffres d'une caméra seule : le mode process est déterministe sur ce plan.
+
+### Identité
+
+- **Le facteur limitant des noms est le nombre de visages exploitables**, pas
+  le suivi ni le partage entre caméras : sur `seq_025`, 90 % des crops de
+  tête n'ont pas de visage ≥ 40 px ; passer un nom d'une caméra à l'autre
+  rapporterait au mieux 3,3 % des suivis en « Inconnu ». → Pistes à mesurer :
+  `RECOGNITION_MIN_FACE_PX`, enrôlement multi-angles, résolution des crops de
+  tête, InsightFace à plus grande taille d'entrée sur les visages lointains.
+- **Les champs de vision des caméras CHIRLA se recouvrent** : un anti-clonage
+  entre caméras serait faux. Si un jour il en faut un, il dépendra de la
+  topologie (2.4 : caméras sans recouvrement seulement).
+- **`FRONTAL_NOSE_MARGIN`** : CHIRLA ne contient aucun échange de pistes vers
+  une personne non enrôlée vue de face ; cette protection n'est vérifiée que
+  par le test de régression. → Trouver ou enregistrer une séquence qui la
+  met en scène.
+- **Renommer une personne ne renomme pas les pistes en cours** (les trackers
+  gardent l'ancien nom jusqu'à la prochaine reconnaissance), en mode thread
+  comme en mode process.
+- **Rechargement de la base dans les processus de caméras** : testé en unitaire
+  seulement. → Essai à la main : enrôler depuis la page Live en
+  `CAMERA_WORKERS=process`, vérifier la reconnaissance.
+
+### Outillage
+
+- **Une chaîne `pytest … | grep` a laissé passer un commit avec 6 tests en
+  échec** (code de retour de grep, pas de pytest). → Toujours tester le code
+  de retour de pytest lui-même (`pytest …; echo $?`).
+- **Un test de régression installe un faux `ultralytics` dans `sys.modules`**
+  (`setdefault`) : tout test collecté après qui importe le vrai paquet en
+  hérite. Contourné dans test_tracker_backends.py. → Le remplacer par un
+  monkeypatch limité au test, comme pour `build_body_tracker`.
+
 ---
 
 ## Ordre suggéré
