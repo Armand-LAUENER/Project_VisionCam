@@ -271,7 +271,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `DEEPSORT_MAX_AGE` | `70` | Frames avant suppression d'un track perdu |
 | `FRAME_SKIP` | `2` | Cadence de l'estimation d'orientation |
 | `POSE_SOURCE` | `yolo` | Orientation : `yolo` (keypoints, gratuit) ou `mediapipe` |
-| `TRACKER_BACKEND` | `python` | Association de tracks : `python` ou `rust` |
+| `TRACKER_BACKEND` | `python` | Association de tracks : `python`, `rust` (DeepSORT), ou `bytetrack`, `botsort`, `botsort-reid` (ultralytics, comparés dans `docs/tracking.md`) |
 
 ---
 

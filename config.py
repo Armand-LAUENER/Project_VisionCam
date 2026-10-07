@@ -237,6 +237,12 @@ YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8s-pose.pt")
 
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
 YOLO_CONF_THRESHOLD = 0.5
+# ByteTrack / BoT-SORT (TRACKER_BACKEND=bytetrack|botsort|botsort-reid) : les
+# détections entre BYTETRACK_LOW_THRESH et YOLO_CONF_THRESHOLD ne créent pas de
+# piste mais prolongent les existantes (second passage) ; YOLO descend alors
+# jusqu'à ce seuil. Association acceptée sous BYTETRACK_MATCH_THRESH (coût IoU).
+BYTETRACK_LOW_THRESH = float(os.getenv("BYTETRACK_LOW_THRESH", "0.1"))
+BYTETRACK_MATCH_THRESH = float(os.getenv("BYTETRACK_MATCH_THRESH", "0.8"))
 # Recouvrement (IoU) au-delà duquel le NMS de YOLO fusionne deux boîtes (0,7
 # par défaut dans ultralytics). Une personne assise peut recevoir deux boîtes
 # qui se recouvrent à ~0,63 (corps entier, haut du corps) : à 0,7 elles

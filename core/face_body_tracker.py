@@ -26,7 +26,7 @@ from ultralytics import YOLO
 
 import config
 from core.face_recognition import FaceRecognizer
-from core.tracker_backends import build_body_tracker
+from core.tracker_backends import ULTRALYTICS_BACKENDS, build_body_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +164,11 @@ class FaceBodyTracker:
 
         # deep_sort_realtime ou deepsort-rs selon config.TRACKER_BACKEND.
         self.body_tracker = build_body_tracker()
+        # ByteTrack / BoT-SORT associent aussi les détections faibles (second
+        # passage) : YOLO doit les leur fournir. DeepSORT n'en voit aucune.
+        self._detection_conf = (min(config.YOLO_CONF_THRESHOLD, config.BYTETRACK_LOW_THRESH)
+                                if config.TRACKER_BACKEND in ULTRALYTICS_BACKENDS
+                                else config.YOLO_CONF_THRESHOLD)
 
         self.face_recognizer = face_recognizer
 
@@ -331,7 +336,7 @@ class FaceBodyTracker:
         yolo_results = self.yolo.predict(
             frame,
             classes=[0],
-            conf=config.YOLO_CONF_THRESHOLD,
+            conf=self._detection_conf,
             iou=config.YOLO_NMS_IOU,
             device=0,
             verbose=False,

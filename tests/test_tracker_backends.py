@@ -375,3 +375,55 @@ class TestBothBackendsGetTheSameParameters:
         avec la durée de la session (5,01 ms contre 2,24 ms mesurés)."""
         assert config.DEEPSORT_NN_BUDGET is not None
         assert config.DEEPSORT_NN_BUDGET > 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ByteTrack / BoT-SORT d'ultralytics (UltralyticsBackend), sans ré-identification
+# ─────────────────────────────────────────────────────────────────────────────
+
+ULTRA_FRAME = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+
+def _walker(frame, score=0.9):
+    return ([100 + 5 * frame, 200, 80, 240], score, "person", None)
+
+
+@pytest.mark.parametrize("kind", ["bytetrack", "botsort"])
+class TestUltralyticsBackend:
+    def make(self, kind):
+        from core.tracker_backends import UltralyticsBackend
+        return UltralyticsBackend(kind)
+
+    def test_a_walking_person_keeps_one_id(self, kind):
+        backend = self.make(kind)
+        ids = set()
+        for frame in range(30):
+            tracks = backend.update([_walker(frame)], ULTRA_FRAME)
+            ids |= {t.track_id for t in tracks}
+
+        assert len(ids) == 1
+        assert all(t.is_confirmed() for t in tracks)
+        x1, y1, x2, y2 = tracks[0].to_ltrb()
+        assert x2 - x1 == pytest.approx(80, abs=5) and y2 - y1 == pytest.approx(240, abs=5)
+
+    def test_a_short_occlusion_keeps_the_track_and_its_id(self, kind):
+        """Pendant l'occlusion, la piste perdue reste renvoyée : FaceBodyTracker
+        garde ainsi son nom, comme pour une piste DeepSORT en roue libre."""
+        backend = self.make(kind)
+        for frame in range(20):
+            first = backend.update([_walker(frame)], ULTRA_FRAME)
+        hidden = [backend.update([], ULTRA_FRAME) for _ in range(5)]
+        back = backend.update([_walker(26)], ULTRA_FRAME)
+
+        assert all([t.track_id for t in h] == [first[0].track_id] for h in hidden)
+        assert [t.track_id for t in back] == [first[0].track_id]
+
+    def test_a_weak_detection_extends_a_track_but_never_starts_one(self, kind):
+        backend = self.make(kind)
+        for frame in range(10):
+            tracks = backend.update([_walker(frame)], ULTRA_FRAME)
+        weak = backend.update([_walker(10, score=0.3)], ULTRA_FRAME)
+        lone = self.make(kind).update([_walker(0, score=0.3)] , ULTRA_FRAME)
+
+        assert [t.track_id for t in weak] == [tracks[0].track_id]
+        assert lone == []

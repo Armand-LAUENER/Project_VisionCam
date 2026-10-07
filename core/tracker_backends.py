@@ -9,6 +9,8 @@ exactement cette surface, ce qui permet de basculer de l'un à l'autre via
 
 - "python" : deep_sort_realtime 1.3.2.
 - "rust"   : crate deepsort-rs (PyO3).
+- "bytetrack", "botsort", "botsort-reid" : trackers d'ultralytics
+  (UltralyticsBackend), comparés à DeepSORT dans docs/tracking.md.
 
 Les deux ne font que l'association : les embeddings d'apparence sont calculés
 ici, par le même embedder (`core.appearance_embedder`) et sur les mêmes crops
@@ -148,6 +150,114 @@ class RustDeepSortBackend:
                                     np.asarray(embeddings, dtype=np.float32))
 
 
+class _Detections:
+    """Détections au format attendu par les trackers d'ultralytics (`Boxes`) :
+    `xywh` (centre), `conf`, `cls`, et l'indexation par masque."""
+
+    def __init__(self, xywh: np.ndarray, conf: np.ndarray, cls: np.ndarray) -> None:
+        self.xywh, self.conf, self.cls = xywh, conf, cls
+
+    @classmethod
+    def from_tuples(cls, detections: list[tuple]) -> _Detections:
+        ltwh = np.array([d[0] for d in detections], dtype=np.float32).reshape(-1, 4)
+        xywh = ltwh.copy()
+        xywh[:, :2] += ltwh[:, 2:] / 2
+        conf = np.array([d[1] for d in detections], dtype=np.float32)
+        return cls(xywh, conf, np.zeros(len(detections), dtype=np.float32))
+
+    def __len__(self) -> int:
+        return len(self.conf)
+
+    def __getitem__(self, index) -> _Detections:
+        return _Detections(self.xywh[index], self.conf[index], self.cls[index])
+
+
+class _UltralyticsTrack:
+    """Piste d'ultralytics vue avec la surface de deep_sort_realtime."""
+
+    __slots__ = ("track_id", "_ltrb")
+
+    def __init__(self, strack) -> None:
+        self.track_id = int(strack.track_id)
+        x, y, w, h = strack.tlwh
+        self._ltrb = np.array([x, y, x + w, y + h])
+
+    def is_confirmed(self) -> bool:
+        return True   # seules les pistes activées sont renvoyées
+
+    def to_ltrb(self):
+        return self._ltrb
+
+
+class UltralyticsBackend:
+    """ByteTrack ou BoT-SORT d'ultralytics (déjà installé pour YOLO).
+
+    Différences avec DeepSORT, compensées ici pour comparer les trackers et
+    non leurs conventions :
+      - ultralytics ne renvoie que les pistes vues sur l'image ; les pistes
+        perdues (`lost_stracks`, boîte prédite par le Kalman) sont renvoyées
+        aussi, comme les pistes en roue libre de DeepSORT : FaceBodyTracker
+        purge l'identité d'une piste absente, et une piste retrouvée après
+        une occultation perdrait sinon son nom ;
+      - le second passage de ByteTrack associe les détections faibles
+        (BYTETRACK_LOW_THRESH ≤ score < YOLO_CONF_THRESHOLD) : FaceBodyTracker
+        demande alors à YOLO de descendre jusqu'à BYTETRACK_LOW_THRESH ;
+      - caméra fixe : pas de compensation de mouvement (gmc_method none).
+
+    `botsort-reid` branche l'embedder d'apparence de DeepSORT (MobileNetV2)
+    comme ré-identification de BoT-SORT. Celle-ci ne départage que des pistes
+    et détections qui se recouvrent déjà (IoU ≥ proximity_thresh).
+    """
+
+    def __init__(self, kind: str) -> None:
+        from types import SimpleNamespace
+
+        from ultralytics.trackers.bot_sort import BOTSORT
+        from ultralytics.trackers.byte_tracker import BYTETracker
+
+        self.name = kind
+        with_reid = kind == "botsort-reid"
+        args = SimpleNamespace(
+            track_high_thresh=config.YOLO_CONF_THRESHOLD,
+            track_low_thresh=config.BYTETRACK_LOW_THRESH,
+            new_track_thresh=config.YOLO_CONF_THRESHOLD,
+            track_buffer=config.DEEPSORT_MAX_AGE,
+            match_thresh=config.BYTETRACK_MATCH_THRESH,
+            fuse_score=True,
+            gmc_method="none",
+            proximity_thresh=0.5,
+            appearance_thresh=0.8,
+            with_reid=with_reid,
+            model="auto",
+        )
+        if kind == "bytetrack":
+            self._tracker = BYTETracker(args, frame_rate=30)
+        else:
+            self._tracker = BOTSORT(args, frame_rate=30)
+            if with_reid:
+                _check_embedder()
+                embedder = build_embedder()
+                self._tracker.encoder = lambda img, boxes: self._embed(embedder, img, boxes)
+
+    @staticmethod
+    def _embed(embedder, frame, boxes):
+        """Embeddings des boîtes (xywh centre + indice) par l'embedder de DeepSORT."""
+        detections = [([x - w / 2, y - h / 2, w, h], 1.0, "person", None)
+                      for x, y, w, h, _ in boxes]
+        _, embeddings = _embed(embedder, detections, frame)
+        return list(embeddings)
+
+    def update(self, detections: list[tuple], frame: np.ndarray) -> list[TrackLike]:
+        detections = [d for d in detections if d[0][2] > 0 and d[0][3] > 0]
+        self._tracker.update(_Detections.from_tuples(detections), frame)
+        tracks = [t for t in self._tracker.tracked_stracks if t.is_activated]
+        tracks += self._tracker.lost_stracks
+        return [_UltralyticsTrack(t) for t in tracks]
+
+
+ULTRALYTICS_BACKENDS = ("bytetrack", "botsort", "botsort-reid")
+
+
 def build_body_tracker() -> BodyTrackerBackend:
     """Instancie le backend désigné par `config.TRACKER_BACKEND`."""
     backend = config.TRACKER_BACKEND
@@ -157,6 +267,10 @@ def build_body_tracker() -> BodyTrackerBackend:
     if backend == "rust":
         logger.info("Tracker de corps : deepsort-rs (backend rust)")
         return RustDeepSortBackend()
+    if backend in ULTRALYTICS_BACKENDS:
+        logger.info("Tracker de corps : %s (ultralytics)", backend)
+        return UltralyticsBackend(backend)
     raise ValueError(
-        f"TRACKER_BACKEND='{backend}' inconnu — valeurs acceptées : 'python', 'rust'."
+        f"TRACKER_BACKEND='{backend}' inconnu — valeurs acceptées : 'python', 'rust', "
+        f"{', '.join(repr(b) for b in ULTRALYTICS_BACKENDS)}."
     )
