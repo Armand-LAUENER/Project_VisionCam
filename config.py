@@ -18,8 +18,10 @@ load_dotenv()  # Charge .env sans écraser les variables d'environnement systèm
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DATA_DIR = os.path.join(BASE_DIR, "data")
-KNOWN_FACES_DIR = os.path.join(BASE_DIR, "known_faces")
-EMBEDDINGS_CACHE_PATH = os.path.join(DATA_DIR, "embeddings.npz")
+# Surchargeables pour rejouer un jeu public (tools/eval_identity.py) sans
+# toucher aux visages ni à l'historique de l'application.
+KNOWN_FACES_DIR = os.getenv("KNOWN_FACES_DIR", os.path.join(BASE_DIR, "known_faces"))
+EMBEDDINGS_CACHE_PATH = os.getenv("EMBEDDINGS_CACHE_PATH", os.path.join(DATA_DIR, "embeddings.npz"))
 
 
 # =============================================================================
@@ -347,7 +349,7 @@ PRESENCE_TIMEOUT = 5.0
 # Historique des présences (core/presence_log.py). Une session se ferme quand la
 # personne n'a plus été vue depuis PRESENCE_LOG_GAP_S : plus long que
 # PRESENCE_TIMEOUT, pour qu'une courte sortie du champ ne coupe pas la session.
-PRESENCE_DB_PATH = os.path.join(DATA_DIR, "presence.db")
+PRESENCE_DB_PATH = os.getenv("PRESENCE_DB_PATH", os.path.join(DATA_DIR, "presence.db"))
 PRESENCE_LOG_GAP_S = float(os.getenv("PRESENCE_LOG_GAP_S", "60"))
 # Durée de conservation (jours) des sessions terminées ; 0 = sans limite.
 # Purge au démarrage puis toutes les heures (minimisation des données, RGPD).
