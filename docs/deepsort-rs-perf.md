@@ -1,5 +1,10 @@
 # deepsort-rs — rendre l'association rapide quand il y a du monde
 
+> **Fait** dans deepsort-rs `ee5de44` (`perf(association)`), branché dans
+> VisionCam à `8484623`. Résultats dans `docs/performance.md`, section
+> « deepsort-rs 8484623 » : 43,1 → 2,9 ms à 40 personnes, pistes identiques
+> sur MOT17-04.
+
 Changements à faire dans le dépôt `deepsort-rs` (révision actuelle
 `6f12a5d`), puis à rebrancher dans VisionCam. Mesures de départ dans
 `docs/performance.md`, section « Tracker Rust à 4 caméras ».

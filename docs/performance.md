@@ -394,3 +394,47 @@ budget 100) :
 Le Rust gagne sur les scènes de CHIRLA (quelques personnes) et perd dès une
 dizaine : son coût croît bien plus vite que celui de deep_sort_realtime,
 dont les distances passent par numpy.
+
+### Processus de caméras (`CAMERA_WORKERS=process`)
+
+Même protocole, application complète, caméras réparties en processus de 2
+(`CAMERAS_PER_WORKER=2`, core/camera_worker.py), tracker Python, le
+2026-10-07 :
+
+| | 2 caméras, threads | 2 caméras, 1 processus | 4 caméras, threads | 4 caméras, 2 processus |
+|:--|---:|---:|---:|---:|
+| i/s par caméra | 29,4 | 30,1 | 14,8–19,4 | **29,9–30,2** |
+| i/s au total | 58,7 | 60,2 | 71,4 | **120,0** |
+| Latence p50 / p95 | 16,4 / 59,7 ms | 16,2 / 39,1 ms | 97,8 / 163,1 ms | 19,0 / 46,1 ms |
+| Détection p50 | 9,7 ms | 10,8 ms | 35,0 ms | 11,8 ms |
+| Images jetées | 266 | 0 | 11 860 | 1 |
+| VRAM (`wsl_vram_mb`) | 835 Mo | 857 Mo | 1 251 Mo | 1 598 Mo |
+
+En mode processus, l'image complète et la latence se mesurent dans
+l'application, transfert depuis le processus compris. RAM : 2,0 Go pour
+l'application et ~2,6 Go par processus de caméras ; à 4 caméras, WSL en
+utilise 11,5 Go sur 16 (4,4 Go restés libres au pire). Chaque processus met
+10 à 45 s à atteindre sa cadence au démarrage.
+
+### deepsort-rs 8484623 : distances par sgemm, GIL relâché
+
+Après `perf(association)` dans deepsort-rs (échantillons `f32` contigus,
+distances par produit matriciel, GIL relâché pendant `update`), le défaut
+mesuré plus haut disparaît. Association seule, mêmes personnes synthétiques
+(deux runs) :
+
+| Personnes par image | Python | Rust 6f12a5d | Rust 8484623 |
+|---:|---:|---:|---:|
+| 3 | 0,68–0,73 ms | 0,26 ms | **0,13 ms** |
+| 10 | 1,94 ms | 2,65 ms | **0,36 ms** |
+| 40 | 9,2–9,4 ms | 43,12 ms | **2,84–2,93 ms** |
+
+MOT17-04 : pistes toujours identiques au Python (MOTA 73,6 %, IDF1 72,3 %,
+102 IDs, FP 3 204, FN 9 247) ; 31–32 ms par image, embedder compris, contre
+42–45 ms pour le Python et 138–145 ms avant.
+
+À 4 caméras dans un seul processus (CHIRLA), rien ne change : 95,3 i/s au
+total contre 96,4, tracking p50 6,4 ms dans les deux cas. Avec 3 à 6
+personnes par image, l'association ne prenait déjà que ~0,2 ms : le GIL
+qu'elle libère maintenant ne pesait rien, le plafond vient du reste du
+pipeline. Le gain vaut pour les scènes chargées.

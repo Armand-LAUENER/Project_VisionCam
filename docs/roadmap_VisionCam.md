@@ -173,8 +173,14 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
   sélecteur sur la page Live. Deux caméras tiennent la cadence (29,4 i/s
   chacune), le total plafonne vers 72 i/s au-delà (docs/performance.md).
 - [ ] Mesurer le décalage d'horloge des caméras IP (reporté de 2.1).
-- [ ] Partage du GPU : lots d'images de plusieurs caméras ou cadence réduite
-  par caméra.
+- [x] Partage du GPU. Mesure : le GPU n'est pas la limite, le GIL l'est (4
+  caméras en 2 processus : 120 i/s). Pas de lots d'images ni de cadence
+  réduite : `CAMERA_WORKERS=process`, un processus par `CAMERAS_PER_WORKER`
+  caméras (core/camera_worker.py) ; 4 caméras à 30 i/s chacune
+  (docs/performance.md).
+- [ ] Processus de caméras, suite : image brute à la demande pour
+  /api/capture et /bench/pose, rechargement de la base de visages après
+  enrôlement / renommage / suppression, relance d'un processus mort.
 
 ### 2.3 Identités globales
 
