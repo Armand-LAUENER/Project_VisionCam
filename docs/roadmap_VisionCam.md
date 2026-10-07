@@ -225,16 +225,19 @@ d'association inter-caméras, sur le protocole réglage/validation existant.
 
 ### 2.7 Banc de ressources et test de charge
 
-- [ ] Instrumentation par étape (`psutil` + `pynvml`, `torch.cuda.synchronize`
-  autour des mesures GPU, warm-up exclu, plusieurs exécutions).
+- [x] Instrumentation par étape (`psutil` + `pynvml`, warm-up exclu) : journal
+  d'endurance (core/endurance.py, core/system_probe.py), étape « decode »
+  ajoutée. Pas de `torch.cuda.synchronize` : chaque étape rapatrie ses
+  sorties sur le CPU avant la fin du chronomètre.
 - [ ] Balayage : taille de modèle, FP32/FP16/INT8, résolution, cadence de
   détection, nombre de visages.
-- [ ] 2, 4, 8, 16 flux simulés : caméras tenues à 5 / 10 / 30 i/s, goulot
-  (décodage, GPU, CPU), latence p95.
+- [x] 2, 4, 8, 16 flux simulés : caméras tenues à 5 / 10 / 30 i/s, goulot
+  (décodage, GPU, CPU), latence p95. `tools/bench_load.py`, `CAMERA_MAX_FPS` ;
+  goulot : GIL par processus, borné par la RAM (docs/performance.md).
 - [ ] Frontière de Pareto qualité/coût, trois niveaux (« léger », « équilibré »,
   « max ») avec les ressources mesurées. Pas de « config minimale » sur du
   matériel non testé : des besoins mesurés (VRAM pic, ms GPU par image).
-- [ ] Préciser que les mesures viennent de WSL2.
+- [x] Préciser que les mesures viennent de WSL2.
 
 ---
 

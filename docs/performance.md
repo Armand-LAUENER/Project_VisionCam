@@ -495,3 +495,49 @@ total contre 96,4, tracking p50 6,4 ms dans les deux cas. Avec 3 à 6
 personnes par image, l'association ne prenait déjà que ~0,2 ms : le GIL
 qu'elle libère maintenant ne pesait rien, le plafond vient du reste du
 pipeline. Le gain vaut pour les scènes chargées.
+
+## Test de charge (roadmap 2.7)
+
+`tools/bench_load.py` : application complète, N vidéos CHIRLA rejouées en
+`realtime` et en boucle, `CAMERA_WORKERS=process`, cadence plafonnée par
+caméra (`CAMERA_MAX_FPS`), 60 s de chauffe puis 120 s de mesure par palier,
+aucune page ouverte. Caméras par processus : 2 jusqu'à 4 flux, 4 pour 8, 8
+pour 16 (chaque processus pèse ~2,6 Go de RAM, WSL en a 15). RTX 4060 8 Go,
+12 cœurs, **WSL2** : VRAM de WSL lue dans les compteurs Windows, utilisation
+GPU par NVML. Le 2026-10-07.
+
+| Flux × i/s visés | i/s tenus par caméra (min) | Total | Latence p50 / p95 | Détection p50 | Reconnaissance p50 | Images jetées | CPU (cœurs) | RAM | VRAM WSL | GPU (NVML) | Fréquence GPU |
+|:--|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 × 5 | 5,0 (5,0) | 10 | 40 / 100 ms | 29,7 ms | 43,7 ms | 0 | 0,5 | 4,5 Go | 857 Mo | 15 % | 360 MHz |
+| 2 × 10 | 10,0 (10,0) | 20 | 27 / 68 ms | 20,1 ms | 24,4 ms | 0 | 0,6 | 4,8 Go | 857 Mo | 35 % | 615 MHz |
+| 2 × 30 | 30,0 (30,0) | 60 | 18 / 38 ms | 12,0 ms | 10,5 ms | 0 | 1,1 | 4,5 Go | 857 Mo | 32 % | 1 132 MHz |
+| 4 × 5 | 5,0 (5,0) | 20 | 19 / 86 ms | 13,4 ms | 26,5 ms | 0 | 0,6 | 7,1 Go | 1 598 Mo | 13 % | 1 320 MHz |
+| 4 × 10 | 10,0 (10,0) | 40 | 16 / 43 ms | 9,1 ms | 13,4 ms | 0 | 0,8 | 7,1 Go | 1 594 Mo | 27 % | 1 312 MHz |
+| 4 × 30 | 29,9 (29,8) | 120 | 21 / 42 ms | 14,3 ms | 10,4 ms | 0 | 2,3 | 7,1 Go | 1 598 Mo | 54 % | 2 790 MHz |
+| 8 × 5 | 5,0 (5,0) | 40 | 36 / 86 ms | 24,9 ms | 19,0 ms | 0 | 1,4 | 7,5 Go | 2 476 Mo | 22 % | 1 102 MHz |
+| 8 × 10 | 10,0 (9,9) | 80 | 24 / 57 ms | 15,0 ms | 17,4 ms | 0 | 1,8 | 7,4 Go | 2 428 Mo | 40 % | 1 882 MHz |
+| 8 × 30 | **19,0 (16,4)** | 152 | 98 / 149 ms | 35,7 ms | 29,7 ms | 9 546 | 4,9 | 7,6 Go | 2 468 Mo | 69 % | 2 790 MHz |
+| 16 × 5 | 4,9 (4,7) | 78 | 118 / 437 ms | 65,4 ms | 32,6 ms | 178 | 4,1 | 8,3 Go | 4 036 Mo | 40 % | 2 775 MHz |
+| 16 × 10 | **6,3 (4,3)** | 101 | 274 / 489 ms | 66,8 ms | 58,7 ms | 6 428 | 4,9 | 8,3 Go | 3 960 Mo | 46 % | 2 790 MHz |
+| 16 × 30 | **7,3 (4,3)** | 117 | 155 / 374 ms | 68,9 ms | 71,9 ms | 38 241 | 5,1 | 8,5 Go | 4 010 Mo | 46 % | 2 790 MHz |
+
+Décodage (vidéo 1280×720, hors attente de l'image) : 0,4 à 1,4 ms par image.
+
+- **Tenus** : toutes les cadences jusqu'à 4 flux ; 8 flux jusqu'à 10 i/s ;
+  16 flux à 5 i/s seulement, avec une latence p95 de 437 ms.
+- **Le goulot est le GIL de chaque processus, et la RAM qui borne le nombre
+  de processus.** Ni le GPU (NVML ≤ 69 %, VRAM ≤ 4 Go sur 8), ni le décodage
+  (≤ 1,4 ms), ni le CPU global (≤ 5 cœurs sur 12) ne saturent. Un processus
+  de 4 caméras plafonne à ~76 i/s (8 × 30) ; à 8 caméras par processus, la
+  détection passe de ~10 à ~66 ms par image (attente du GIL) et le total
+  retombe à 78-117 i/s. Plus de processus lèveraient ce plafond, mais à
+  ~2,6 Go de RAM chacun : 4 processus pour 16 flux dépasseraient la mémoire
+  de WSL.
+- **À faible charge, le GPU baisse sa fréquence** (360 MHz à 2 × 5 i/s,
+  2 790 MHz à pleine charge) : chaque image y prend plus de temps (détection
+  29,7 ms contre 12,0 à 2 × 30), d'où une latence plus haute à 5 i/s qu'à
+  30. Le débit n'en souffre pas.
+- **Besoins mesurés**, pour dimensionner une autre machine : ~2,6 Go de RAM
+  par processus de caméras plus ~2 Go pour l'application, ~230 Mo de VRAM
+  par processus plus ~200 Mo par caméra, et un processus par tranche de
+  ~70 images traitées par seconde.
