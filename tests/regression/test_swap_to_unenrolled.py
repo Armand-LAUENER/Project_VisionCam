@@ -9,6 +9,9 @@ de présence enregistrait Alice, et UnknownWatcher ne signalait jamais rien.
 Fix : après RECOGNITION_UNKNOWN_STREAK visages nets successifs reconnus
 « Inconnu », la piste perd son nom. Un « Inconnu » isolé ne suffit pas.
 
+Second bug, introduit par ce fix : une personne enrôlée qui se retourne sort
+« Inconnu » de profil et perdait son nom. Seuls les visages de face comptent.
+
 Le détecteur, le tracker et InsightFace sont remplacés par des doubles.
 """
 
@@ -58,6 +61,7 @@ def make_tracker(track):
     tracker.body_tracker = MagicMock()
     tracker.body_tracker.update.return_value = [track]
     tracker.face_name = 'Alice'
+    tracker.face_frontal = True
 
     def fake_recognize(frame, tracks_to_recognize):
         name = tracker.face_name
@@ -65,7 +69,8 @@ def make_tracker(track):
             name = name()
         confidence = 0.9 if name != 'Inconnu' else 0.2
         return [{'name': name, 'confidence': confidence, 'bbox': [0, 0, 1, 1],
-                 'source_track_id': t.track_id} for t in tracks_to_recognize]
+                 'source_track_id': t.track_id, 'frontal': tracker.face_frontal}
+                for t in tracks_to_recognize]
 
     tracker._recognize_faces_for_tracks = fake_recognize
     return tracker
@@ -116,6 +121,21 @@ class TestSwapToUnenrolled:
 
         answers = iter(['Inconnu', 'Alice'] * 200)
         tracker.face_name = lambda: next(answers)
+        name, _ = run(tracker, 60, 600)
+
+        assert name == 'Alice'
+
+    def test_turning_away_keeps_the_name(self):
+        """Régression : Alice se retourne, ses visages de profil sortent « Inconnu ».
+
+        Ils ne comptent plus contre son nom : seuls les visages de face le font
+        tomber (un inconnu qui récupère la piste regarde tôt ou tard la caméra).
+        """
+        tracker = make_tracker(make_track(1))
+        run(tracker, 0, 60)
+
+        tracker.face_name = 'Inconnu'
+        tracker.face_frontal = False
         name, _ = run(tracker, 60, 600)
 
         assert name == 'Alice'

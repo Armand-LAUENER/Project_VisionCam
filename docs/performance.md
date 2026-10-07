@@ -177,6 +177,29 @@ le nombre de visages exploitables, pas le seuil. Le « 80 % de bons noms par
 visage » du tableau précédent ne vaut que pour les visages assez grands et de
 face, qui sont l'exception dans une scène de bureau vue de loin.
 
+### Nom gardé quand la personne se retourne (`FRONTAL_NOSE_MARGIN`)
+
+Depuis le correctif de l'échange de pistes (3 visages « Inconnu » d'affilée
+retirent le nom), une personne enrôlée qui se retournait perdait son nom : de
+profil ou de trois-quarts, SCRFD trouve encore un visage, qu'ArcFace juge
+« Inconnu ». Seuls les visages de face comptent désormais dans cette série (nez
+dans la partie centrale de l'écart entre les yeux, points SCRFD). Même
+protocole, le 2026-10-07 :
+
+| `seq_026_camera_3` | Noms retirés | Enrôlés : bon nom | dont id 2 | Mauvais nom | Non enrôlés nommés à tort |
+|:--|---:|---:|---:|---:|---:|
+| Avant (tout « Inconnu » compte) | 10 | 37,4 % | 17,4 % | 0,7 % | 0,0 % |
+| Marge 0,10 | 4 | 38,1 % | 18,7 % | 0,7 % | 0,0 % |
+| **Marge 0,25** (défaut) | **2** | **39,6 %** | **28,6 %** | 0,7 % | 0,0 % |
+| Marge 0,40 | 2 | 39,6 % | 28,6 % | 0,7 % | 0,0 % |
+
+Sur `seq_025_camera_2`, rien ne change (1 nom retiré avant comme après) :
+les visages y sont presque tous trop petits pour être reconnus. 0,25 est la
+plus petite marge qui atteint le palier : une marge plus grande écarterait
+davantage de visages de face et affaiblirait la protection contre l'échange
+de pistes, que CHIRLA ne met pas en scène (couverte par
+`tests/regression/test_swap_to_unenrolled.py`).
+
 Limites : deux séquences d'un même bureau ; les images d'une même personne ne
 sont pas indépendantes (les intervalles de confiance de l'outil sont
 indicatifs) ; « sans piste » mêle les personnes non détectées et les boîtes

@@ -48,7 +48,7 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   → Soit sauter vraiment ce cas (économise des appels GPU inutiles sur les
   personnes de dos), soit corriger le commentaire.
 
-- [ ] **Le nom tombe quand une personne reconnue se retourne** —
+- [x] **Le nom tombe quand une personne reconnue se retourne** —
   `core/face_body_tracker.py:590` (depuis `78f01aa`). La piste est conservée,
   mais SCRFD trouve encore un visage de profil ou de trois-quarts ≥ 40 px,
   ArcFace le juge « Inconnu », et au bout de `RECOGNITION_UNKNOWN_STREAK` le
@@ -56,6 +56,9 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   → Ne compter un « Inconnu » que pour un visage de face (nez entre les yeux
   d'après les 5 points SCRFD). Vérifier `test_swap_to_unenrolled` et
   mesurer `tools/eval_identity.py` avant/après sur CHIRLA.
+  Fait : `FRONTAL_NOSE_MARGIN=0.25` ; sur `seq_026_camera_3`, 10 → 2 noms
+  retirés, bons noms 37,4 → 39,6 %, mauvais noms inchangés
+  (docs/performance.md).
 
 ## 2. Performances
 

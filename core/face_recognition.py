@@ -77,6 +77,21 @@ def _flatten_model_dir(name, root="~/.insightface"):
     return True
 
 
+def is_frontal(kps, margin: float) -> bool:
+    """Visage de face d'après ses 5 points SCRFD (yeux, nez, coins de la bouche).
+
+    Le nez se projette au milieu des yeux de face, et glisse vers l'un d'eux,
+    puis au-delà, quand la tête tourne. De face si sa position horizontale,
+    en fraction de l'écart entre les yeux, est dans [margin, 1 - margin].
+    """
+    eyes_x = sorted((float(kps[0][0]), float(kps[1][0])))
+    span = eyes_x[1] - eyes_x[0]
+    if span <= 0:
+        return False
+    position = (float(kps[2][0]) - eyes_x[0]) / span
+    return margin <= position <= 1 - margin
+
+
 class FaceRecognizer:
     # Remplacer l'une des deux listes invalide la matrice empilée de _identify.
     # Une modification en place (_upsert_embedding) l'invalide elle-même.
@@ -458,7 +473,7 @@ class FaceRecognizer:
 
         Returns:
             { 'bbox': [x1,y1,x2,y2], 'name': str, 'confidence': float,
-              'embedding': np.ndarray }, ou None si aucun visage.
+              'embedding': np.ndarray, 'frontal': bool }, ou None si aucun visage.
         """
         bboxes, kpss = self.app.det_model.detect(crop, max_num=0, metric='default')
         if bboxes.shape[0] == 0 or kpss is None:
@@ -479,6 +494,7 @@ class FaceRecognizer:
             'name': name,
             'confidence': confidence,
             'embedding': face.embedding,
+            'frontal': is_frontal(kpss[idx], config.FRONTAL_NOSE_MARGIN),
         }
 
     # =========================================================================

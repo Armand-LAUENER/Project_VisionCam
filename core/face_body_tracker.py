@@ -510,7 +510,7 @@ class FaceBodyTracker:
         Règles absolues :
           - Un 'Inconnu' isolé ne remplace pas une identité établie : il en
             faut RECOGNITION_UNKNOWN_STREAK d'affilée (échange de pistes avec
-            une personne non enrôlée).
+            une personne non enrôlée), et de face (FRONTAL_NOSE_MARGIN).
           - Confiance < RECOGNITION_THRESHOLD → rejeté.
           - Anti-clonage : une identité ne peut appartenir qu'à un seul corps.
             Une piste visible reconnue sous ce nom depuis moins de
@@ -523,8 +523,11 @@ class FaceBodyTracker:
         for face in faces:
             if face['name'] == 'Inconnu':
                 # Seulement par source_track_id : le repli géométrique pourrait
-                # retirer son nom à une autre piste que celle du crop.
-                if face.get('source_track_id') in active_track_map:
+                # retirer son nom à une autre piste que celle du crop. Et
+                # seulement de face : de profil, la personne enrôlée elle-même
+                # sort « Inconnu » (elle perdait son nom en se retournant).
+                if (face.get('source_track_id') in active_track_map
+                        and face.get('frontal', True)):
                     self._count_unknown_face(face['source_track_id'])
                 continue
             if face['confidence'] < config.RECOGNITION_THRESHOLD:

@@ -152,6 +152,13 @@ RECOGNITION_MIN_FACE_PX = int(os.getenv("RECOGNITION_MIN_FACE_PX", "40"))
 # « Inconnu » sur ~16 % de ses visages ≥ 40 px (tableau bench_face du README) :
 # un seul échec ne doit pas lui retirer son nom.
 RECOGNITION_UNKNOWN_STREAK = int(os.getenv("RECOGNITION_UNKNOWN_STREAK", "3"))
+# Seuls les visages de face comptent dans cette série : de profil ou de
+# trois-quarts, une personne enrôlée sort « Inconnu » et perdait son nom en
+# se retournant. De face : le nez est dans la partie centrale de l'écart entre
+# les yeux (points SCRFD), à au moins FRONTAL_NOSE_MARGIN de chaque œil en
+# fraction de cet écart. 0 : nez simplement entre les yeux. 0,25 : plus petite
+# marge au palier sur CHIRLA (10 → 2 noms retirés, docs/performance.md).
+FRONTAL_NOSE_MARGIN = float(os.getenv("FRONTAL_NOSE_MARGIN", "0.25"))
 
 # Hystérésis de l'anti-clonage (roadmap 1.8) : une piste visible dont le visage
 # a été reconnu sous son nom depuis moins de IDENTITY_PROTECT_FRAMES le garde
