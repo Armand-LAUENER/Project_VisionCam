@@ -243,8 +243,16 @@ Chiffres et protocoles dans docs/performance.md et docs/tracking.md.
 
 ### Identité
 
-- **Une petite perturbation des détections fait nommer une personne non
-  enrôlée.** Avec le moteur YOLO dynamique (mêmes poids, FP16, construit à
+- **Une identité établie se renomme sur 2 votes sur 3.** La personne 6,
+  nommée correctement depuis des minutes, devient `id_5` pendant 275 images
+  (`seq_026`, moteur dynamique). → Exiger plus pour renommer une piste déjà
+  nommée que pour nommer une piste « Inconnu » (fenêtre de vote plus longue,
+  ou marge de confiance sur l'ancien nom), à mesurer sur CHIRLA.
+
+- [x] **Une petite perturbation des détections fait nommer une personne non
+  enrôlée.** Cause : échange de pistes après un croisement, vue de dos ;
+  corrigé par `CROSSING_IOU` / `CROSSING_WINDOW_FRAMES` (21 → 0 %,
+  docs/performance.md). Avec le moteur YOLO dynamique (mêmes poids, FP16, construit à
   part), `seq_026_camera_3` passe de 0 à 21 % d'images où un non enrôlé
   porte un nom, et `seq_025_camera_5` de 0,1 à 2,1 % de mauvais noms
   (docs/performance.md, « YOLO par lots »). Ce n'est pas le moteur qui

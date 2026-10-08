@@ -200,7 +200,38 @@ davantage de visages de face et affaiblirait la protection contre l'échange
 de pistes, que CHIRLA ne met pas en scène (couverte par
 `tests/regression/test_swap_to_unenrolled.py`).
 
-Limites : deux séquences d'un même bureau ; les images d'une même personne ne
+### Échange de pistes après un croisement (`CROSSING_IOU`, `CROSSING_WINDOW_FRAMES`)
+
+Cas réel (moteur YOLO dynamique, `seq_026_camera_3`, 2026-10-08) : les
+personnes 2 (enrôlée) et 9 (non enrôlée) se croisent (recouvrement 0,29) ; la
+personne 2, masquée, n'est plus détectée, sa piste saute sur la personne 9 et
+garde `id_2` pendant 529 images (17,6 s). Sur la tête de la personne 9
+pendant ce temps : 57 fois aucun visage, 38 trop petits, 7 nets mais tournés
+(écartés depuis `FRONTAL_NOSE_MARGIN`), 3 reconnus à tort `id_6` (qui
+remettent la série d'« Inconnu » à zéro), 1 seul « Inconnu » de face. La
+série d'« Inconnu » ne peut rien : vue de dos, la personne 9 ressemble à la
+personne 2 qui se retourne.
+
+Règle : quand deux pistes visibles se recouvrent (IoU ≥ 0,2) et que l'une
+disparaît dans les 10 images, la survivante perd son nom jusqu'au prochain
+visage reconnu.
+
+| Rejeu | Bons noms | Mauvais noms | Non enrôlés nommés | Suspensions |
+|:--|---:|---:|---:|---:|
+| `seq_026`, moteur actuel, sans la règle | 39,6 % | 0,7 % | 0,0 % | — |
+| `seq_026`, moteur actuel, fenêtre 30 / **10** | 36,6 / **36,9** % | 0,7 % | 0,0 % | 14 / 12 |
+| `seq_025` caméra 2, moteur actuel | 2,6 % (inchangé) | 0,0 % | 0,0 % | 0 |
+| `seq_026`, moteur dynamique, sans la règle | 38,1 % | 1,4 % | **21,0 %** | — |
+| `seq_026`, moteur dynamique, avec la règle | 37,5 % | 1,4 % | **0,0 %** | 10 |
+
+Le coût (−2,7 points de bons noms) est le prix du cas corrigé : une mauvaise
+identité coûte plus cher qu'un « Inconnu ». Les mauvais noms restants ne sont
+pas des échanges de pistes mais des erreurs de reconnaissance sur une piste
+qui suit la bonne personne : la personne 12 reconnue `id_6` pendant 239 images
+(`seq_025` caméra 5), la personne 6, nommée depuis des minutes, renommée
+`id_5` pendant 275 images par 2 votes sur 3.
+
+
 sont pas indépendantes (les intervalles de confiance de l'outil sont
 indicatifs) ; « sans piste » mêle les personnes non détectées et les boîtes
 dont l'IoU avec la vérité terrain reste sous 0,5 (personne assise en partie
