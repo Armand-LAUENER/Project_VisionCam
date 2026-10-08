@@ -45,9 +45,18 @@ def test_a_hand_off_becomes_a_link_with_its_transit_time(annotations):
     topology = infer(str(annotations))
 
     links = {(link["from"], link["to"]): link for link in topology["links"]}
-    assert set(links) == {("camera_1", "camera_2")}
     assert links[("camera_1", "camera_2")]["passages"] == 3
     assert links[("camera_1", "camera_2")]["transit_s"]["median"] == pytest.approx(3.0, abs=0.1)
+    assert sum(links[("camera_1", "camera_2")]["transit_histogram"]["counts"]) == 3
+
+
+def test_simultaneous_views_also_give_a_negative_transit(annotations):
+    """Champs qui se recouvrent : l'apparition suivante commence avant la fin de
+    la précédente ; le délai négatif fait partie de la distribution du lien."""
+    links = {(link["from"], link["to"]): link for link in infer(str(annotations))["links"]}
+    overlap = [link for pair, link in links.items() if set(pair) == {"camera_2", "camera_3"}]
+
+    assert len(overlap) == 1 and overlap[0]["transit_s"]["median"] < 0
 
 
 def test_simultaneous_views_are_an_overlap(annotations):

@@ -227,3 +227,32 @@ bons noms (±1,5 point) sont dans le bruit, celui des mauvais noms est plus
 net mais indicatif. À refaire sur une scène où les visages restent visibles
 mais où le suivi casse (foule, croisements), ou avec des identités globales
 (roadmap 2.3).
+
+## Topologie des caméras (roadmap 2.4)
+
+CHIRLA ne fournit pas le plan de ses 7 caméras : `tools/infer_topology.py` le
+déduit des annotations (identités communes à toutes les caméras d'une
+séquence) et écrit `topologies/chirla.yaml`, agrégats seulement :
+recouvrements des champs (caméras 1-2-3 : une même pièce, 78 % entre 2 et 3),
+liens avec l'histogramme de leurs temps de transit (6 → 5 : 91 passages,
+médiane 1,4 s ; 4 → 5 : 14,3 s), zones d'entrée et de sortie par caméra.
+
+`core/topology.py` en tire la plausibilité qu'une sortie de la caméra A soit
+l'entrée sur B Δ secondes plus tard, en distribution et non en fenêtre
+stricte : P(B | sortie de A) × densité de Δ sur le lien (noyau de 1 s).
+Validation sans fuite (`tools/eval_topology.py`) : topologie apprise sur les 7
+séquences de juin-juillet, jugée sur les 3 de décembre ; 68 301 paires
+candidates (sortie sur A, entrée sur B entre −5 et +60 s), dont 751 vrais
+passages. Le 2026-10-08 :
+
+| Score | AUC | Faux écartés en gardant 90 % des vrais |
+|:--|---:|---:|
+| Délai seul (plus c'est proche, plus c'est plausible) | 0,925 | 87,2 % |
+| Fenêtre p10-p90 plate (premier essai) | 0,862 | — |
+| **Vraisemblance du délai selon le lien** | **0,961** | 87,6 % |
+
+Une fenêtre plate fait moins bien que le seul délai : c'est la distribution
+qui apporte l'information. Le gain vient surtout du classement des cas
+ambigus (1 − AUC divisé par deux), ce qui sert à départager plusieurs
+candidats ; au seuil de 90 % de rappel, les deux écartent autant de faux. Les
+liens vus une seule fois comptent (0,942 si on ne garde que ceux vus 3 fois).

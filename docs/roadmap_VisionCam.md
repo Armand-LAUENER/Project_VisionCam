@@ -197,10 +197,15 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
 
 ### 2.4 Topologie des caméras
 
-- [ ] Fichier YAML : zones d'entrée/sortie par caméra, liens entre zones,
-  fenêtres de transit, zones « vers l'extérieur ».
-- [ ] Association inter-caméras limitée aux candidats plausibles ; fenêtre de
+- [x] Fichier YAML : zones d'entrée/sortie par caméra, liens entre caméras,
+  distribution des transits (`topologies/chirla.yaml`). Pas de liens entre
+  zones ni de zones « vers l'extérieur » : sans plan, rien ne les étiquette
+  dans CHIRLA.
+- [x] Association inter-caméras limitée aux candidats plausibles ; fenêtre de
   temps en distribution (score réduit), pas en contrainte stricte.
+  `core/topology.py` : P(B | A) × densité du délai ; AUC 0,961 contre 0,925
+  pour le seul délai (appris juin-juillet, jugé décembre ; docs/tracking.md).
+  L'association elle-même, avec l'apparence, vient en 2.5.
 - [ ] Si des champs de vision se chevauchent : homographie vers un plan au sol
   commun.
 - [x] Vérifier si CHIRLA fournit la disposition des caméras ; sinon la déduire

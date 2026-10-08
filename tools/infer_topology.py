@@ -8,9 +8,10 @@ sans trou de plus de GAP_S) donnent :
 
   - le recouvrement des champs : la même personne visible au même instant sur
     deux caméras (part des images-personnes de A aussi vues sur B) ;
-  - les passages : une apparition qui se termine sur A, suivie sans
-    recouvrement d'une apparition sur B dans les MAX_TRANSIT_S secondes, avec
-    la distribution des temps de transit ;
+  - les passages : l'apparition suivante d'une personne commence sur B ≠ A
+    entre MIN_TRANSIT_S et MAX_TRANSIT_S après la fin de celle sur A, avec
+    l'histogramme des temps de transit (pas de HIST_BIN_S), que
+    core/topology.py lit comme une distribution ;
   - les zones d'entrée et de sortie de chaque caméra : où, dans l'image, les
     apparitions commencent et finissent (pied de la boîte, grille 3 × 3 sur
     l'étendue des boîtes annotées, `observed_extent` : la taille des images
@@ -40,7 +41,11 @@ import yaml
 FPS = 30
 GAP_S = 1.0
 MAX_TRANSIT_S = 60.0
-MIN_PASSAGES = 3
+# Une apparition sur B peut commencer un peu avant la fin de celle sur A
+# (champs qui se recouvrent) : délais comptés à partir de MIN_TRANSIT_S.
+MIN_TRANSIT_S = -5.0
+HIST_BIN_S = 0.5
+MIN_PASSAGES = 2
 CAMERA = re.compile(r"(camera_\d+)_")
 COLUMNS = ("gauche", "centre", "droite")
 ROWS = ("haut", "milieu", "bas")
@@ -88,7 +93,8 @@ def zone(foot, width, height) -> str:
     return f"{row}-{col}"
 
 
-def infer(annotation_root: str) -> dict:
+def infer(annotation_root: str, sequences: list[str] | None = None) -> dict:
+    """Topologie des séquences `sequences` (noms seq_*), toutes par défaut."""
     overlap_frames = Counter()      # (A, B) → images-personnes de A aussi vues sur B
     person_frames = Counter()       # A → images-personnes
     transits = defaultdict(list)    # (A, B) → secondes
@@ -96,7 +102,8 @@ def infer(annotation_root: str) -> dict:
     exits = defaultdict(Counter)
     sizes = defaultdict(lambda: [0, 0])
     gap = int(GAP_S * FPS)
-    sequences = sorted(glob.glob(os.path.join(os.path.expanduser(annotation_root), "seq_*")))
+    sequences = sorted(p for p in glob.glob(os.path.join(os.path.expanduser(annotation_root), "seq_*"))
+                       if sequences is None or os.path.basename(p) in sequences)
 
     for seq_dir in sequences:
         cameras = load_sequence(seq_dir)
@@ -125,7 +132,7 @@ def infer(annotation_root: str) -> dict:
                 exits[camera][zone(app["foot_end"], *sizes[camera])] += 1
             for (a, app_a), (b, app_b) in zip(apps, apps[1:]):
                 delta = (app_b["start"] - app_a["end"]) / FPS
-                if a != b and 0 <= delta <= MAX_TRANSIT_S:
+                if a != b and MIN_TRANSIT_S <= delta <= MAX_TRANSIT_S:
                     transits[(a, b)].append(delta)
 
     cams = sorted(person_frames)
@@ -152,11 +159,15 @@ def infer(annotation_root: str) -> dict:
         if len(deltas) < MIN_PASSAGES:
             continue
         d = np.array(deltas)
+        edges = np.arange(MIN_TRANSIT_S, MAX_TRANSIT_S + HIST_BIN_S, HIST_BIN_S)
+        counts, _ = np.histogram(d, bins=edges)
         topology["links"].append({
             "from": a, "to": b, "passages": len(d),
             "transit_s": {"p10": round(float(np.percentile(d, 10)), 1),
                           "median": round(float(np.median(d)), 1),
                           "p90": round(float(np.percentile(d, 90)), 1)},
+            "transit_histogram": {"start_s": MIN_TRANSIT_S, "bin_s": HIST_BIN_S,
+                                  "counts": [int(c) for c in counts]},
         })
     return topology
 
