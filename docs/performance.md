@@ -298,6 +298,48 @@ Chaque caméra garde exactement ses chiffres du rejeu seul (caméras 2 de
   limite reste le nombre de visages exploitables, pas leur partage.
 
 
+## Reconnaissance sur ChokePoint (galerie de photos → vidéo de surveillance)
+
+CHIRLA filme de loin : la plupart des têtes n'y ont pas de visage exploitable,
+et ses chiffres mesurent surtout le suivi. [ChokePoint](https://zenodo.org/record/815657)
+(NICTA, CC BY-NC 4.0) filme des personnes qui franchissent une porte, trois
+caméras au-dessus de chaque portail (800×600, 30 i/s), avec la position des
+yeux annotée image par image et deux photos posées par personne : le
+protocole de VisionCam, enrôler à partir de photos puis reconnaître dans la
+vidéo.
+
+Protocole (`tools/convert_chokepoint.py`, `tools/eval_identity.py` en mode
+yeux) : galerie des photos `Neutral` et `Smile` de 24 personnes ; les 5
+personnes 23 à 27 laissées hors galerie (non enrôlées) ; rejeu `every_frame`
+des 8 séquences du portail 1 (entrées `P1E_S1-4`, sorties `P1L_S1-4`), leurs 3
+caméras chacune ; une personne est couverte par la piste affichée qui
+contient le milieu de ses yeux. Configuration déployée, avec les règles de
+croisement et de renommage. Le 2026-10-08.
+
+| Portail 1, 24 caméras-séquences | Images-personnes | Bon nom (enrôlés) / « Inconnu » (non enrôlés) | Mauvais nom | « Inconnu » | Sans piste |
+|:--|---:|---:|---:|---:|---:|
+| Enrôlés, entrées | 10 719 | **81,5 %** | 1,2 % | 15,4 % | 1,9 % |
+| Enrôlés, sorties | 14 752 | **76,9 %** | 0,0 % | 22,1 % | 1,0 % |
+| **Enrôlés, total** | 25 471 | **78,9 %** | **0,5 %** | 19,3 % | 1,4 % |
+| Non enrôlés, total | 6 243 | **97,1 %** | **1,5 %** | — | 1,4 % |
+
+Délai médian avant le bon nom : 0,2 s aux entrées, 0,4 s aux sorties
+(médiane des caméras).
+
+Quand les visages sont visibles, enrôler deux photos suffit à nommer
+correctement 79 % des images où la personne est annotée, en 0,2 à 0,4 s. Les
+mauvais noms se concentrent sur les entrées, où les personnes franchissent la
+porte l'une derrière l'autre : jusqu'à 36 % des images d'une personne sur une
+caméra, sur des passages de 1 à 2 s. Aux sorties, aucune personne enrôlée
+n'est mal nommée.
+
+Limites : seules les images où les yeux sont annotés comptent (le visage est
+visible), ce qui favorise la reconnaissance par rapport à CHIRLA ; une galerie
+de 24 personnes, un seul portail, des passages courts ; les images d'un même
+passage ne sont pas indépendantes.
+
+## Endurance
+
 L'application complète tourne 8 h d'affilée sur une vidéo en boucle, avec une
 mesure par minute (`ENDURANCE_LOG_PATH`), puis
 `uv run -m tools.endurance_report <journal>` juge chaque colonne après 30 min
