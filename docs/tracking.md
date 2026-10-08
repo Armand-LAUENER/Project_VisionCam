@@ -256,3 +256,23 @@ qui apporte l'information. Le gain vient surtout du classement des cas
 ambigus (1 − AUC divisé par deux), ce qui sert à départager plusieurs
 candidats ; au seuil de 90 % de rappel, les deux écartent autant de faux. Les
 liens vus une seule fois comptent (0,942 si on ne garde que ceux vus 3 fois).
+
+Homographie du sol entre champs qui se recouvrent, sans calibration :
+estimée (RANSAC) sur les pieds (bas-centre des boîtes) d'une même personne vue
+au même instant sur deux caméras, en juin-juillet ; jugée en décembre par
+l'association par position (la personne de B dont le pied projeté est le plus
+proche est-elle la bonne ?) :
+
+| Paire | Erreur médiane | Association par position | Hasard |
+|:--|---:|---:|---:|
+| 6 ↔ 7 | 73 px | **91 %** | 40 % |
+| 4 ↔ 5 | 36 px | **87 %** | 37 % |
+| 2 ↔ 5 | 65 px | **85 %** | 39 % |
+| 2 ↔ 3 | 177 px | 48 % | 21 % |
+| 1 ↔ 3 | 318 px | 24 % | 18 % |
+| 1 ↔ 2 | 292 px | 27 % | 26 % |
+
+Elle tient dans les couloirs et échoue dans la pièce des caméras 1-2-3, où
+les personnes sont assises derrière des bureaux : le bas de la boîte n'y est
+pas un point du sol. `topologies/chirla.yaml` ne marque utilisables (≥ 80 %)
+que les trois premières ; `Topology.project` ne projette qu'avec elles.

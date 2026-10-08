@@ -146,56 +146,210 @@ overlaps:
   - camera_2
   shared_person_frames: 58333
   ratio: 0.314
+  homography:
+    matrix:
+    - - 1.015487
+      - 0.123871
+      - -288.030059
+    - - 0.468367
+      - 2.401007
+      - -210.718627
+    - - -0.001008
+      - 0.001124
+      - 1.0
+    position_match: 0.267
+    validation_cases: 40956
+    usable: false
 - cameras:
   - camera_1
   - camera_3
   shared_person_frames: 116224
   ratio: 0.627
+  homography:
+    matrix:
+    - - -1.901218
+      - -0.5773
+      - 1362.433298
+    - - -2.154201
+      - -0.875018
+      - 1473.696622
+    - - -0.000195
+      - -0.000176
+      - 1.0
+    position_match: 0.237
+    validation_cases: 54770
+    usable: false
 - cameras:
   - camera_1
   - camera_5
   shared_person_frames: 5109
   ratio: 0.048
+  homography:
+    matrix:
+    - - -1.155674
+      - -0.332711
+      - 234.766822
+    - - -2.009419
+      - -3.871649
+      - 1212.121355
+    - - -0.001324
+      - -0.005208
+      - 1.0
+    position_match: 0.21
+    validation_cases: 2389
+    usable: false
 - cameras:
   - camera_2
   - camera_3
   shared_person_frames: 148250
   ratio: 0.784
+  homography:
+    matrix:
+    - - -0.113676
+      - -1.752689
+      - 1289.566137
+    - - -0.20712
+      - -0.749433
+      - 600.63817
+    - - -0.000421
+      - -0.001213
+      - 1.0
+    position_match: 0.476
+    validation_cases: 74859
+    usable: false
 - cameras:
   - camera_2
   - camera_4
   shared_person_frames: 1336
   ratio: 0.019
+  homography:
+    matrix:
+    - - 1.04246
+      - -4.318465
+      - 1315.496247
+    - - 1.559761
+      - -3.000457
+      - 724.068651
+    - - 0.002196
+      - -0.004175
+      - 1.0
+    position_match: 0.587
+    validation_cases: 426
+    usable: false
 - cameras:
   - camera_2
   - camera_5
   shared_person_frames: 14937
   ratio: 0.141
+  homography:
+    matrix:
+    - - -0.076158
+      - -1.442531
+      - 548.376179
+    - - -0.09006
+      - -1.701635
+      - 646.939902
+    - - -0.000139
+      - -0.00263
+      - 1.0
+    position_match: 0.853
+    validation_cases: 3688
+    usable: true
 - cameras:
   - camera_3
   - camera_4
   shared_person_frames: 6375
   ratio: 0.093
+  homography:
+    matrix:
+    - - 0.127752
+      - 0.324603
+      - -269.74402
+    - - -0.528754
+      - -0.203929
+      - 683.611178
+    - - -0.000781
+      - -0.000287
+      - 1.0
+    position_match: 0.205
+    validation_cases: 575
+    usable: false
 - cameras:
   - camera_3
   - camera_5
   shared_person_frames: 3253
   ratio: 0.031
+  homography:
+    matrix:
+    - - -0.913309
+      - -0.915994
+      - 499.946278
+    - - -0.310573
+      - -0.058652
+      - 39.151377
+    - - -0.0017
+      - -0.001741
+      - 1.0
+    position_match: 0.0
+    validation_cases: 0
+    usable: false
 - cameras:
   - camera_4
   - camera_5
   shared_person_frames: 10742
   ratio: 0.157
+  homography:
+    matrix:
+    - - -0.269752
+      - -0.867355
+      - 494.136034
+    - - -0.265027
+      - -0.926699
+      - 574.850864
+    - - -0.000308
+      - -0.002008
+      - 1.0
+    position_match: 0.869
+    validation_cases: 3307
+    usable: true
 - cameras:
   - camera_5
   - camera_6
   shared_person_frames: 738
   ratio: 0.02
+  homography:
+    matrix:
+    - - 0.877423
+      - -1.517662
+      - 524.843872
+    - - 1.108504
+      - -1.966279
+      - 706.973358
+    - - 0.001514
+      - -0.00273
+      - 1.0
+    position_match: 0.0
+    validation_cases: 0
+    usable: false
 - cameras:
   - camera_6
   - camera_7
   shared_person_frames: 6870
   ratio: 0.184
+  homography:
+    matrix:
+    - - -0.320867
+      - -0.733679
+      - 564.24436
+    - - -0.144942
+      - -0.331405
+      - 254.874721
+    - - -0.000569
+      - -0.0013
+      - 1.0
+    position_match: 0.909
+    validation_cases: 878
+    usable: true
 links:
 - from: camera_1
   to: camera_2

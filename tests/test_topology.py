@@ -51,3 +51,47 @@ def test_the_chirla_topology_file_loads():
 
     assert len(topology.cameras) == 7
     assert topology.score("camera_6", "camera_5", 1.4) > topology.score("camera_6", "camera_5", 30)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Homographie de sol entre champs qui se recouvrent
+# ─────────────────────────────────────────────────────────────────────────────
+
+import numpy as np  # noqa: E402
+
+from tools.infer_topology import fit_homography, position_match  # noqa: E402
+
+H = np.array([[0.9, 0.05, 30.0], [0.02, 1.1, -20.0], [0.0001, 0.0002, 1.0]])
+
+
+def apply(matrix, point):
+    x, y, w = matrix @ np.array([point[0], point[1], 1.0])
+    return (x / w, y / w)
+
+
+def test_a_homography_is_recovered_from_paired_feet():
+    rng = np.random.default_rng(0)
+    points = [(tuple(p), apply(H, p)) for p in rng.uniform(0, 700, (200, 2))]
+
+    matrix = fit_homography(points)
+
+    assert np.allclose(apply(matrix, (350, 600)), apply(H, (350, 600)), atol=1)
+
+
+def test_position_match_finds_the_right_person():
+    frames = [({1: (100, 600), 2: (500, 600)}, {1: apply(H, (100, 600)), 2: apply(H, (500, 600))})]
+
+    assert position_match(H, frames) == (1.0, 2)
+
+
+def test_only_validated_homographies_project():
+    def overlap(a, b, usable):
+        return {"cameras": [a, b], "ratio": 0.2,
+                "homography": {"matrix": H.tolist(), "usable": usable}}
+
+    topology = Topology.from_dict({"cameras": {"A": {}, "B": {}, "C": {}},
+                                   "overlaps": [overlap("A", "B", True), overlap("A", "C", False)]})
+
+    assert np.allclose(topology.project("A", "B", (100, 600)), apply(H, (100, 600)))
+    assert np.allclose(topology.project("B", "A", apply(H, (100, 600))), (100, 600))
+    assert topology.project("A", "C", (100, 600)) is None

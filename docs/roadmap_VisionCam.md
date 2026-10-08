@@ -206,8 +206,12 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
   `core/topology.py` : P(B | A) × densité du délai ; AUC 0,961 contre 0,925
   pour le seul délai (appris juin-juillet, jugé décembre ; docs/tracking.md).
   L'association elle-même, avec l'apparence, vient en 2.5.
-- [ ] Si des champs de vision se chevauchent : homographie vers un plan au sol
-  commun.
+- [x] Si des champs de vision se chevauchent : homographie vers un plan au sol
+  commun. Homographie de sol entre caméras (pas de plan métrique, sans
+  calibration), estimée sur les pieds d'une même personne vue en même temps :
+  validée dans les couloirs (4-5, 6-7, 2-5 : 85-91 % d'association par
+  position, contre ~40 % au hasard), écartée dans la pièce 1-2-3 (personnes
+  assises, pieds cachés) ; docs/tracking.md.
 - [x] Vérifier si CHIRLA fournit la disposition des caméras ; sinon la déduire
   des annotations. Pas de plan fourni : `tools/infer_topology.py` déduit des
   annotations des 7 caméras (10 séquences) les recouvrements (1-2-3 : une même

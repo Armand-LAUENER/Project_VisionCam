@@ -36,9 +36,12 @@ class Link:
 
 
 class Topology:
-    def __init__(self, links: dict, cameras: list[str]):
+    def __init__(self, links: dict, cameras: list[str], homographies: dict | None = None):
         self.links = links          # {(A, B): Link}
         self.cameras = cameras
+        # {(A, B): matrice 3 × 3 sol A → sol B}, seulement les homographies
+        # validées (tools/infer_topology.py, « usable »), dans les deux sens.
+        self.homographies = homographies or {}
         out = {}
         for (a, _b), link in links.items():
             out[a] = out.get(a, 0) + link.passages
@@ -57,7 +60,24 @@ class Topology:
             counts = np.asarray(hist["counts"], dtype=float)
             centers = hist["start_s"] + hist["bin_s"] * (np.arange(len(counts)) + 0.5)
             links[(link["from"], link["to"])] = Link(link["passages"], centers, counts)
-        return cls(links, sorted(data.get("cameras", {})))
+        homographies = {}
+        for overlap in data.get("overlaps", []):
+            h = overlap.get("homography")
+            if h and h.get("usable"):
+                a, b = overlap["cameras"]
+                matrix = np.asarray(h["matrix"], dtype=float)
+                homographies[(a, b)] = matrix
+                homographies[(b, a)] = np.linalg.inv(matrix)
+        return cls(links, sorted(data.get("cameras", {})), homographies)
+
+    def project(self, from_camera: str, to_camera: str, point) -> tuple[float, float] | None:
+        """Pied vu sur `from_camera` ramené dans l'image de `to_camera`, si leurs
+        champs se recouvrent et que l'homographie de sol a été validée."""
+        matrix = self.homographies.get((from_camera, to_camera))
+        if matrix is None:
+            return None
+        x, y, w = matrix @ np.array([point[0], point[1], 1.0])
+        return (x / w, y / w)
 
     def score(self, from_camera: str, to_camera: str, delta_s: float) -> float:
         """Vraisemblance qu'une sortie de `from_camera` soit l'entrée sur
