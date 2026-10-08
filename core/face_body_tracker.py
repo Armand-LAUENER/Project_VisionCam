@@ -220,6 +220,7 @@ class FaceBodyTracker:
         # pistes visibles à l'image précédente (cf. _suspend_after_crossings).
         self._crossings: dict = {}
         self._previously_visible: set = set()
+        self._previous_boxes: dict = {}
 
         # { track_id: frame_count } — dernière soumission à InsightFace.
         # Fait tourner les tracks quand ils sont plus nombreux que les places.
@@ -668,14 +669,15 @@ class FaceBodyTracker:
             self._previous_name[track_id] = (name, self._frame_count)
 
     def _suspend_after_crossings(self, visible_tracks: list, frame_count: int) -> None:
-        """Retire son nom à une piste dont la partenaire de croisement a disparu.
+        """Retire son nom à une piste qui a pu changer de personne.
 
         Quand deux personnes se croisent, l'une est souvent masquée : sa piste
         disparaît, et l'autre piste peut sauter sur elle en emportant son nom.
         Vue de dos, rien ne le révèle ensuite. Le nom retombe donc dès qu'une
         piste qui recouvrait celle-ci (IoU ≥ CROSSING_IOU) cesse d'être visible
-        dans les CROSSING_WINDOW_FRAMES images ; il revient avec le prochain
-        visage reconnu.
+        dans les CROSSING_WINDOW_FRAMES images. De même pour une piste qui
+        réapparaît (fin de roue libre) là où une piste visible vient de
+        disparaître. Le nom revient avec le prochain visage reconnu.
         """
         if config.CROSSING_IOU <= 0:
             return
@@ -690,19 +692,33 @@ class FaceBodyTracker:
         for tid in ids:
             seen, partner = self._crossings.get(tid, (None, None))
             if (partner in vanished and frame_count - seen <= config.CROSSING_WINDOW_FRAMES):
-                name = self._identity_map.get(tid, {}).get('name', 'Inconnu')
-                if name != 'Inconnu':
-                    logger.warning("Piste #%s : sa voisine #%s a disparu pendant un croisement, "
-                                   "'%s' suspendu", tid, partner, name)
-                    self._remember_dropped(tid)
-                    self._identity_map[tid] = {'name': 'Inconnu', 'confidence': 0.0,
-                                               'last_face_frame': -1}
-                    self._vote_buffer.pop(tid, None)
-                    self._unknown_streak.pop(tid, None)
+                self._suspend(tid, f"sa voisine #{partner} a disparu pendant un croisement")
                 self._crossings.pop(tid, None)
+            elif tid not in self._previously_visible:
+                # Piste qui réapparaît (fin de roue libre) à la place d'une piste
+                # visible qui vient de disparaître : elle a pris la personne de
+                # l'autre (ChokePoint : la piste d'une personne passée plus tôt
+                # ressuscite sur la suivante avec son nom).
+                taken = next((v for v in vanished
+                              if _iou(boxes[tid], self._previous_boxes[v]) >= config.CROSSING_IOU),
+                             None)
+                if taken is not None:
+                    self._suspend(tid, f"réapparue à la place de #{taken}, disparue")
         self._crossings = {tid: v for tid, v in self._crossings.items()
                            if frame_count - v[0] <= config.CROSSING_WINDOW_FRAMES}
         self._previously_visible = set(boxes)
+        self._previous_boxes = boxes
+
+    def _suspend(self, tid, reason: str) -> None:
+        """Retire son nom à une piste devenue douteuse ; il revient avec un visage."""
+        name = self._identity_map.get(tid, {}).get('name', 'Inconnu')
+        if name == 'Inconnu':
+            return
+        logger.warning("Piste #%s : %s, '%s' suspendu", tid, reason, name)
+        self._remember_dropped(tid)
+        self._identity_map[tid] = {'name': 'Inconnu', 'confidence': 0.0, 'last_face_frame': -1}
+        self._vote_buffer.pop(tid, None)
+        self._unknown_streak.pop(tid, None)
 
     def _count_unknown_face(self, track_id: int) -> None:
         """Compte un visage net reconnu « Inconnu » ; retire le nom après K d'affilée.

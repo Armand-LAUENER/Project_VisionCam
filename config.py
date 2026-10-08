@@ -184,7 +184,9 @@ FRONTAL_NOSE_MARGIN = float(os.getenv("FRONTAL_NOSE_MARGIN", "0.25"))
 # Croisement douteux : deux pistes visibles se recouvrent (IoU ≥ CROSSING_IOU)
 # et l'une disparaît dans les CROSSING_WINDOW_FRAMES images suivantes. La
 # survivante a pu sauter sur l'autre personne : son nom retombe à « Inconnu »
-# jusqu'à ce qu'un visage le reconfirme. Rattrape l'échange de pistes vers une
+# jusqu'à ce qu'un visage le reconfirme. De même pour une piste qui réapparaît
+# à la place d'une piste visible qui vient de disparaître (ChokePoint : mauvais
+# noms aux entrées 1,2 → 0,0 %). Rattrape l'échange de pistes vers une
 # personne non enrôlée vue de dos, que la série d'« Inconnu » de face ne voit
 # pas (seq_026 : un non enrôlé portait id_2 pendant 17,6 s). Coût mesuré :
 # −2,7 points de bons noms sur seq_026 (suspensions inutiles) ; 10 images

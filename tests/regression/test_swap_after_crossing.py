@@ -48,11 +48,13 @@ def make_tracker():
     return tracker
 
 
-def run(tracker, frames, *positions):
-    """Chaque image, les pistes visibles : (track_id, x) ; détections identiques."""
+def run(tracker, frames, coasting=()):
+    """Chaque image, les pistes visibles : (track_id, x), avec leur détection ;
+    `coasting` : pistes en roue libre (track_id, x), renvoyées par le tracker
+    comme DeepSORT le fait, mais sans détection."""
     for frame_count, tracks in frames:
         visible = [track(tid, x) for tid, x in tracks]
-        tracker.body_tracker.update.return_value = visible
+        tracker.body_tracker.update.return_value = visible + [track(t, x) for t, x in coasting]
         tracker._detect_bodies = (lambda boxes: (lambda f: boxes))(
             [([x, 100, 80, 300], 0.9, 'person', {}) for _, x in tracks])
         tracker.update(FRAME, frame_count)
@@ -92,5 +94,28 @@ def test_an_old_crossing_no_longer_counts():
     run(tracker, [(f, [(1, 300), (2, 330)]) for f in range(1, 10)])
     run(tracker, [(f, [(1, 300), (2, 900)]) for f in range(10, 10 + config.CROSSING_WINDOW_FRAMES + 5)])
     run(tracker, [(f, [(1, 300)]) for f in range(60, 70)])
+
+    assert name_of(tracker, 1) == 'Alice'
+
+
+def test_a_track_coming_back_in_place_of_a_vanished_one_loses_its_name():
+    """Cas réel (ChokePoint P1E_S4_C3) : la piste d'une personne passée plus tôt
+    (Alice, piste 1, en roue libre) réapparaît à la place de la piste 2, qui
+    suivait la personne suivante et disparaît à la même image."""
+    tracker = make_tracker()
+    run(tracker, [(f, [(1, 100)]) for f in range(1, 10)])        # Alice passe
+    run(tracker, [(f, [(2, 400)]) for f in range(10, 20)],       # la suivante, piste 2
+        coasting=[(1, 300)])                                     # 1 en roue libre
+    run(tracker, [(f, [(1, 405)]) for f in range(20, 25)])       # 1 revient, 2 a disparu
+
+    assert name_of(tracker, 1) == 'Inconnu'
+
+
+def test_a_track_coming_back_after_an_occlusion_keeps_its_name():
+    tracker = make_tracker()
+    run(tracker, [(f, [(1, 100), (2, 900)]) for f in range(1, 10)])
+    run(tracker, [(f, [(2, 900)]) for f in range(10, 20)],       # Alice masquée
+        coasting=[(1, 105)])
+    run(tracker, [(f, [(1, 110), (2, 900)]) for f in range(20, 25)])
 
     assert name_of(tracker, 1) == 'Alice'
