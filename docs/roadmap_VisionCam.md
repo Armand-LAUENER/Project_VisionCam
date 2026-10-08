@@ -243,7 +243,9 @@ d'association inter-caméras, sur le protocole réglage/validation existant.
   processus, GPU) ; réglages manuels prioritaires. Pas de « config minimale »
   sur du matériel non testé : des besoins mesurés (VRAM pic, ms GPU par image).
   `core/adaptive.py` ; grille adaptative tenue de 2 à 16 flux, coupure d'une
-  caméra absorbée en 6 s (docs/performance.md).
+  caméra absorbée en 6 s (docs/performance.md). Processus de caméras selon la
+  RAM (`CAMERAS_PER_WORKER=auto`) et boucle de retour : 16 flux tenus à 10,9
+  i/s au lieu de 5,8.
 - [x] Préciser que les mesures viennent de WSL2.
 
 ---

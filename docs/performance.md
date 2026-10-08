@@ -626,3 +626,47 @@ mesure.
 Avec 1 caméra par processus, la reconnaissance passe toutes les 2 images
 (mauvais noms 0,7 → 0,4 % au balayage). Capacités à remesurer sur une autre
 machine (`ADAPTIVE_PROCESS_FPS`, `ADAPTIVE_GPU_FPS`).
+
+### Où est le goulot, et autant de processus que la RAM le permet
+
+Profil `py-spy --gil` des processus de caméras à 8 × 30 i/s (2 processus de
+4 caméras, échantillons pris quand un thread tient le GIL), en régime établi :
+YOLO via ultralytics 46,6 % (dont post-traitement 28,3 %, NMS 13,8 %),
+association `deep_sort_realtime` 29,2 %, embedder d'apparence 7,9 %,
+reconnaissance faciale 8,2 %. L'inférence GPU elle-même relâche le GIL. Mais
+chaque processus ne tient son GIL que ~23 % du temps : passer l'association en
+Rust (GIL relâché) ne rapporte que +4 % (20,5 → 21,4 i/s par caméra). Ce qui
+coûte, ce sont les threads d'un même processus qui se passent le GIL : à
+caméras égales, plus de processus font nettement mieux.
+
+| 8 caméras, 30 i/s visés | i/s par caméra (min) | Total | Détection p50 | Latence p95 | GPU (NVML) | RAM |
+|:--|---:|---:|---:|---:|---:|---:|
+| 2 processus de 4 | 20,5 (17,9) | 164 | 32,4 ms | 139 ms | — | 7,5 Go |
+| 2 processus de 4, association en Rust | 21,4 (18,8) | 171 | 34,5 ms | 136 ms | — | 7,4 Go |
+| **4 processus de 2** | **27,0** (25,4) | **216** | 22,7 ms | 113 ms | 91,5 % | 11,9 Go |
+
+Le GPU approche alors de sa limite (91,5 %), et 4 processus est le maximum de
+cette machine (2,2 Go restés disponibles). D'où `CAMERAS_PER_WORKER=auto` :
+autant de processus que la RAM disponible au lancement le permet (~2 Go de
+RAM disponible en moins par processus, 1,5 Go gardés libres), caméras
+réparties également ; et `ADAPTIVE_GPU_FPS` recalé de 150 à 220.
+
+Grille adaptative avec ce choix automatique, le 2026-10-08 :
+
+| Flux | Processus choisis | Réglage choisi | i/s tenus (min) | Latence p95 | Avant (2 ou 8 caméras par processus) |
+|---:|:--|:--|---:|---:|:--|
+| 2 | 2 × 1 | 30 i/s, reconnaissance toutes les 2 | 30,1 (30,1) | 43 ms | 29,9 i/s, toutes les 5 |
+| 4 | 4 × 1 | 30 i/s, toutes les 2 | 29,2 (28,8) | 77 ms | 30,0 i/s, toutes les 5, p95 35 ms |
+| 8 | 4 × 2 | 27 i/s, toutes les 10 | **26,3** (25,8) | 95 ms | 17,1 i/s |
+| 16 | 4 × 4 | 13 visés, puis **10** après la boucle de retour | **10,9** (10,6) | 198 ms | 5,8 i/s |
+
+À 16 caméras, 13 i/s visés n'étaient tenus qu'à 88 % (un run identique une
+heure plus tôt en tenait 97 % : la capacité varie). La **boucle de retour** de
+`core/adaptive.py` corrige : un groupe sous 93 % de sa cadence pendant 6 s,
+45 s après le dernier changement, réduit l'estimation de capacité d'après
+l'écart (13 → 12 → 10 i/s ici). Elle ne remonte jamais en marche, pour ne pas
+osciller : elle se stabilise un peu sous le maximum (~11 i/s). À 4 flux, un
+processus par caméra et la reconnaissance toutes les 2 images coûtent de la
+latence (p95 77 ms contre 35) pour moins de mauvais noms.
+
+Prochain plafond : le GPU (89-91 % de NVML vers 200-216 i/s au total).
