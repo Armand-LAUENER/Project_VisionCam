@@ -670,3 +670,22 @@ processus par caméra et la reconnaissance toutes les 2 images coûtent de la
 latence (p95 77 ms contre 35) pour moins de mauvais noms.
 
 Prochain plafond : le GPU (89-91 % de NVML vers 200-216 i/s au total).
+
+### YOLO par lots (prochain plafond : le GPU)
+
+Moteur `yolov8s-pose` exporté avec une taille de lot variable (jusqu'à 4,
+`dynamic=True batch=4`, FP16, 384×640), comparé au moteur actuel sur 240
+images de `seq_026_camera_3`, `predict` complet (pré-traitement, inférence,
+post-traitement), 20 lots de chauffe écartés, deux runs, le 2026-10-08 :
+
+| Moteur, taille de lot | ms par image | Images par seconde |
+|:--|---:|---:|
+| Actuel (statique), lot de 1 | 4,81-4,87 | ~207 |
+| Dynamique, lot de 1 | 4,97-5,00 | ~200 |
+| Dynamique, lot de 2 | 3,53-3,79 | 264-284 |
+| Dynamique, lot de 4 | **3,17-3,20** | **313-315** |
+
+Regrouper 4 images réduit le coût de YOLO par image de 34 %. YOLO n'est
+qu'une partie du travail GPU (embedder d'apparence, SCRFD, ArcFace) : le gain
+de capacité de l'application est à mesurer, et regrouper les images de
+plusieurs caméras d'un processus ajoute un peu de latence.
