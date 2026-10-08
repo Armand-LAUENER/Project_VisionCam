@@ -1,0 +1,367 @@
+# Topologie déduite des annotations (tools/infer_topology.py) : agrégats seulement.
+source: CHIRLA
+sequences: 10
+fps: 30
+cameras:
+  camera_1:
+    observed_extent:
+    - 703
+    - 720
+    person_frames: 185509
+    entries:
+      haut-centre: 233
+      milieu-centre: 83
+      haut-droite: 66
+      bas-gauche: 8
+      milieu-droite: 5
+      bas-droite: 4
+      bas-centre: 4
+    exits:
+      haut-centre: 232
+      milieu-centre: 86
+      haut-droite: 65
+      bas-gauche: 6
+      bas-centre: 6
+      bas-droite: 5
+      milieu-droite: 3
+  camera_2:
+    observed_extent:
+    - 857
+    - 720
+    person_frames: 188989
+    entries:
+      bas-gauche: 165
+      milieu-centre: 131
+      milieu-gauche: 101
+      haut-centre: 41
+      bas-centre: 16
+      haut-gauche: 12
+      bas-droite: 4
+    exits:
+      bas-gauche: 155
+      milieu-centre: 154
+      milieu-gauche: 102
+      haut-centre: 24
+      haut-gauche: 18
+      bas-centre: 10
+      bas-droite: 6
+      milieu-droite: 1
+  camera_3:
+    observed_extent:
+    - 1080
+    - 720
+    person_frames: 302950
+    entries:
+      bas-droite: 174
+      milieu-droite: 74
+      milieu-centre: 68
+      bas-centre: 25
+      haut-centre: 17
+      milieu-gauche: 17
+      haut-gauche: 16
+      bas-gauche: 12
+      haut-droite: 1
+    exits:
+      bas-droite: 197
+      milieu-centre: 67
+      milieu-droite: 55
+      bas-centre: 27
+      milieu-gauche: 16
+      haut-centre: 14
+      bas-gauche: 13
+      haut-gauche: 13
+      haut-droite: 2
+  camera_4:
+    observed_extent:
+    - 1080
+    - 720
+    person_frames: 68520
+    entries:
+      bas-droite: 226
+      bas-gauche: 46
+      milieu-droite: 35
+      bas-centre: 11
+      haut-droite: 9
+      milieu-gauche: 3
+    exits:
+      bas-droite: 225
+      bas-gauche: 47
+      milieu-droite: 39
+      bas-centre: 9
+      haut-droite: 7
+      milieu-gauche: 3
+  camera_5:
+    observed_extent:
+    - 1080
+    - 720
+    person_frames: 106267
+    entries:
+      haut-centre: 121
+      bas-centre: 118
+      bas-droite: 116
+      milieu-centre: 63
+    exits:
+      bas-droite: 123
+      haut-centre: 115
+      bas-centre: 105
+      milieu-centre: 75
+  camera_6:
+    observed_extent:
+    - 801
+    - 720
+    person_frames: 37376
+    entries:
+      bas-droite: 102
+      bas-gauche: 58
+      bas-centre: 56
+      milieu-droite: 13
+      milieu-centre: 3
+    exits:
+      bas-droite: 105
+      bas-gauche: 75
+      bas-centre: 40
+      milieu-droite: 11
+      milieu-centre: 1
+  camera_7:
+    observed_extent:
+    - 1080
+    - 720
+    person_frames: 73943
+    entries:
+      haut-centre: 70
+      milieu-centre: 64
+      milieu-droite: 21
+      bas-droite: 5
+      bas-centre: 2
+      bas-gauche: 1
+    exits:
+      haut-centre: 70
+      milieu-centre: 64
+      milieu-droite: 24
+      bas-centre: 3
+      bas-droite: 2
+overlaps:
+- cameras:
+  - camera_1
+  - camera_2
+  shared_person_frames: 58333
+  ratio: 0.314
+- cameras:
+  - camera_1
+  - camera_3
+  shared_person_frames: 116224
+  ratio: 0.627
+- cameras:
+  - camera_1
+  - camera_5
+  shared_person_frames: 5109
+  ratio: 0.048
+- cameras:
+  - camera_2
+  - camera_3
+  shared_person_frames: 148250
+  ratio: 0.784
+- cameras:
+  - camera_2
+  - camera_4
+  shared_person_frames: 1336
+  ratio: 0.019
+- cameras:
+  - camera_2
+  - camera_5
+  shared_person_frames: 14937
+  ratio: 0.141
+- cameras:
+  - camera_3
+  - camera_4
+  shared_person_frames: 6375
+  ratio: 0.093
+- cameras:
+  - camera_3
+  - camera_5
+  shared_person_frames: 3253
+  ratio: 0.031
+- cameras:
+  - camera_4
+  - camera_5
+  shared_person_frames: 10742
+  ratio: 0.157
+- cameras:
+  - camera_5
+  - camera_6
+  shared_person_frames: 738
+  ratio: 0.02
+- cameras:
+  - camera_6
+  - camera_7
+  shared_person_frames: 6870
+  ratio: 0.184
+links:
+- from: camera_1
+  to: camera_2
+  passages: 12
+  transit_s:
+    p10: 0.4
+    median: 1.8
+    p90: 7.7
+- from: camera_1
+  to: camera_3
+  passages: 13
+  transit_s:
+    p10: 0.3
+    median: 4.6
+    p90: 10.4
+- from: camera_1
+  to: camera_4
+  passages: 24
+  transit_s:
+    p10: 0.6
+    median: 0.9
+    p90: 4.1
+- from: camera_1
+  to: camera_5
+  passages: 27
+  transit_s:
+    p10: 0.4
+    median: 1.2
+    p90: 2.7
+- from: camera_1
+  to: camera_6
+  passages: 29
+  transit_s:
+    p10: 2.3
+    median: 2.7
+    p90: 3.6
+- from: camera_2
+  to: camera_1
+  passages: 6
+  transit_s:
+    p10: 0.1
+    median: 1.4
+    p90: 16.1
+- from: camera_2
+  to: camera_3
+  passages: 10
+  transit_s:
+    p10: 0.9
+    median: 3.4
+    p90: 9.0
+- from: camera_2
+  to: camera_4
+  passages: 81
+  transit_s:
+    p10: 0.2
+    median: 0.5
+    p90: 4.5
+- from: camera_2
+  to: camera_5
+  passages: 6
+  transit_s:
+    p10: 1.1
+    median: 1.4
+    p90: 7.7
+- from: camera_2
+  to: camera_6
+  passages: 35
+  transit_s:
+    p10: 2.3
+    median: 3.5
+    p90: 6.0
+- from: camera_3
+  to: camera_1
+  passages: 12
+  transit_s:
+    p10: 1.2
+    median: 3.4
+    p90: 10.3
+- from: camera_3
+  to: camera_4
+  passages: 15
+  transit_s:
+    p10: 0.1
+    median: 1.6
+    p90: 5.0
+- from: camera_3
+  to: camera_5
+  passages: 15
+  transit_s:
+    p10: 1.0
+    median: 2.1
+    p90: 5.2
+- from: camera_4
+  to: camera_2
+  passages: 75
+  transit_s:
+    p10: 0.2
+    median: 0.4
+    p90: 1.0
+- from: camera_4
+  to: camera_3
+  passages: 15
+  transit_s:
+    p10: 0.2
+    median: 1.3
+    p90: 4.5
+- from: camera_4
+  to: camera_5
+  passages: 53
+  transit_s:
+    p10: 7.3
+    median: 14.3
+    p90: 22.6
+- from: camera_4
+  to: camera_6
+  passages: 3
+  transit_s:
+    p10: 3.1
+    median: 3.3
+    p90: 3.6
+- from: camera_5
+  to: camera_2
+  passages: 23
+  transit_s:
+    p10: 0.2
+    median: 2.6
+    p90: 6.5
+- from: camera_5
+  to: camera_4
+  passages: 7
+  transit_s:
+    p10: 0.5
+    median: 2.5
+    p90: 10.2
+- from: camera_5
+  to: camera_6
+  passages: 51
+  transit_s:
+    p10: 1.1
+    median: 1.5
+    p90: 1.9
+- from: camera_6
+  to: camera_5
+  passages: 91
+  transit_s:
+    p10: 1.0
+    median: 1.4
+    p90: 2.4
+- from: camera_6
+  to: camera_7
+  passages: 13
+  transit_s:
+    p10: 0.2
+    median: 1.2
+    p90: 2.7
+- from: camera_7
+  to: camera_5
+  passages: 13
+  transit_s:
+    p10: 3.9
+    median: 5.5
+    p90: 11.5
+- from: camera_7
+  to: camera_6
+  passages: 4
+  transit_s:
+    p10: 1.1
+    median: 3.5
+    p90: 4.9

@@ -203,8 +203,12 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
   temps en distribution (score réduit), pas en contrainte stricte.
 - [ ] Si des champs de vision se chevauchent : homographie vers un plan au sol
   commun.
-- [ ] Vérifier si CHIRLA fournit la disposition des caméras ; sinon la déduire
-  des annotations.
+- [x] Vérifier si CHIRLA fournit la disposition des caméras ; sinon la déduire
+  des annotations. Pas de plan fourni : `tools/infer_topology.py` déduit des
+  annotations des 7 caméras (10 séquences) les recouvrements (1-2-3 : une même
+  pièce, 78 % entre 2 et 3 ; 4-5 et 6-7 voisines), 24 liens avec leurs temps
+  de transit (6 → 5 : 91 passages, 1,4 s ; 4 → 5 : 14,3 s) et les zones
+  d'entrée et de sortie : `topologies/chirla.yaml`.
 
 ### 2.5 Couleur des vêtements
 
