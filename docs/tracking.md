@@ -276,3 +276,30 @@ Elle tient dans les couloirs et échoue dans la pièce des caméras 1-2-3, où
 les personnes sont assises derrière des bureaux : le bas de la boîte n'y est
 pas un point du sol. `topologies/chirla.yaml` ne marque utilisables (≥ 80 %)
 que les trois premières ; `Topology.project` ne projette qu'avec elles.
+
+## Couleur des vêtements (roadmap 2.5)
+
+`core/clothing.py` : histogramme teinte × saturation du haut et du bas du
+corps (bandes tirées des épaules et hanches si le squelette est là, sinon de
+proportions de la boîte), sans modèle. `tools/eval_clothing.py` le juge sur
+l'association entre caméras : séquences de décembre dont on a les vidéos de
+plusieurs caméras (`seq_025` : 2, 3, 5 ; `seq_026` : 3, 5), boîtes annotées ;
+pour chaque entrée sur une caméra, parmi les sorties des autres entre −5 et
++60 s (26,6 candidates en moyenne), le score met-il la bonne en tête ?
+Topologie apprise sur juin-juillet. Le 2026-10-08 :
+
+| Score | Association juste (167 entrées) | AUC |
+|:--|---:|---:|
+| Délai seul | 22,8 % | 0,884 |
+| Topologie | 29,9 % | 0,826 |
+| Couleur seule | 31,1 % | 0,839 |
+| Délai × couleur | 46,1 % | **0,907** |
+| **Topologie × couleur** | **50,3 %** | 0,878 |
+
+La couleur et la topologie se complètent : ensemble, elles ramènent les
+erreurs d'association de 70 % (topologie seule) à 50 %. Ces caméras-là
+filment surtout la même pièce (champs qui se recouvrent, beaucoup de
+candidates simultanées) : le cas le plus dur pour la topologie, dont l'AUC
+tombe ici à 0,826 (0,961 sur l'ensemble des caméras). Limites : boîtes
+annotées (pas les détections), bandes par proportions fixes (le squelette
+complet n'est pas dans les annotations), un seul bureau, deux séquences.

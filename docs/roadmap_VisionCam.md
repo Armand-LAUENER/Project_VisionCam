@@ -221,8 +221,11 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
 
 ### 2.5 Couleur des vêtements
 
-- [ ] Descripteur couleur haut / bas du corps à partir des keypoints épaules et
-  hanches (pas de modèle supplémentaire).
+- [x] Descripteur couleur haut / bas du corps à partir des keypoints épaules et
+  hanches (pas de modèle supplémentaire). `core/clothing.py`, proportions de la
+  boîte sans squelette ; topologie × couleur : association entre caméras juste
+  à 50,3 % contre 29,9 % (topologie seule) et 22,8 % (délai seul) sur CHIRLA
+  décembre (docs/tracking.md).
 - [ ] Usage : ré-identification des inconnus entre caméras, et après une sortie
   plus longue que `max_age`.
 
