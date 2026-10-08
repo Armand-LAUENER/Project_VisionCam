@@ -622,6 +622,27 @@ personnes par image, l'association ne prenait déjà que ~0,2 ms : le GIL
 qu'elle libère maintenant ne pesait rien, le plafond vient du reste du
 pipeline. Le gain vaut pour les scènes chargées.
 
+### deepsort-rs 3a98f0f : arrondis float32 de la référence
+
+deepsort-rs `fb7a66a` reproduit un arrondi de `deep_sort_realtime` que le
+crate ignorait : la référence stocke chaque détection en `float32` et calcule
+la mesure `xyah` en `float32`, le crate la calculait en `f64`. Les IDs étaient
+déjà identiques ; seules les boîtes des pistes longues, à grandes coordonnées,
+s'écartaient de 1 à 2·10⁻⁴ px (au-delà de la tolérance de 10⁻⁴). L'écart a
+été trouvé par le nouveau test de parité du crate sur détections et
+embeddings MOT17 réels (`tests/test_parity_mot17.py`, joué en CI).
+
+`tools.eval_mot`, séquences complètes, une seule exécution, le 2026-10-07 :
+
+| Séquence | MOTA | IDF1 | IDs | FP | FN | Rust | Python |
+|:--|---:|---:|---:|---:|---:|---:|---:|
+| MOT17-04-SDP | 73,6 % | 72,3 % | 102 | 3 204 | 9 247 | 28,9 ms | 48,1 ms |
+| MOT17-09-SDP | 51,6 % | 55,8 % | 44 | 1 301 | 1 230 | 6,5 ms | 8,2 ms |
+
+Métriques identiques entre les deux backends et à celles de `8484623` ; temps
+par image embedder compris. Le Python à 48,1 ms sur MOT17-04 (42–45 ms aux
+runs précédents) reflète la charge de la machine, pas un changement de code.
+
 ## Test de charge (roadmap 2.7)
 
 `tools/bench_load.py` : application complète, N vidéos CHIRLA rejouées en

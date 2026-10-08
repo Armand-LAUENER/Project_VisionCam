@@ -3,7 +3,8 @@
 > **Fait** dans deepsort-rs `ee5de44` (`perf(association)`), branché dans
 > VisionCam à `8484623`. Résultats dans `docs/performance.md`, section
 > « deepsort-rs 8484623 » : 43,1 → 2,9 ms à 40 personnes, pistes identiques
-> sur MOT17-04.
+> sur MOT17-04. VisionCam est depuis à `3a98f0f` (arrondis float32 de la
+> référence, parité MOT17 en CI) : section « deepsort-rs 3a98f0f ».
 
 Changements à faire dans le dépôt `deepsort-rs` (révision actuelle
 `6f12a5d`), puis à rebrancher dans VisionCam. Mesures de départ dans

@@ -25,7 +25,7 @@ par VisionCam n'est encore annotée, ces chiffres viennent de proxys.
 | Embedder d'apparence en TensorRT FP16 | étape tracker 22,4 → **13,7 ms**, mêmes MOTA / IDF1 | [performance](docs/performance.md#embedder-dapparence-mobilenetv2-1-min-de-construction) |
 | Reconnaissance (SCRFD 320 + TensorRT) | 12,6 → **5,7 ms** par visage | [performance](docs/performance.md#reconnaissance-faciale-insightface-2-min-au-premier-lancement) |
 | Endurance : 8 h en continu, vidéo CHIRLA en boucle à 30 i/s | 30,0 i/s tenus, RSS 2 376 Mo (+0,4 Mo), VRAM et structures internes constantes | [performance](docs/performance.md#endurance) |
-| Tracker Rust (`deepsort-rs` 8484623, distances par sgemm, GIL relâché) | pistes identiques au Python ; association à 40 personnes 9,7 → **2,9 ms** ; `python` reste le défaut (gain nul sur CHIRLA, peu de monde) | [performance](docs/performance.md#deepsort-rs-8484623--distances-par-sgemm-gil-relâché) |
+| Tracker Rust (`deepsort-rs` 3a98f0f, distances par sgemm, GIL relâché) | pistes identiques au Python ; association à 40 personnes 9,7 → **2,9 ms** ; `python` reste le défaut (gain nul sur CHIRLA, peu de monde) | [performance](docs/performance.md#deepsort-rs-8484623--distances-par-sgemm-gil-relâché) |
 | ByteTrack / BoT-SORT (ultralytics) contre DeepSORT | suivent mieux (MOTA +4) mais nomment moins bien (mauvais noms 0,7 → 1,0-1,2 %) : DeepSORT reste le défaut | [tracking](docs/tracking.md#deepsort-bytetrack-ou-bot-sort) |
 
 Chaque visage est jugé seul dans la ligne reconnaissance : l'application vote
