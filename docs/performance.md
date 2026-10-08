@@ -590,3 +590,39 @@ de reconnaissance (MOTA identique).
 Un run par configuration : les écarts de bons noms (±1,5 point) et de débit
 (±1 i/s) sont à la limite du bruit ; ceux de FP32 et des modèles `n` / `m` le
 dépassent nettement.
+
+### Adaptation au nombre de caméras actives
+
+`core/adaptive.py` choisit, pour chaque processus de caméras, la cadence
+traitée et la cadence de reconnaissance selon ses caméras actives (une image
+reçue depuis moins de 5 s) et la capacité mesurée plus haut : ~72 i/s par
+processus jusqu'à 4 caméras, moins au-delà, 150 i/s pour le GPU, 10 % de
+marge. Toutes les images si possible, avec la reconnaissance la plus
+fréquente dont le coût mesuré (balayage ci-dessus) tient ; sinon
+reconnaissance toutes les 10 images et cadence réduite. Recalculé en marche
+quand une caméra tombe ou revient ; un réglage fixé dans `.env` prime.
+
+Grille de charge sans cadence imposée (`tools/bench_load.py --adaptive`), le
+2026-10-08 :
+
+| Flux (caméras par processus) | Réglage choisi | i/s tenus (min) | Latence p95 | Sans adaptation, même nombre de flux à 30 i/s |
+|:--|:--|---:|---:|:--|
+| 2 (2) | toutes les images, reconnaissance toutes les 5 | 29,9 (29,9) | 41 ms | identique |
+| 4 (2) | toutes les images, toutes les 5 | 30,0 (29,9) | 35 ms | identique |
+| 8 (4) | 17 i/s, toutes les 10 | 17,1 (16,9) | **50 ms** | 19,0 i/s, p95 149 ms, 9 546 images jetées |
+| 16 (8) | 6 i/s, toutes les 10 | 5,8 (5,6) | 332 ms | 7,3 i/s, p95 374 ms, 38 241 images jetées |
+
+Chaque caméra tient la cadence choisie, sans images jetées en file. À 8 flux,
+la latence p95 est divisée par 3 pour un débit voisin : la cadence est tenue
+au lieu d'être subie.
+
+Coupure en marche : 4 caméras dans un processus, dont une vidéo d'une minute
+qui s'arrête (comme une caméra IP qui tombe). Avec 4 caméras actives, 17 i/s
+choisis et 16,4-19,0 tenus ; la quatrième s'arrête à t = 66 s, les trois autres
+passent à 23 i/s 6 s plus tard et tiennent 21,8-23,8 i/s jusqu'à la fin
+(85 s). Une caméra muette affiche désormais 0 i/s au lieu de sa dernière
+mesure.
+
+Avec 1 caméra par processus, la reconnaissance passe toutes les 2 images
+(mauvais noms 0,7 → 0,4 % au balayage). Capacités à remesurer sur une autre
+machine (`ADAPTIVE_PROCESS_FPS`, `ADAPTIVE_GPU_FPS`).

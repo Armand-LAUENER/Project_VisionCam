@@ -237,11 +237,13 @@ d'association inter-caméras, sur le protocole réglage/validation existant.
 - [x] 2, 4, 8, 16 flux simulés : caméras tenues à 5 / 10 / 30 i/s, goulot
   (décodage, GPU, CPU), latence p95. `tools/bench_load.py`, `CAMERA_MAX_FPS` ;
   goulot : GIL par processus, borné par la RAM (docs/performance.md).
-- [ ] Adaptation en marche au nombre de caméras actives : cadence par caméra
+- [x] Adaptation en marche au nombre de caméras actives : cadence par caméra
   et cadence de reconnaissance recalculées quand une caméra se connecte ou se
   déconnecte, à partir de la capacité mesurée (images par seconde par
   processus, GPU) ; réglages manuels prioritaires. Pas de « config minimale »
   sur du matériel non testé : des besoins mesurés (VRAM pic, ms GPU par image).
+  `core/adaptive.py` ; grille adaptative tenue de 2 à 16 flux, coupure d'une
+  caméra absorbée en 6 s (docs/performance.md).
 - [x] Préciser que les mesures viennent de WSL2.
 
 ---
