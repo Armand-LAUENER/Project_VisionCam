@@ -333,6 +333,34 @@ porte l'une derrière l'autre : jusqu'à 36 % des images d'une personne sur une
 caméra, sur des passages de 1 à 2 s. Aux sorties, aucune personne enrôlée
 n'est mal nommée.
 
+**D'où viennent les mauvais noms.** Pour chaque image mal nommée, la piste
+qui couvre la personne avait-elle couvert auparavant la personne dont elle
+affiche le nom ? Aux entrées, les 141 images sont de ce type : la piste d'une
+personne passée plus tôt, invisible mais gardée par DeepSORT (« roue libre »,
+jusqu'à 70 images), réapparaît à la place de la piste de la personne suivante,
+qui disparaît à la même image, et lui apporte l'ancien nom (`P1E_S4_C3` :
+`ID0001`, correctement nommée par sa propre piste, devient `ID0010` pendant
+16 images). Aux sorties, les 75 images sont une ressemblance : la personne 26,
+non enrôlée, reconnue `ID0012` sur les trois caméras de `P1L_S3` — affaire de
+seuil, qu'on ne baisse pas.
+
+Règle ajoutée à celle des croisements (`_suspend_after_crossings`) : une
+piste nommée qui réapparaît là où une piste visible vient de disparaître
+(IoU ≥ `CROSSING_IOU` avec sa dernière boîte) perd son nom jusqu'au prochain
+visage ; une piste qui réapparaît après une simple occultation le garde.
+
+| | Avant | Après |
+|:--|---:|---:|
+| Enrôlés, entrées : bons / mauvais noms | 81,5 / 1,2 % | 81,5 / **0,0 %** |
+| Non enrôlés, entrées : mauvais noms | 0,6 % | **0,0 %** |
+| **Enrôlés, total : mauvais noms** | 0,5 % | **0,0 %** |
+| Non enrôlés, total : mauvais noms | 1,5 % | 1,2 % |
+| CHIRLA `seq_026` : bons / mauvais noms | 37,1 / 0,2 % | 37,0 / 0,2 % |
+| CHIRLA `seq_025` caméra 2 | 2,6 / 0,0 % | inchangé |
+
+Les images libérées passent en « Inconnu » (+1,1 point aux entrées), puis le
+bon nom revient au visage suivant. Il reste la ressemblance des sorties.
+
 Limites : seules les images où les yeux sont annotés comptent (le visage est
 visible), ce qui favorise la reconnaissance par rapport à CHIRLA ; une galerie
 de 24 personnes, un seul portail, des passages courts ; les images d'un même
