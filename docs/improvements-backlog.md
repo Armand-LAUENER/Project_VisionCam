@@ -243,6 +243,17 @@ Chiffres et protocoles dans docs/performance.md et docs/tracking.md.
 
 ### Identité
 
+- **Une petite perturbation des détections fait nommer une personne non
+  enrôlée.** Avec le moteur YOLO dynamique (mêmes poids, FP16, construit à
+  part), `seq_026_camera_3` passe de 0 à 21 % d'images où un non enrôlé
+  porte un nom, et `seq_025_camera_5` de 0,1 à 2,1 % de mauvais noms
+  (docs/performance.md, « YOLO par lots »). Ce n'est pas le moteur qui
+  reconnaît mal : c'est la chaîne piste → nom qui amplifie un petit écart
+  (échange de pistes que `RECOGNITION_UNKNOWN_STREAK` / `FRONTAL_NOSE_MARGIN`
+  ne rattrapent pas). → Retrouver la piste en cause (`tracks.csv` du rejeu,
+  `scratchpad`), voir pourquoi le nom n'est pas retombé ; c'est le cas réel
+  qui manquait pour tester la protection de la 1.2.
+
 - **Le facteur limitant des noms est le nombre de visages exploitables**, pas
   le suivi ni le partage entre caméras : sur `seq_025`, 90 % des crops de
   tête n'ont pas de visage ≥ 40 px ; passer un nom d'une caméra à l'autre

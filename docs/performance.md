@@ -689,3 +689,38 @@ Regrouper 4 images réduit le coût de YOLO par image de 34 %. YOLO n'est
 qu'une partie du travail GPU (embedder d'apparence, SCRFD, ArcFace) : le gain
 de capacité de l'application est à mesurer, et regrouper les images de
 plusieurs caméras d'un processus ajoute un peu de latence.
+
+Détection par lots dans l'application (`core/batch_detector.py` : un YOLO
+par processus de caméras, jusqu'à 4 images regroupées, 2 ms d'attente au
+plus), 30 i/s visés, adaptation coupée, reconnaissance toutes les 5 images :
+
+| | i/s par caméra (min) | Total | Images par lot | Détection p50 | Latence p95 |
+|:--|---:|---:|---:|---:|---:|
+| 8 flux, 4 processus de 2, sans lots | 27,0 (25,4) | 216 | — | 22,7 ms | 113 ms |
+| 8 flux, 4 processus de 2, avec lots | 24,6 (23,1) | 197 | 1,06 | 25,8 ms | 129 ms |
+| 16 flux, 4 processus de 4, sans lots | 11,9 (9,1) | 190 | — | 63,1 ms | 213 ms |
+| 16 flux, 4 processus de 4, avec lots | **16,4** (13,4) | **262** | 2,11 | 46,4 ms | 169 ms |
+
+À 4 caméras par processus, +38 % d'images traitées ; à 2, les images ne
+coïncident presque jamais et le gain disparaît.
+
+**Mais la qualité baisse.** Rejeu `every_frame` des caméras 2, 3 et 5 de
+`seq_025` dans un même processus (lots actifs, 1,63 image par lot), comparé
+au rejeu sans lots, puis les mêmes caméras seules avec le moteur dynamique
+sans lots :
+
+| | `c2` MOTA / bons / mauvais | `c3` MOTA / bons / non enrôlés nommés | `c5` MOTA / bons / mauvais | `seq_026_camera_3` bons / mauvais / non enrôlés nommés |
+|:--|:--|:--|:--|:--|
+| Moteur actuel (statique) | 84,4 / 2,6 / 0,0 % | 87,1 / 10,7 / 0,0 % | 62,9 / 6,0 / 0,1 % | 39,6 / 0,7 / 0,0 % |
+| Moteur dynamique, avec lots | 86,5 / 2,9 / 0,0 % | 85,8 / 9,1 / **2,9 %** | 67,3 / 5,5 / **2,1 %** | — |
+| Moteur dynamique, sans lots | — | 85,8 / 9,1 / **2,9 %** | 67,3 / 5,5 / **2,1 %** | 38,1 / **1,4** / **21,0 %** |
+
+Avec ou sans lots, le moteur dynamique donne exactement les mêmes chiffres :
+le regroupement est neutre, c'est le moteur (lui aussi FP16, construit à part
+avec un profil de taille de lot) qui change les détections, et ces écarts se
+propagent jusqu'aux noms. **La détection par lots reste donc désactivée par
+défaut** (`YOLO_BATCH_MODEL` vide) : une mauvaise identité coûte plus cher
+qu'un « Inconnu ». Le moteur FP32 du balayage ne nommait aucun non enrôlé
+(0,0 %) : une petite perturbation des détections suffit à faire porter un nom
+à une personne non enrôlée pendant 21 % de ses images, ce qui dit surtout que
+la protection contre l'échange de pistes est fragile (docs/improvements-backlog.md).
