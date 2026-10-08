@@ -13,6 +13,10 @@ par VisionCam n'est encore annotée, ces chiffres viennent de proxys.
 
 | Mesure | Résultat | Détail |
 |:-------|:---------|:-------|
+| **Galerie de photos → vidéo** (ChokePoint, 2 photos posées par personne, visages visibles) | **78,9 %** de bons noms, **0,0 %** de mauvais, en 0,2-0,4 s ; 97,4 % des non enrôlés restent « Inconnu » | [performance](docs/performance.md#reconnaissance-sur-chokepoint-galerie-de-photos--vidéo-de-surveillance) |
+| Mauvais noms après échange de pistes (CHIRLA, croisements, pistes ressuscitées, renommage exigeant) | 0,7 → **0,2 %** ; non enrôlé nommé dans un cas reproduit : 21 → **0 %** | [performance](docs/performance.md#échange-de-pistes-après-un-croisement-crossing_iou-crossing_window_frames) |
+| Plusieurs caméras, un GIL par processus (`CAMERA_WORKERS=process`) | 4 flux tenus à **30 i/s** (71 → 120 i/s au total) ; 16 flux adaptés en marche : **10,9 i/s** chacun au lieu de 5,8 | [performance](docs/performance.md#test-de-charge-roadmap-27) |
+| Association entre caméras (CHIRLA, topologie déduite + couleur des vêtements) | bonne caméra d'origine choisie **50,3 %** du temps, contre 22,8 % au seul délai | [tracking](docs/tracking.md#couleur-des-vêtements-roadmap-25) |
 | Reconnaissance, seuil 0,45 (CHIRLA, crops de l'application, visages ≥ 40 px) | 80,4 % de bons noms, **3,0 % de mauvais** [IC 95 % : 1,9-4,6], 16,6 % « Inconnu » | [performance](docs/performance.md#seuil-de-reconnaissance) |
 | Nom affiché de bout en bout (CHIRLA, application complète, personnes enrôlées) | **35,5 %** du temps le bon nom, **1,1 %** un mauvais, le reste « Inconnu » ou sans piste ; 2,6 % / 0,0 % sur une scène filmée de loin | [performance](docs/performance.md#identité-de-bout-en-bout) |
 | Masquer les pistes en roue libre (MOT17, validation) | MOTA 21,5 → **44,2 %**, IDF1 48,3 → **54,4 %** | [tracking](docs/tracking.md#seuils-deepsort) |
@@ -21,7 +25,8 @@ par VisionCam n'est encore annotée, ces chiffres viennent de proxys.
 | Embedder d'apparence en TensorRT FP16 | étape tracker 22,4 → **13,7 ms**, mêmes MOTA / IDF1 | [performance](docs/performance.md#embedder-dapparence-mobilenetv2-1-min-de-construction) |
 | Reconnaissance (SCRFD 320 + TensorRT) | 12,6 → **5,7 ms** par visage | [performance](docs/performance.md#reconnaissance-faciale-insightface-2-min-au-premier-lancement) |
 | Endurance : 8 h en continu, vidéo CHIRLA en boucle à 30 i/s | 30,0 i/s tenus, RSS 2 376 Mo (+0,4 Mo), VRAM et structures internes constantes | [performance](docs/performance.md#endurance) |
-| Tracker Rust (`deepsort-rs`) | pistes identiques, mais **×0,78-0,84** sur l'étape complète : `python` reste le défaut | [tracker Rust](docs/rust-tracker.md#résultats-mesurés) |
+| Tracker Rust (`deepsort-rs` 8484623, distances par sgemm, GIL relâché) | pistes identiques au Python ; association à 40 personnes 9,7 → **2,9 ms** ; `python` reste le défaut (gain nul sur CHIRLA, peu de monde) | [performance](docs/performance.md#deepsort-rs-8484623--distances-par-sgemm-gil-relâché) |
+| ByteTrack / BoT-SORT (ultralytics) contre DeepSORT | suivent mieux (MOTA +4) mais nomment moins bien (mauvais noms 0,7 → 1,0-1,2 %) : DeepSORT reste le défaut | [tracking](docs/tracking.md#deepsort-bytetrack-ou-bot-sort) |
 
 Chaque visage est jugé seul dans la ligne reconnaissance : l'application vote
 sur 3 reconnaissances par piste avant de nommer.
@@ -40,6 +45,10 @@ sur 3 reconnaissances par piste avant de nommer.
 - **Enrôlement à chaud** — ajout de personnes sans redémarrer l'application
 - **Interface web** — pages Live (boîtes cliquables pour enrôler), Personnes, Historique et Diagnostic ; temps réel par Server-Sent Events, alertes du navigateur, utilisable sur téléphone et hors ligne
 - **Reconnexion automatique** — backoff exponentiel 1 s → 30 s pour les caméras IP
+- **Plusieurs caméras** — `CAMERAS="id=source;…"` ; en mode `CAMERA_WORKERS=process`, des processus de caméras (autant que la RAM le permet) ; processus mort relancé
+- **Adaptation en marche** — cadence par caméra et cadence de reconnaissance recalculées quand une caméra se connecte ou tombe, avec boucle de retour si la cadence n'est pas tenue (`core/adaptive.py`)
+- **Protection de l'identité** — un nom ne passe pas d'une personne à l'autre : suspendu après un croisement douteux ou une piste qui en remplace une autre, renommage exigeant, nom gardé de dos
+- **Topologie et ré-identification (mesurées hors ligne)** — topologie des caméras déduite des annotations (`tools/infer_topology.py`), plausibilité d'un passage (`core/topology.py`), couleur des vêtements (`core/clothing.py`)
 
 ---
 
@@ -283,11 +292,13 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 
 ## Documentation
 
-- [docs/performance.md](docs/performance.md) — accélération TensorRT (construction des moteurs) et seuil de reconnaissance
+- [docs/performance.md](docs/performance.md) — TensorRT, reconnaissance (CHIRLA, ChokePoint), identité de bout en bout, endurance, multi-caméras, test de charge
 - [docs/tracking.md](docs/tracking.md) — réglage et validation du tracking, validation sur ta propre caméra
 - [docs/rust-tracker.md](docs/rust-tracker.md) — backend d'association en Rust (optionnel)
 - [docs/api.md](docs/api.md) — routes HTTP
-- [docs/improvements-backlog.md](docs/improvements-backlog.md) — optimisations faites et restantes
+- [docs/improvements-backlog.md](docs/improvements-backlog.md) — optimisations faites et restantes, observations à creuser
+- [docs/roadmap_VisionCam.md](docs/roadmap_VisionCam.md) — plan en cours (phase 2 : multi-caméras)
+- [docs/deepsort-rs-perf.md](docs/deepsort-rs-perf.md) — accélération de `deepsort-rs` (faite)
 
 ---
 
@@ -364,7 +375,7 @@ Sans session, une page redirige vers `/login` et l'API répond 401. Après 5 éc
 ```bash
 uv run playwright install --only-shell chromium   # une fois, pour tests/ui
 uv run pytest tests/
-# 304 tests (dont tests/ui) — 0 GPU requis
+# 555 tests (dont tests/ui) — 0 GPU requis
 uv run ruff check .
 ```
 
@@ -375,7 +386,9 @@ uv run ruff check .
 ## Limitations connues
 
 - La reconnaissance est optimale avec 3-5 photos minimum par personne, prises sous angles variés
-- DeepSORT peut inverser des IDs lors de croisements serrés. Entre deux personnes enrôlées, la reconnaissance rétablit les noms à la prochaine passe. Vers une personne non enrôlée, le nom ne tombe qu'après `RECOGNITION_UNKNOWN_STREAK` visages nets et de face reconnus « Inconnu » d'affilée : jusqu'à ~1,5 s à 30 i/s si le visage est visible, jamais tant qu'il ne l'est pas (personne de dos)
+- DeepSORT peut inverser des IDs lors de croisements serrés. Le nom est alors suspendu quand une piste voisine disparaît pendant le croisement, ou quand une piste réapparaît à la place d'une autre ; sinon, vers une personne non enrôlée, il ne tombe qu'après `RECOGNITION_UNKNOWN_STREAK` visages nets et de face reconnus « Inconnu » d'affilée. Ces suspensions coûtent ~2,5 points de bons noms sur CHIRLA
+- Deux personnes qui se ressemblent peuvent être confondues (ChokePoint : un non enrôlé reconnu comme une personne enrôlée, 1,2 % des images des non enrôlés) : on ne baisse pas le seuil pour autant
+- Ré-identification des inconnus entre caméras : mesurée hors ligne (topologie + couleur), pas encore branchée dans l'application
 - Sans `ADMIN_PASSWORD_HASH` ni `ADMIN_PASSWORD`, l'accès est ouvert à tout le réseau local (un avertissement s'affiche au démarrage). Le serveur parle HTTP : sur un réseau non maîtrisé, le placer derrière un proxy HTTPS
 - CPU fallback disponible mais déconseillé en temps réel (InsightFace seul : ~200 ms/face)
 

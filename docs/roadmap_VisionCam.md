@@ -1,7 +1,9 @@
 # Roadmap — Implémentations à ajouter à VisionCam
 
 Relevé du 2026-10-01, à partir du dépôt au commit `52700d2` et des discussions
-des 28-29 septembre. Complète `docs/improvements-backlog.md` (optimisations
+des 28-29 septembre. État au 2026-10-08 : phase 1 faite ; phase 2 : 2.1, 2.3,
+2.4 et 2.7 faites, 2.2 faite sauf le décalage d'horloge des caméras IP
+(matériel), 2.5 mesurée mais pas encore branchée, 2.6 à faire. Complète `docs/improvements-backlog.md` (optimisations
 déjà faites) : ici, uniquement ce qui reste à construire.
 
 **Règle pour chaque item** : un problème constaté ou une hypothèse, un critère
@@ -231,6 +233,9 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
 
 **Terminé quand** : réduction mesurée des changements d'ID / des erreurs
 d'association inter-caméras, sur le protocole réglage/validation existant.
+Atteint hors ligne (erreurs d'association 70 → 50 %, docs/tracking.md) ;
+reste à brancher dans l'application (registre d'identités globales des
+inconnus, hanches gardées dans les keypoints du pipeline).
 
 ### 2.6 Apprentissage des temps de transit
 
