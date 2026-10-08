@@ -232,6 +232,31 @@ qui suit la bonne personne : la personne 12 reconnue `id_6` pendant 239 images
 `id_5` pendant 275 images par 2 votes sur 3.
 
 
+### Renommer une piste exige plus de preuves (`RENAME_*`)
+
+Le cas `id_6 → id_5` ci-dessus n'était pas un renommage direct : `id_6`
+retombait d'abord (série d'« Inconnu » de face, croisement), puis la piste
+redevenue « Inconnu » était nommée `id_5` par 2 votes sur 3, sur 2 erreurs de
+reconnaissance. Règle : donner à une piste un autre nom que le sien, ou que
+celui perdu il y a moins de 300 images (`RENAME_MEMORY_FRAMES`), exige 4 voix
+sur ses 6 dernières reconnaissances (`RENAME_MIN_VOTES`, `RENAME_WINDOW`) ;
+nommer une piste vierge, ou lui rendre son nom, reste à 2 votes sur 3.
+
+| Rejeu (règle de croisement active) | Mauvais noms | Bons noms |
+|:--|---:|---:|
+| `seq_026`, moteur actuel : avant / après | 0,7 → **0,2 %** | 36,9 → 37,1 % |
+| `seq_026`, moteur dynamique : avant / après | 1,4 → **0,3 %** | 37,5 → 38,2 % |
+| `seq_025` caméra 2, moteur actuel | 0,0 % (inchangé) | 2,6 % (inchangé) |
+| `seq_025` caméra 5, moteur dynamique | 2,1 % (inchangé) | 5,5 % (inchangé) |
+
+Le cas `id_6 → id_5` passe de 275 à 45 images. Il reste la personne 12 de
+`seq_025` caméra 5, nommée `id_6` dès sa première reconnaissance : sans nom
+antérieur à protéger, c'est le seuil et le vote initial qui sont en cause.
+
+Bilan sur `seq_026` (moteur actuel) : mauvais noms 0,7 → 0,2 %, non enrôlés
+nommés 0 % (21 % dans le cas d'échange reproduit), bons noms 39,6 → 37,1 %.
+
+Limites : deux séquences d'un même bureau ; les images d'une même personne ne
 sont pas indépendantes (les intervalles de confiance de l'outil sont
 indicatifs) ; « sans piste » mêle les personnes non détectées et les boîtes
 dont l'IoU avec la vérité terrain reste sous 0,5 (personne assise en partie

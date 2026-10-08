@@ -243,7 +243,11 @@ Chiffres et protocoles dans docs/performance.md et docs/tracking.md.
 
 ### Identité
 
-- **Une identité établie se renomme sur 2 votes sur 3.** La personne 6,
+- [x] **Une identité établie se renomme sur 2 votes sur 3.** Fait :
+  `RENAME_MIN_VOTES` / `RENAME_WINDOW` / `RENAME_MEMORY_FRAMES`, mauvais noms
+  0,7 → 0,2 % sur seq_026 (docs/performance.md). Reste : une première
+  reconnaissance erronée (personne 12 nommée id_6 dès le départ, seq_025
+  caméra 5), affaire de seuil et de vote initial. La personne 6,
   nommée correctement depuis des minutes, devient `id_5` pendant 275 images
   (`seq_026`, moteur dynamique). → Exiger plus pour renommer une piste déjà
   nommée que pour nommer une piste « Inconnu » (fenêtre de vote plus longue,
