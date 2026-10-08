@@ -210,6 +210,12 @@ class FaceBodyTracker:
         # { track_id: n } — visages nets reconnus « Inconnu » d'affilée sur une
         # piste nommée. Au-delà de RECOGNITION_UNKNOWN_STREAK, le nom tombe.
         self._unknown_streak: dict[int, int] = {}
+        # { track_id: deque(noms, maxlen=RENAME_WINDOW) } : dernières reconnaissances
+        # de la piste, pour exiger plus de voix avant de la renommer.
+        self._name_history: dict = {}
+        # { track_id: (nom perdu, image) } et l'image en cours de traitement.
+        self._previous_name: dict = {}
+        self._frame_count = 0
         # Croisements récents : { track_id: (image, piste recouverte) }, et les
         # pistes visibles à l'image précédente (cf. _suspend_after_crossings).
         self._crossings: dict = {}
@@ -240,6 +246,7 @@ class FaceBodyTracker:
 
     def update(self, frame: np.ndarray, frame_count: int) -> list[TrackedPerson]:
         """Pipeline complet pour une frame."""
+        self._frame_count = frame_count
 
         timings = {}
         start = time.perf_counter()
@@ -307,6 +314,10 @@ class FaceBodyTracker:
         self._vote_buffer  = {tid: v for tid, v in self._vote_buffer.items()  if tid in active_ids}
         self._unknown_streak = {tid: v for tid, v in self._unknown_streak.items()
                                 if tid in active_ids}
+        self._name_history = {tid: v for tid, v in self._name_history.items()
+                              if tid in active_ids}
+        self._previous_name = {tid: v for tid, v in self._previous_name.items()
+                               if tid in active_ids}
         self._last_attempt_frame = {tid: v for tid, v in self._last_attempt_frame.items()
                                     if tid in active_ids}
         # _nose_map et _face_kps_map sont déjà purgés dans _update_nose_map
@@ -588,6 +599,9 @@ class FaceBodyTracker:
             if best_track_id not in self._vote_buffer:
                 self._vote_buffer[best_track_id] = deque(maxlen=self.VOTE_WINDOW)
             self._vote_buffer[best_track_id].append((face['name'], face['confidence']))
+            history = self._name_history.setdefault(best_track_id,
+                                                    deque(maxlen=config.RENAME_WINDOW))
+            history.append(face['name'])
 
             votes: dict[str, list[float]] = {}
             for name, conf in self._vote_buffer[best_track_id]:
@@ -600,6 +614,22 @@ class FaceBodyTracker:
 
             avg_confidence = sum(votes[top_name]) / top_count
             new_name = top_name
+
+            # ── Renommer une identité établie exige plus de preuves ──────────
+            # Établie : le nom actuel, ou celui perdu il y a moins de
+            # RENAME_MEMORY_FRAMES (sinon une erreur de reconnaissance renomme
+            # la piste dès que son nom est retombé).
+            current = self._identity_map.get(best_track_id, {}).get('name', 'Inconnu')
+            previous, dropped_at = self._previous_name.get(best_track_id, ('Inconnu', None))
+            if current == 'Inconnu' and dropped_at is not None \
+                    and frame_count - dropped_at <= config.RENAME_MEMORY_FRAMES:
+                current = previous
+            if (current not in ('Inconnu', new_name)
+                    and history.count(new_name) < config.RENAME_MIN_VOTES):
+                logger.debug("Piste #%s : '%s' garde son nom, '%s' n'a que %d voix sur %d",
+                             best_track_id, current, new_name, history.count(new_name),
+                             len(history))
+                continue
 
             # ── Hystérésis : la porteuse visible et récemment reconnue garde son nom ──
             if any(old_tid != best_track_id and identity.get('name') == new_name
@@ -616,6 +646,7 @@ class FaceBodyTracker:
             # ── Anti-clonage ────────────────────────────────────────────────
             for old_tid, identity in list(self._identity_map.items()):
                 if old_tid != best_track_id and identity.get('name') == new_name:
+                    self._remember_dropped(old_tid)
                     self._identity_map[old_tid] = {
                         'name': 'Inconnu', 'confidence': 0.0, 'last_face_frame': -1
                     }
@@ -629,6 +660,12 @@ class FaceBodyTracker:
                 'confidence': avg_confidence,
                 'last_face_frame': frame_count,
             }
+
+    def _remember_dropped(self, track_id) -> None:
+        """Retient le nom qu'une piste va perdre, et quand (RENAME_MEMORY_FRAMES)."""
+        name = self._identity_map.get(track_id, {}).get('name', 'Inconnu')
+        if name != 'Inconnu':
+            self._previous_name[track_id] = (name, self._frame_count)
 
     def _suspend_after_crossings(self, visible_tracks: list, frame_count: int) -> None:
         """Retire son nom à une piste dont la partenaire de croisement a disparu.
@@ -657,6 +694,7 @@ class FaceBodyTracker:
                 if name != 'Inconnu':
                     logger.warning("Piste #%s : sa voisine #%s a disparu pendant un croisement, "
                                    "'%s' suspendu", tid, partner, name)
+                    self._remember_dropped(tid)
                     self._identity_map[tid] = {'name': 'Inconnu', 'confidence': 0.0,
                                                'last_face_frame': -1}
                     self._vote_buffer.pop(tid, None)
@@ -682,6 +720,7 @@ class FaceBodyTracker:
             return
         logger.warning("Piste #%s : %d visages « Inconnu » d'affilée, '%s' retiré",
                        track_id, streak, name)
+        self._remember_dropped(track_id)
         self._identity_map[track_id] = {'name': 'Inconnu', 'confidence': 0.0,
                                         'last_face_frame': -1}
         self._vote_buffer.pop(track_id, None)
@@ -761,6 +800,8 @@ class FaceBodyTracker:
             'face_kps_map': len(self._face_kps_map),
             'pose_kps_map': len(self._pose_kps_map),
             'crossings': len(self._crossings),
+            'name_history': len(self._name_history),
+            'previous_name': len(self._previous_name),
         }
 
     def release(self) -> None:
@@ -768,6 +809,8 @@ class FaceBodyTracker:
         self._identity_map.clear()
         self._vote_buffer.clear()
         self._unknown_streak.clear()
+        self._name_history.clear()
+        self._previous_name.clear()
         self._last_attempt_frame.clear()
         self._face_kps_map.clear()
         logger.info("Ressources libérées")

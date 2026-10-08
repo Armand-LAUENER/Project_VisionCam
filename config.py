@@ -191,6 +191,19 @@ FRONTAL_NOSE_MARGIN = float(os.getenv("FRONTAL_NOSE_MARGIN", "0.25"))
 # plutôt que 30 en évitent quelques-unes sans perdre le cas réel, où la piste
 # voisine disparaît 3 images après le recouvrement. CROSSING_IOU 0 : désactivé.
 CROSSING_IOU = float(os.getenv("CROSSING_IOU", "0.2"))
+# Renommer une piste déjà nommée exige plus de preuves que nommer une piste
+# « Inconnu » (2 votes sur 3) : le nouveau nom doit totaliser RENAME_MIN_VOTES
+# voix sur les RENAME_WINDOW dernières reconnaissances de la piste. Sans ça,
+# 2 erreurs de reconnaissance renommaient une identité établie depuis des
+# minutes (seq_026 : la personne 6 devenue id_5 pendant 275 images). Un nom
+# faux retombe toujours par la série d'« Inconnu » ou un croisement.
+RENAME_WINDOW = int(os.getenv("RENAME_WINDOW", "6"))
+RENAME_MIN_VOTES = int(os.getenv("RENAME_MIN_VOTES", "4"))
+# Le nom qu'une piste vient de perdre (série d'« Inconnu », croisement,
+# anti-clonage) compte encore pendant RENAME_MEMORY_FRAMES : lui donner un
+# autre nom dans ce délai est un renommage. Cas réel : id_6 retombé, puis la
+# même personne nommée id_5 par 2 erreurs de reconnaissance (275 images).
+RENAME_MEMORY_FRAMES = int(os.getenv("RENAME_MEMORY_FRAMES", "300"))
 CROSSING_WINDOW_FRAMES = int(os.getenv("CROSSING_WINDOW_FRAMES", "10"))
 
 # Hystérésis de l'anti-clonage (roadmap 1.8) : une piste visible dont le visage
