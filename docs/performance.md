@@ -541,3 +541,52 @@ Décodage (vidéo 1280×720, hors attente de l'image) : 0,4 à 1,4 ms par image.
   par processus de caméras plus ~2 Go pour l'application, ~230 Mo de VRAM
   par processus plus ~200 Mo par caméra, et un processus par tranche de
   ~70 images traitées par seconde.
+
+### Balayage de configuration (roadmap 2.7)
+
+Un réglage à la fois depuis la configuration déployée (`yolov8s-pose` en
+TensorRT FP16, reconnaissance toutes les 5 images, 2 visages par passe).
+Qualité : application complète sur CHIRLA, mêmes 13 identités enrôlées
+(`tools/eval_identity.py`, rejeu `every_frame`). Coût : 8 flux × 30 i/s
+(`tools/bench_load.py --env`), le palier qui sature, donc qui montre le débit
+maximal. Détection seule : `tools/bench_yolo.py`, 200 images de
+`seq_026_camera_3`. Le 2026-10-08, un run par configuration.
+
+| Réglage | MOTA `seq_026` | Bons noms | Mauvais noms | Sans piste | i/s par caméra à 8 × 30 | Latence p95 | Détection seule |
+|:--|---:|---:|---:|---:|---:|---:|---:|
+| **Déployé** (`s` FP16, toutes les 5, 2 visages) | 67,7 % | 39,6 % | 0,7 % | 25,4 % | 19,0 | 149 ms | 5,9 ms |
+| Modèle `n` | 53,7 % | 38,3 % | 0,6 % | 38,0 % | 21,2 | 135 ms | 5,3 ms |
+| Modèle `m` | 75,9 % | 36,6 % | 0,8 % | 16,4 % | 17,8 | 151 ms | 8,2 ms |
+| `s` en PyTorch FP32 | 70,7 % | 37,3 % | **1,4 %** | 23,6 % | **9,4** | 205 ms | — |
+| Reconnaissance toutes les 2 images | 67,7 % | 39,1 % | **0,4 %** | 25,4 % | 17,2 | 168 ms | — |
+| Reconnaissance toutes les 10 images | 67,7 % | 38,9 % | 0,7 % | 25,4 % | **21,1** | 131 ms | — |
+| 1 visage par passe | 67,7 % | 36,6 % | 0,4 % | 25,4 % | 20,2 | 135 ms | — |
+| 4 visages par passe | 67,7 % | 39,7 % | 0,7 % | 25,4 % | 19,9 | 141 ms | — |
+
+Bons et mauvais noms : personnes enrôlées de `seq_026_camera_3`. Sur
+`seq_025_camera_2`, 1,7 à 2,9 % de bons noms et aucun mauvais nom partout
+(visages trop petits). La détection et le suivi ne dépendent pas des réglages
+de reconnaissance (MOTA identique).
+
+- **Taille du modèle** : `n` rate des personnes (38 % sans piste contre 25 %,
+  −14 points de MOTA) pour 12 % de débit en plus ; `m` en suit davantage
+  (16 % sans piste, +8 de MOTA) mais ces personnes en plus sont de dos ou
+  loin, et restent « Inconnu » : les bons noms baissent (36,6 %), comme avec
+  ByteTrack (docs/tracking.md). **`s` reste le meilleur compromis.**
+- **Précision** : FP32 (PyTorch) coûte la moitié du débit et double les
+  mauvais noms. **TensorRT FP16 est meilleur sur les deux plans.** L'INT8
+  n'est pas mesuré (calibrage nécessaire).
+- **Cadence de reconnaissance** : toutes les 10 images, +11 % de débit pour
+  −0,7 point de bons noms ; toutes les 2, −9 % de débit mais les mauvais noms
+  tombent à 0,4 %. **C'est le réglage qui trace la frontière qualité/coût.**
+- **Visages par passe** : 1 coûte 3 points de bons noms pour 6 % de débit ;
+  4 ne change rien, faute de plus de 2 candidats à la fois sur CHIRLA.
+- La résolution n'est pas balayée : le moteur est compilé pour 384×640, la
+  changer demande de reconstruire les moteurs.
+- Un premier palier `n` à 8 × 30 n'a tenu que 0,7 i/s (GPU à 100 %, pleine
+  fréquence, aucune application Windows) ; refait, il tient 21,2 i/s. Cause
+  non trouvée.
+
+Un run par configuration : les écarts de bons noms (±1,5 point) et de débit
+(±1 i/s) sont à la limite du bruit ; ceux de FP32 et des modèles `n` / `m` le
+dépassent nettement.

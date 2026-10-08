@@ -213,6 +213,10 @@ Chiffres et protocoles dans docs/performance.md et docs/tracking.md.
   les résultats moins vite qu'ils n'arrivent, le worker bloque sur l'envoi :
   ces images-là ne sont comptées nulle part. → Mesurer à 16 flux, compter les
   envois bloqués.
+- **Un palier à 8 × 30 i/s avec `yolov8n-pose` n'a tenu que 0,7 i/s**
+  (GPU à 100 %, pleine fréquence, aucune application Windows, 2026-10-07
+  23:52) ; refait 40 min plus tard, il tient 21,2 i/s. Cause non trouvée. →
+  Si ça se reproduit : `nvidia-smi` et un profil (py-spy) pendant le palier.
 - **`/bench/pose` en mode process** demande une image au worker à chaque
   échantillon (délai 2 s chacun) : coût et durée non mesurés.
 
