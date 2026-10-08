@@ -171,3 +171,12 @@ def test_messages_are_defined_outside_the_worker_module():
         assert message.__module__ == "core.frame_pipeline"
     assert not hasattr(camera_worker, "FrameSnapshot") or \
         camera_worker.FrameSnapshot.__module__ == "core.frame_pipeline"
+
+
+def test_tune_command_updates_the_camera_settings(worker):
+    w, _ = worker
+
+    w.handle(("tune", "porte", 10, 2))
+    w.handle(("tune", "ailleurs", 5, 10))
+
+    assert (w.tunings["porte"].max_fps, w.tunings["porte"].recognition_skip) == (10, 2)

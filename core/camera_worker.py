@@ -21,6 +21,8 @@ authentifiée) :
       ("frame", requête, caméra) renvoyer la dernière image brute
                                  (FrameSnapshot, pour /api/capture et /bench/pose) ;
       ("reload",)               relire la base de visages (embeddings.npz) ;
+      ("tune", caméra, i/s, N)  cadence et reconnaissance toutes les N images
+                                 (core/adaptive.py) ;
       ("stop",).
     Si l'application disparaît, la connexion se ferme et le worker s'arrête.
 
@@ -50,6 +52,7 @@ import cv2
 
 import config
 from core import capture
+from core.adaptive import Tuning, update_in_place
 from core.frame_pipeline import FramePipeline, FrameSnapshot, build_pose_estimator
 
 logger = logging.getLogger(__name__)
@@ -102,6 +105,9 @@ class Worker:
         self._reload_faces = reload_faces
         # Dernière image brute et personnes de chaque caméra : ("frame", …).
         self._latest: dict = {}
+        # Réglages de chaque caméra, ajustés par l'application ("tune", …).
+        self.tunings = {camera.id: Tuning(config.CAMERA_MAX_FPS, config.FACE_RECOGNITION_SKIP)
+                        for camera in cameras}
         self._results = results
         self._send_lock = threading.Lock()
         self._build_tracker = build_tracker
@@ -125,6 +131,10 @@ class Worker:
             _, request_id, camera_id = command
             frame, persons = self._latest.get(camera_id, (None, []))
             self.send(FrameSnapshot(request_id, camera_id, frame, persons))
+        elif command[0] == "tune":
+            _, camera_id, max_fps, recognition_skip = command
+            if camera_id in self.tunings:
+                update_in_place(self.tunings[camera_id], Tuning(max_fps, recognition_skip))
         elif command[0] == "reload":
             self._reload_faces()
         elif command[0] == "stop":
@@ -150,10 +160,12 @@ class Worker:
             # Durées des étapes, lecture comprise : deque, que le thread de
             # capture remplit pendant que celui de traitement la vide.
             timings: deque = deque()
+            tuning = self.tunings[camera.id]
             threads += [
                 threading.Thread(target=capture.capture_loop,
                                  args=(camera, frames, self.running, counters,
-                                       lambda stage, seconds, t=timings: t.append((stage, seconds))),
+                                       lambda stage, seconds, t=timings: t.append((stage, seconds)),
+                                       tuning),
                                  daemon=True, name=f"camera-{camera.id}"),
                 threading.Thread(target=self._process_loop,
                                  args=(camera, frames, counters, timings),
@@ -168,7 +180,8 @@ class Worker:
         logger.info("[%s] Thread de traitement démarré (processus %d).", camera.id, os.getpid())
         pipeline = FramePipeline(camera.id, self._build_tracker(),
                                  lambda stage, seconds: timings.append((stage, seconds)),
-                                 self._pose_estimator, camera.tracks_path)
+                                 self._pose_estimator, camera.tracks_path,
+                                 self.tunings[camera.id])
         while self.running():
             try:
                 received, frame = frames.get(timeout=1.0)

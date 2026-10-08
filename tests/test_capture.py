@@ -51,3 +51,13 @@ def test_a_pause_in_the_source_does_not_cause_a_burst():
     count = allowed(throttle, clock, seconds=1)
 
     assert count == pytest.approx(10, abs=1)
+
+
+def test_the_rate_can_change_while_running():
+    clock = Clock()
+    throttle = Throttle(30, clock)
+    assert allowed(throttle, clock, seconds=1) == pytest.approx(30, abs=1)
+
+    throttle.set_rate(5)
+
+    assert allowed(throttle, clock, seconds=2) == pytest.approx(10, abs=1)

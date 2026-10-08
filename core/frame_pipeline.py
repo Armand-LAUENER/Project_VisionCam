@@ -147,11 +147,14 @@ class FramePipeline:
     passent par `record`, le reste sort dans le FrameResult.
     """
 
-    def __init__(self, camera_id, camera_tracker, record, pose_estimator, tracks_path=""):
+    def __init__(self, camera_id, camera_tracker, record, pose_estimator, tracks_path="",
+                 tuning=None):
         self.camera_id = camera_id
         self.tracker = camera_tracker
         self.record = record
         self.pose_estimator = pose_estimator
+        # Réglages ajustés en marche (core/adaptive.py), relus à chaque image.
+        self.tuning = tuning
         self.frame_count = 0
         self.fps = 0.0
         # Horloge monotone : sous WSL2, l'horloge murale recule de ~0,8 s toutes
@@ -176,6 +179,8 @@ class FramePipeline:
         display_frame = frame.copy() if config.MJPEG_ANNOTATE else frame
 
         # ── Pipeline Body-First (YOLO + DeepSORT + InsightFace) ──────────────
+        if self.tuning is not None:
+            self.tracker.recognition_skip = self.tuning.recognition_skip
         try:
             self.persons = self.tracker.update(frame, self.frame_count)
             for stage, seconds in self.tracker.last_timings.items():

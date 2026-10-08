@@ -40,7 +40,8 @@ import urllib.request
 import psutil
 
 PORT = 5099
-FIELDS = ["streams", "target_fps", "per_worker", "fps_mean", "fps_min", "held",
+SOURCE_FPS = 30
+FIELDS = ["streams", "target_fps", "per_worker", "recognition_skip", "fps_mean", "fps_min", "held",
           "latency_p50_ms", "latency_p95_ms", "decode_p50_ms", "detection_p50_ms",
           "recognition_p50_ms", "frames_dropped", "cpu_pct", "rss_mb", "workers",
           "gpu_util_pct", "wsl_gpu_pct", "wsl_vram_mb"]
@@ -92,17 +93,25 @@ def median(rows: list[dict], column: str) -> float:
 
 def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir,
               extra_env=None) -> dict:
-    """Un palier : lance l'application, mesure, l'arrête ; une ligne de résultats."""
-    label = f"n{streams}_f{target_fps:g}"
+    """Un palier : lance l'application, mesure, l'arrête ; une ligne de résultats.
+
+    `target_fps` None : cadence laissée à l'adaptation (core/adaptive.py) ; la
+    cadence visée est alors celle qu'elle a choisie, lue dans /api/diagnostics.
+    """
+    adaptive = target_fps is None
+    label = f"n{streams}_{'adaptive' if adaptive else f'f{target_fps:g}'}"
     endurance = os.path.join(out_dir, f"endurance_{label}.csv")
     env = {**os.environ,
            "CAMERAS": cameras_spec(videos, streams), "CAMERA_WORKERS": "process",
-           "CAMERAS_PER_WORKER": str(per_worker), "CAMERA_MAX_FPS": str(target_fps),
+           "CAMERAS_PER_WORKER": str(per_worker),
            "VIDEO_MODE": "realtime", "VIDEO_LOOP": "true", "FLASK_PORT": str(PORT),
            "ADMIN_PASSWORD_HASH": "", "ADMIN_PASSWORD": "",
            "PRESENCE_DB_PATH": os.path.join(out_dir, f"presence_{label}.db"),
            "ENDURANCE_LOG_PATH": endurance, "ENDURANCE_INTERVAL_S": "15",
+           **({} if adaptive else {"CAMERA_MAX_FPS": str(target_fps)}),
            **(extra_env or {})}
+    if adaptive:
+        env.pop("CAMERA_MAX_FPS", None)
     with open(os.path.join(out_dir, f"app_{label}.log"), "w") as log:
         app = subprocess.Popen([sys.executable, "app.py"], env=env, stdout=log,
                                stderr=subprocess.STDOUT)
@@ -115,7 +124,7 @@ def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir
         start = time.monotonic()
         time.sleep(warmup)
 
-        fps_samples, cpu, rss = {}, [], []
+        fps_samples, cpu, rss, targets, skips = {}, [], [], [], []
         # Mêmes objets Process d'un relevé à l'autre : cpu_percent mesure
         # depuis l'appel précédent sur le même objet (0 au premier).
         procs = {p.pid: p for p in process_tree(app.pid)}
@@ -127,6 +136,8 @@ def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir
             if d:
                 for c in d["cameras"]:
                     fps_samples.setdefault(c["id"], []).append(c["fps"])
+                    targets.append(c.get("max_fps") or SOURCE_FPS)
+                    skips.append(c.get("recognition_skip"))
             for p in process_tree(app.pid):
                 procs.setdefault(p.pid, p)
             alive = [p for p in procs.values() if p.is_running()]
@@ -147,8 +158,11 @@ def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir
         rows = [r for r in csv.DictReader(f) if float(r["elapsed_s"]) >= warmup]
     per_camera = [statistics.mean(v) for v in fps_samples.values()]
     fps_mean = statistics.mean(per_camera) if per_camera else 0.0
+    if adaptive:
+        target_fps = statistics.median(targets) if targets else SOURCE_FPS
     return {
         "streams": streams, "target_fps": target_fps, "per_worker": per_worker,
+        "recognition_skip": statistics.median(s for s in skips if s) if any(skips) else "",
         "fps_mean": round(fps_mean, 1), "fps_min": round(min(per_camera, default=0), 1),
         "held": fps_mean >= 0.95 * target_fps,
         "latency_p50_ms": median(rows, "stage_latency_p50_ms"),
@@ -182,6 +196,8 @@ def main():
     parser.add_argument("--streams", type=int, nargs="+", default=[2, 4, 8, 16])
     parser.add_argument("--fps", type=float, nargs="+", default=[5, 10, 30],
                         help="cadence visée par caméra (CAMERA_MAX_FPS)")
+    parser.add_argument("--adaptive", action="store_true",
+                        help="cadence laissée à l'adaptation au nombre de caméras (--fps ignoré)")
     parser.add_argument("--per-worker", type=int, default=0,
                         help="caméras par processus ; 0 : selon le nombre de flux (RAM)")
     parser.add_argument("--warmup", type=float, default=60)
@@ -199,13 +215,16 @@ def main():
         writer.writeheader()
         for streams in args.streams:
             per_worker = args.per_worker or default_per_worker(streams)
-            for target_fps in args.fps:
+            for target_fps in ([None] if args.adaptive else args.fps):
                 row = run_level(videos, streams, target_fps, per_worker, args.warmup,
                                 args.duration, args.out,
                                 dict(item.split("=", 1) for item in args.env))
                 writer.writerow(row)
                 f.flush()
-                print(f"{streams:>3} flux × {target_fps:>4g} i/s : {row['fps_mean']:5.1f} i/s "
+                adapted = (f" (adapté, reco. toutes les {row['recognition_skip']})"
+                           if args.adaptive else "")
+                print(f"{streams:>3} flux × {row['target_fps']:>4g} i/s{adapted}"
+                      f" : {row['fps_mean']:5.1f} i/s "
                       f"(min {row['fps_min']:.1f}) {'tenu' if row['held'] else 'NON TENU'}, "
                       f"latence p95 {row['latency_p95_ms']:.0f} ms, "
                       f"RAM {row['rss_mb'] / 1024:.1f} Go, WSL GPU {row['wsl_gpu_pct']:.0f} %",

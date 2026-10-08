@@ -42,6 +42,7 @@ from werkzeug.security import check_password_hash
 import config
 from core import camera_worker as worker_module
 from core import capture
+from core.adaptive import AdaptiveController, Tuning, update_in_place
 from core.cameras import parse_cameras
 from core.db_writer import DbWriter
 from core.endurance import EnduranceLog
@@ -195,6 +196,10 @@ class Camera:
         self.worker_sizes: dict = {}
         self.stream_announced = False
         self.worker = None
+        # Réglages de la caméra, ajustés en marche (core/adaptive.py), et
+        # réception de sa dernière image (horloge monotone) : caméra active.
+        self.tuning = Tuning(config.CAMERA_MAX_FPS, config.FACE_RECOGNITION_SKIP)
+        self.last_result = None
 
     @property
     def is_file(self) -> bool:
@@ -235,7 +240,7 @@ def camera_loop(camera=None):
     """Lit les images d'une caméra dans sa file (core/capture.py)."""
     camera = camera or cameras[0]
     capture.capture_loop(camera, camera.queue, lambda: state.running, camera.state,
-                         timings.record)
+                         timings.record, camera.tuning)
 
 
 # ══════════════════════════════════════════
@@ -248,6 +253,7 @@ def _apply_frame_result(camera, result: FrameResult) -> None:
     La reconnaissance faciale, l'historique et les journaux sont partagés entre
     caméras : cette partie reste dans le processus de l'application.
     """
+    camera.last_result = time.monotonic()
     camera_state = camera.state
     persons = result.persons
     now = time.time()
@@ -311,7 +317,8 @@ def processing_loop(camera=None):
 
     pipeline = FramePipeline(
         camera.id, camera.tracker, timings.record, pose_estimator,
-        _per_camera_path(config.TRACKS_LOG_PATH, camera) if config.TRACKS_LOG_PATH else "")
+        _per_camera_path(config.TRACKS_LOG_PATH, camera) if config.TRACKS_LOG_PATH else "",
+        camera.tuning)
     camera.pipeline = pipeline
     endurance = probes = None
     # Un seul journal d'endurance, tenu par la première caméra, pour toutes.
@@ -437,6 +444,10 @@ class WorkerProcess:
         for camera in self.cameras:
             camera.stream_announced = False
         self.start()
+        # Le nouveau processus repart des réglages par défaut : lui renvoyer
+        # ceux que l'adaptation avait choisis.
+        for camera in self.cameras:
+            self.send(("tune", camera.id, camera.tuning.max_fps, camera.tuning.recognition_skip))
 
     def stop(self) -> None:
         self.send(("stop",))
@@ -538,6 +549,13 @@ def _apply_worker_result_and_announce(worker, camera, result, endurance) -> None
             logger.warning("Journal d'endurance indisponible : %s: %s", type(e).__name__, e)
 
 
+def _apply_tuning(camera, tuning) -> None:
+    """Applique un réglage adapté : au processus de la caméra, ou à ses threads."""
+    update_in_place(camera.tuning, tuning)
+    if camera.worker is not None:
+        camera.worker.send(("tune", camera.id, tuning.max_fps, tuning.recognition_skip))
+
+
 def start_worker_processes() -> list[WorkerProcess]:
     """Un processus par groupe de CAMERAS_PER_WORKER caméras, lancés l'un après l'autre."""
     size = max(1, config.CAMERAS_PER_WORKER)
@@ -619,7 +637,7 @@ def _endurance_probe(frame_count, fps, persons, probes) -> dict:
     if len(cameras) > 1:
         # FPS par caméra : le partage du GPU se lit caméra par caméra (roadmap 2.2).
         for c in cameras:
-            row[f'cam_{c.id}_fps'] = round(c.state.fps, 2)
+            row[f'cam_{c.id}_fps'] = round(_camera_fps(c), 2)
     # Grossit normalement (sessions de présence) : affichée, pas jugée.
     if os.path.exists(config.PRESENCE_DB_PATH):
         row['presence_db_kb'] = round(os.path.getsize(config.PRESENCE_DB_PATH) / 1024)
@@ -1124,6 +1142,15 @@ def status():
     return jsonify(_status_payload(camera))
 
 
+def _camera_fps(camera) -> float:
+    """i/s affichés d'une caméra : 0 si elle n'envoie plus d'images (caméra
+    tombée, fin de vidéo), au lieu de la dernière valeur mesurée."""
+    if camera.last_result is None or (time.monotonic() - camera.last_result
+                                      > AdaptiveController.ACTIVE_S):
+        return 0.0
+    return camera.state.fps
+
+
 def _frame_size(camera_state):
     """[largeur, hauteur] de la dernière image de la caméra, ou None (sous son verrou)."""
     if camera_state.bench_frame is not None:
@@ -1146,7 +1173,7 @@ def _status_payload(camera=None):
         frame_size = _frame_size(camera_state)
         return {
             'currently_present': present,
-            'fps': camera_state.fps,
+            'fps': _camera_fps(camera),
             'total_known': state.total_known,
             'tracks': tracks,
             'frame_size': frame_size,
@@ -1222,7 +1249,7 @@ def api_diagnostics():
     if camera is None:
         return _unknown_camera()
     with camera.state.lock:
-        fps = camera.state.fps
+        fps = _camera_fps(camera)
         frame_size = _frame_size(camera.state)
     video_clients = sum(c.state.stream_clients for c in cameras)
     return jsonify({
@@ -1254,7 +1281,9 @@ def api_diagnostics():
             'source': _source_label(camera),
             'frame_size': frame_size,
         },
-        'cameras': [{'id': c.id, 'source': _source_label(c), 'fps': c.state.fps}
+        'cameras': [{'id': c.id, 'source': _source_label(c), 'fps': _camera_fps(c),
+                     'max_fps': c.tuning.max_fps,
+                     'recognition_skip': c.tuning.recognition_skip}
                     for c in cameras],
         'clients': {'video': video_clients, 'events': events.subscriber_count},
     })
@@ -1409,6 +1438,10 @@ if __name__ == '__main__':
                                          name=f"processing-{camera.id}")]
     for thread in threads:
         thread.start()
+    if config.ADAPTIVE_TUNING:
+        # Réglages adaptés au nombre de caméras actives (roadmap 2.7).
+        AdaptiveController([w.cameras for w in workers] if workers else [cameras],
+                           _apply_tuning).start(lambda: state.running)
     _persist_secret_key()
     if not auth_enabled():
         logger.warning("Accès NON protégé : définir ADMIN_PASSWORD_HASH ou ADMIN_PASSWORD "

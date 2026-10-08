@@ -56,6 +56,16 @@ CAMERAS_PER_WORKER = int(os.getenv("CAMERAS_PER_WORKER", "2"))
 # Une caméra n'a souvent pas besoin de 30 i/s : à 5 ou 10, une même machine
 # suit plus de flux (tools/bench_load.py). Sans effet en VIDEO_MODE=every_frame.
 CAMERA_MAX_FPS = float(os.getenv("CAMERA_MAX_FPS", "0"))
+# Réglages adaptés en marche au nombre de caméras actives (core/adaptive.py) :
+# cadence par caméra et cadence de reconnaissance. Un réglage fixé dans
+# l'environnement (CAMERA_MAX_FPS, FACE_RECOGNITION_SKIP) n'est pas adapté.
+# Capacités mesurées sur RTX 4060 / WSL2 (docs/performance.md) : images par
+# seconde que tient un processus (GIL) et que tient le GPU, à remesurer
+# (tools/bench_load.py) sur une autre machine.
+ADAPTIVE_TUNING = os.getenv("ADAPTIVE_TUNING", "true").lower() == "true"
+ADAPTIVE_PROCESS_FPS = float(os.getenv("ADAPTIVE_PROCESS_FPS", "72"))
+ADAPTIVE_GPU_FPS = float(os.getenv("ADAPTIVE_GPU_FPS", "150"))
+CAMERA_MAX_FPS_FIXED = "CAMERA_MAX_FPS" in os.environ
 # Au plus un événement « visage reconnu » par piste et par intervalle (s), en
 # plus du dernier avant expiration de PRESENCE_FACE_MAX_AGE_S : ~60 lignes par
 # heure et par personne nommée, et des sessions reconstruites exactes.
@@ -321,6 +331,7 @@ POSE_CROP_BODY_RATIO = 0.55
 # Lancer InsightFace toutes les N frames seulement.
 # 5 = bon compromis (15ms × 1/5 = 3ms amortis/frame) ; baisser si réseau lent.
 FACE_RECOGNITION_SKIP = int(os.getenv("FACE_RECOGNITION_SKIP", "5"))
+FACE_RECOGNITION_SKIP_FIXED = "FACE_RECOGNITION_SKIP" in os.environ
 # Visages soumis à InsightFace par passe de reconnaissance, au plus : les
 # pistes dont la dernière tentative est la plus ancienne passent d'abord.
 FACES_PER_PASS = int(os.getenv("FACES_PER_PASS", "2"))

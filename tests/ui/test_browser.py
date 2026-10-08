@@ -201,6 +201,7 @@ def test_live_page_switches_camera(page, monkeypatch):
         porte.state.bench_frame = np.zeros((FRAME_H, FRAME_W, 3), dtype=np.uint8)
         porte.state.bench_persons = people
         porte.state.fps = 12.0
+    porte.last_result = time.monotonic()
     first = visioncam.cameras[0]
     monkeypatch.setattr(visioncam, "cameras", [first, porte])
     monkeypatch.setattr(visioncam, "cameras_by_id", {first.id: first, "porte": porte})

@@ -238,6 +238,8 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `REMOTE_SOURCE` | URL MJPEG | URL du flux caméra IP |
 | `CAMERAS` | vide | Plusieurs caméras : `id=source;id=source` (webcam, URL, vidéo ou séquence) ; vide = une seule, `CAMERA_ID` |
 | `CAMERA_MAX_FPS` | `0` | Cadence maximale traitée par caméra (0 : toutes les images) ; à 5-10 i/s, la machine suit 8 flux au lieu de 4 |
+| `ADAPTIVE_TUNING` | `true` | Cadence par caméra et cadence de reconnaissance adaptées en marche au nombre de caméras actives (`core/adaptive.py`) ; un `CAMERA_MAX_FPS` ou `FACE_RECOGNITION_SKIP` fixé prime |
+| `ADAPTIVE_PROCESS_FPS` / `ADAPTIVE_GPU_FPS` | `72` / `150` | Capacités mesurées sur RTX 4060 / WSL2, à remesurer ailleurs (`tools/bench_load.py`) |
 | `CAMERA_WORKERS` | `thread` | `process` : caméras traitées dans des processus à part, `CAMERAS_PER_WORKER` (2) chacun ; au-delà de 2 caméras, seul `process` tient 30 i/s |
 | `CAMERA_ID` | `cam0` | Identifiant de la caméra dans le journal d'événements (table `events` de `presence.db`) |
 | `YOLO_NMS_IOU` | `0.6` | Recouvrement au-delà duquel YOLO fusionne deux boîtes ; 0,6 évite les pistes dédoublées d'une personne assise |

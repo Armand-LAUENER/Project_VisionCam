@@ -4,6 +4,7 @@ capture.py — Lecture d'une caméra ou d'une vidéo, dans son propre thread.
 Sans dépendance à l'application : utilisé par les threads de app.py comme par
 les processus de caméras (core/camera_worker.py). `camera` est tout objet qui
 expose `id`, `source` et `is_file` ; `running()` dit s'il faut continuer, et
+`tuning.max_fps`, s'il est donné, est relu à chaque image (core/adaptive.py) ;
 `counters` reçoit les images jetées et sautées (`frames_dropped`,
 `source_skipped`) pour le journal d'endurance, et `record(étape, secondes)`
 le coût de lecture de chaque image : « decode » pour une vidéo (décodage seul,
@@ -93,8 +94,17 @@ class Throttle:
     """
 
     def __init__(self, max_fps: float, clock=time.monotonic):
-        self.interval = 1.0 / max_fps if max_fps > 0 else 0.0
         self._clock = clock
+        self._next = None
+        self.max_fps = None
+        self.set_rate(max_fps)
+
+    def set_rate(self, max_fps: float) -> None:
+        """Change la cadence en marche (adaptation au nombre de caméras)."""
+        if max_fps == self.max_fps:
+            return
+        self.max_fps = max_fps
+        self.interval = 1.0 / max_fps if max_fps > 0 else 0.0
         self._next = None
 
     def allow(self) -> bool:
@@ -109,7 +119,8 @@ class Throttle:
         return True
 
 
-def capture_loop(camera, frame_queue, running, counters, record=lambda stage, seconds: None):
+def capture_loop(camera, frame_queue, running, counters, record=lambda stage, seconds: None,
+                 tuning=None):
     """
     Lit les frames depuis la caméra et les pousse dans frame_queue, avec
     leur heure de réception (perf_counter) pour mesurer la latence.
@@ -158,6 +169,8 @@ def capture_loop(camera, frame_queue, running, counters, record=lambda stage, se
             continue
 
         consecutive_failures = 0
+        if tuning is not None and not every_frame:
+            throttle.set_rate(tuning.max_fps)
         if not throttle.allow():
             continue
         item = (time.perf_counter(), frame)

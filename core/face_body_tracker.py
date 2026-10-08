@@ -164,6 +164,8 @@ class FaceBodyTracker:
 
         # deep_sort_realtime ou deepsort-rs selon config.TRACKER_BACKEND.
         self.body_tracker = build_body_tracker()
+        # Reconnaissance toutes les N images ; ajustée en marche (core/adaptive.py).
+        self.recognition_skip = config.FACE_RECOGNITION_SKIP
         # ByteTrack / BoT-SORT associent aussi les détections faibles (second
         # passage) : YOLO doit les leur fournir. DeepSORT n'en voit aucune.
         self._detection_conf = (min(config.YOLO_CONF_THRESHOLD, config.BYTETRACK_LOW_THRESH)
@@ -235,7 +237,7 @@ class FaceBodyTracker:
         visible_tracks = [t for t in active_tracks if t.track_id in visible_ids]
 
         # Étapes 3 & 4 : Reconnaissance faciale intelligente (cadencée)
-        if frame_count % config.FACE_RECOGNITION_SKIP == 0 and visible_tracks:
+        if frame_count % self.recognition_skip == 0 and visible_tracks:
 
             tracks_to_recognize = []
             for track in visible_tracks:

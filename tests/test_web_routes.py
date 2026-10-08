@@ -293,6 +293,7 @@ class TestStatus:
                  'pose': 'Face', 'last_face_frame': 42}
             ]
             visioncam.state.fps = 24.5
+        visioncam.cameras[0].last_result = time.monotonic()
 
         data = client.get('/status').get_json()
         assert data['fps'] == 24.5
@@ -1125,3 +1126,30 @@ class TestWorkerProcessesSide:
 
         for worker in workers:
             worker.send.assert_called_once_with(("reload",))
+
+
+def test_the_pipeline_passes_the_recognition_cadence_to_the_tracker(monkeypatch):
+    from core.adaptive import Tuning
+    monkeypatch.setattr(visioncam.config, "MJPEG_ANNOTATE", False)
+    tracker = MagicMock(last_timings={})
+    tracker.update.return_value = []
+    tuning = Tuning(0, 5)
+    pipeline = visioncam.FramePipeline("cam0", tracker, lambda *_: None, MagicMock(),
+                                       tuning=tuning)
+
+    tuning.recognition_skip = 2
+    pipeline.process(time.perf_counter(), np.zeros((8, 8, 3), dtype=np.uint8))
+
+    assert tracker.recognition_skip == 2
+
+
+def test_a_camera_that_stopped_sending_shows_zero_fps(monkeypatch):
+    camera = visioncam.cameras[0]
+    with visioncam.state.lock:
+        visioncam.state.fps = 24.5
+    monkeypatch.setattr(camera, 'last_result', time.monotonic() - 60)
+
+    assert visioncam._camera_fps(camera) == 0.0
+
+    monkeypatch.setattr(camera, 'last_result', time.monotonic())
+    assert visioncam._camera_fps(camera) == 24.5
