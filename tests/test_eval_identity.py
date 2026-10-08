@@ -133,3 +133,32 @@ class TestTrackingMetrics:
 
         assert metrics["switches"] == 4
         assert metrics["idf1"] < 0.7
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Yeux annotés (ChokePoint) : appariement point → piste
+# ─────────────────────────────────────────────────────────────────────────────
+
+from tools.eval_identity import match_points_to_tracks  # noqa: E402
+
+
+def test_the_track_containing_the_eyes_covers_the_person():
+    tracks = [(0, 0, 100, 300), (200, 0, 100, 300)]
+
+    assert match_points_to_tracks([(250, 40), (50, 40)], tracks) == {0: 1, 1: 0}
+
+
+def test_eyes_outside_every_track_are_untracked():
+    assert match_points_to_tracks([(500, 40)], [(0, 0, 100, 300)]) == {}
+
+
+def test_nested_tracks_go_to_the_one_whose_head_is_closest():
+    """Deux boîtes contiennent les yeux : celle du corps entier (tête en haut)
+    l'emporte sur celle, plus grande, d'une personne derrière."""
+    body = (90, 20, 60, 200)        # haut du corps vers y = 50
+    behind = (40, 0, 200, 600)      # haut du corps vers y = 90
+    assert match_points_to_tracks([(120, 45)], [behind, body]) == {0: 1}
+
+
+def test_one_track_covers_one_person_only():
+    assert match_points_to_tracks([(50, 40), (55, 42)], [(0, 0, 100, 300)]) in ({0: 0}, {1: 0})

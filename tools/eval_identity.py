@@ -93,8 +93,38 @@ def _matches(gt_boxes, track_boxes):
     return match_tracks_to_detections(gt_boxes, track_boxes, min_iou=MIN_IOU)
 
 
-def evaluate(gt: dict, tracks: dict, gt_names: dict, fps: float) -> Report:
-    """gt : {image: [(id, x1, y1, x2, y2)]} ; gt_names : {id: nom enrôlé ou None}."""
+def load_gt_eyes(seq_dir: str) -> dict:
+    """{image: [(id, x, y)]} : milieu des yeux annotés (gt/gt_eyes.txt, ChokePoint)."""
+    gt = defaultdict(list)
+    with open(os.path.join(seq_dir, "gt", "gt_eyes.txt")) as f:
+        for line in f:
+            frame, pid, lx, ly, rx, ry = (float(v) for v in line.strip().split(","))
+            gt[int(frame)].append((int(pid), (lx + rx) / 2 - 1, (ly + ry) / 2 - 1))
+    return gt
+
+
+def match_points_to_tracks(points, track_boxes) -> dict:
+    """{indice du point: indice de la piste} : la piste dont la boîte contient le
+    milieu des yeux, un pour un ; à plusieurs, celle dont le haut du corps
+    (centre, 15 % de la hauteur) est le plus proche, rapporté à sa largeur."""
+    pairs = []
+    for i, (px, py) in enumerate(points):
+        for j, (x, y, w, h) in enumerate(track_boxes):
+            if x <= px <= x + w and y <= py <= y + h and w > 0:
+                cost = np.hypot(px - (x + w / 2), py - (y + 0.15 * h)) / w
+                pairs.append((cost, i, j))
+    matched, used = {}, set()
+    for _cost, i, j in sorted(pairs):
+        if i not in matched and j not in used:
+            matched[i] = j
+            used.add(j)
+    return matched
+
+
+def evaluate(gt: dict, tracks: dict, gt_names: dict, fps: float, matcher=None) -> Report:
+    """gt : {image: [(id, x1, y1, x2, y2)]}, ou [(id, x, y)] avec
+    `matcher=match_points_to_tracks` ; gt_names : {id: nom enrôlé ou None}."""
+    matcher = matcher or _matches
     per_id = defaultdict(Counts)
     first_seen: dict[int, int] = {}      # début de l'apparition en cours
     last_seen: dict[int, int] = {}
@@ -104,7 +134,7 @@ def evaluate(gt: dict, tracks: dict, gt_names: dict, fps: float) -> Report:
     for frame in sorted(gt):
         people = gt[frame]
         shown = tracks.get(frame, [])
-        matched = _matches([p[1:] for p in people], [t[1:5] for t in shown])
+        matched = matcher([p[1:] for p in people], [t[1:5] for t in shown])
         for index, (gid, *_box) in enumerate(people):
             expected = gt_names.get(gid)
             counts = per_id[gid]
@@ -194,18 +224,22 @@ def main():
     parser.add_argument("--sequence", required=True, help="séquence MOT17 avec gt/gt.txt")
     parser.add_argument("--known-faces", help="dossier known_faces/ utilisé par l'application")
     parser.add_argument("--prefix", default="id_", help="préfixe des noms enrôlés (défaut : id_)")
+    parser.add_argument("--id-width", type=int, default=0,
+                        help="identité complétée de zéros dans le nom (ChokePoint : 4 → ID0001)")
     parser.add_argument("--names", nargs="*", default=[], metavar="ID=NOM",
                         help="nom enrôlé d'une identité annotée, en plus de --known-faces")
     args = parser.parse_args()
 
     seq_dir = os.path.expanduser(args.sequence)
-    gt = load_gt(seq_dir)
+    # ChokePoint : yeux annotés au lieu de boîtes (tools/convert_chokepoint.py).
+    eyes = os.path.exists(os.path.join(seq_dir, "gt", "gt_eyes.txt"))
+    gt = load_gt_eyes(seq_dir) if eyes else load_gt(seq_dir)
     enrolled_names = (set(os.listdir(os.path.expanduser(args.known_faces)))
                       if args.known_faces else set())
     explicit = dict(item.split("=", 1) for item in args.names)
     gt_names = {}
     for gid in {p[0] for people in gt.values() for p in people}:
-        name = explicit.get(str(gid)) or f"{args.prefix}{gid}"
+        name = explicit.get(str(gid)) or f"{args.prefix}{gid:0{args.id_width}d}"
         gt_names[gid] = name if (str(gid) in explicit or name in enrolled_names) else None
 
     fps = _sequence_fps(seq_dir)
@@ -213,10 +247,14 @@ def main():
     if not tracks:
         # Rejeu raté (vidéo illisible, séquence sans images) : pas un tracking à 0 %.
         raise SystemExit(f"Aucune piste dans {args.tracks} : le rejeu a-t-il tourné ?")
-    report = evaluate(gt, tracks, gt_names, fps)
-    metrics = tracking_metrics(gt, tracks)
-    print(f"Tracking des pistes affichées : MOTA {metrics['mota']:.1%}, "
-          f"IDF1 {metrics['idf1']:.1%}, changements d'ID {metrics['switches']}")
+    report = evaluate(gt, tracks, gt_names, fps, match_points_to_tracks if eyes else None)
+    if eyes:
+        print("Yeux annotés (pas de boîtes) : une personne est couverte par la piste affichée "
+              "qui contient le milieu de ses yeux ; MOTA et IDF1 non calculés.")
+    else:
+        metrics = tracking_metrics(gt, tracks)
+        print(f"Tracking des pistes affichées : MOTA {metrics['mota']:.1%}, "
+              f"IDF1 {metrics['idf1']:.1%}, changements d'ID {metrics['switches']}")
 
     def line(label, counts, correct_label):
         n = counts.frames
