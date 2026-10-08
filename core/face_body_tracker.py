@@ -134,6 +134,32 @@ class TrackedPerson:
 # Orchestrateur principal
 # ─────────────────────────────────────────────────────────────────────────────
 
+def load_yolo(model_path: str) -> YOLO:
+    """Charge YOLO-Pose ; message explicite si le moteur TensorRT manque."""
+    logger.info("Chargement YOLO-Pose (%s)...", model_path)
+    # Sans ce contrôle, ultralytics tente de télécharger le .engine absent
+    # et échoue avec un message qui ne parle pas de TensorRT.
+    if model_path.endswith(".engine") and not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Moteur TensorRT introuvable : {model_path}. Il se construit sur "
+            f"la machine qui l'utilise : {YOLO_ENGINE_EXPORT_COMMAND}"
+        )
+    model = YOLO(model_path, task="pose")
+    logger.info("YOLO-Pose chargé")
+    return model
+
+
+def detection_conf() -> float:
+    """Seuil de confiance demandé à YOLO.
+
+    ByteTrack / BoT-SORT associent aussi les détections faibles (second
+    passage) : YOLO doit les leur fournir. DeepSORT n'en voit aucune.
+    """
+    if config.TRACKER_BACKEND in ULTRALYTICS_BACKENDS:
+        return min(config.YOLO_CONF_THRESHOLD, config.BYTETRACK_LOW_THRESH)
+    return config.YOLO_CONF_THRESHOLD
+
+
 class FaceBodyTracker:
     """
     Orchestre le pipeline Body-First avec keypoints YOLO-Pose.
@@ -150,27 +176,19 @@ class FaceBodyTracker:
     # VOTE_WINDOW=3, majorité = 2/3 → ≈ 100ms à 30 FPS.
     VOTE_WINDOW = 3
 
-    def __init__(self, face_recognizer: FaceRecognizer) -> None:
-        logger.info("Chargement YOLO-Pose (%s)...", config.YOLO_MODEL)
-        # Sans ce contrôle, ultralytics tente de télécharger le .engine absent
-        # et échoue avec un message qui ne parle pas de TensorRT.
-        if config.YOLO_MODEL.endswith(".engine") and not os.path.exists(config.YOLO_MODEL):
-            raise FileNotFoundError(
-                f"Moteur TensorRT introuvable : {config.YOLO_MODEL}. Il se construit sur "
-                f"la machine qui l'utilise : {YOLO_ENGINE_EXPORT_COMMAND}"
-            )
-        self.yolo = YOLO(config.YOLO_MODEL)
-        logger.info("YOLO-Pose chargé")
+    def __init__(self, face_recognizer: FaceRecognizer, detector=None) -> None:
+        # `detector(frame)` : détection partagée par les caméras d'un processus
+        # (core/batch_detector.py) ; sans lui, un YOLO propre à ce tracker.
+        self._detector = detector
+        self.yolo = None
+        if detector is None:
+            self.yolo = load_yolo(config.YOLO_MODEL)
 
         # deep_sort_realtime ou deepsort-rs selon config.TRACKER_BACKEND.
         self.body_tracker = build_body_tracker()
         # Reconnaissance toutes les N images ; ajustée en marche (core/adaptive.py).
         self.recognition_skip = config.FACE_RECOGNITION_SKIP
-        # ByteTrack / BoT-SORT associent aussi les détections faibles (second
-        # passage) : YOLO doit les leur fournir. DeepSORT n'en voit aucune.
-        self._detection_conf = (min(config.YOLO_CONF_THRESHOLD, config.BYTETRACK_LOW_THRESH)
-                                if config.TRACKER_BACKEND in ULTRALYTICS_BACKENDS
-                                else config.YOLO_CONF_THRESHOLD)
+        self._detection_conf = detection_conf()
 
         self.face_recognizer = face_recognizer
 
@@ -335,6 +353,8 @@ class FaceBodyTracker:
         Returns:
             Liste de 4-tuples au format DeepSORT avec keypoints embarqués.
         """
+        if self._detector is not None:
+            return self._detector(frame)
         yolo_results = self.yolo.predict(
             frame,
             classes=[0],

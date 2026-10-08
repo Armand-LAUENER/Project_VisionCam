@@ -241,6 +241,7 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `ADAPTIVE_TUNING` | `true` | Cadence par caméra et cadence de reconnaissance adaptées en marche au nombre de caméras actives (`core/adaptive.py`) ; un `CAMERA_MAX_FPS` ou `FACE_RECOGNITION_SKIP` fixé prime |
 | `ADAPTIVE_PROCESS_FPS` / `ADAPTIVE_GPU_FPS` | `72` / `150` | Capacités mesurées sur RTX 4060 / WSL2, à remesurer ailleurs (`tools/bench_load.py`) |
 | `CAMERA_WORKERS` | `thread` | `process` : caméras traitées dans des processus à part ; au-delà de 2 caméras, seul `process` tient 30 i/s |
+| `YOLO_BATCH_MODEL` | vide | Moteur YOLO à taille de lot variable pour regrouper les images des caméras d'un processus (≥ `YOLO_BATCH_MIN_CAMERAS`, 3) : +38 % d'images à 16 flux, mais plus de mauvais noms sur CHIRLA, d'où désactivé par défaut (docs/performance.md) |
 | `CAMERAS_PER_WORKER` | `auto` | Caméras par processus ; `auto` : autant de processus que la RAM le permet (`WORKER_RAM_MB` 2000 chacun, `WORKER_RAM_RESERVE_MB` 1500 gardés libres) |
 | `CAMERA_ID` | `cam0` | Identifiant de la caméra dans le journal d'événements (table `events` de `presence.db`) |
 | `YOLO_NMS_IOU` | `0.6` | Recouvrement au-delà duquel YOLO fusionne deux boîtes ; 0,6 évite les pistes dédoublées d'une personne assise |

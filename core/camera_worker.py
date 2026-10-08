@@ -217,12 +217,25 @@ def main(argv: list[str]) -> int:
 
     # Imports lourds ici : décoder les arguments et se connecter ne doit pas
     # attendre torch ni TensorRT.
-    from core.face_body_tracker import FaceBodyTracker
+    from core.face_body_tracker import FaceBodyTracker, detection_conf, load_yolo
     from core.face_recognition import FaceRecognizer
 
     recognizer = FaceRecognizer(config.KNOWN_FACES_DIR, threshold=config.RECOGNITION_THRESHOLD,
                                 cache_path=config.EMBEDDINGS_CACHE_PATH)
-    worker = Worker(cameras, results, lambda: FaceBodyTracker(recognizer),
+    batch = None
+    if (config.YOLO_BATCH_MODEL and os.path.exists(config.YOLO_BATCH_MODEL)
+            and len(cameras) >= config.YOLO_BATCH_MIN_CAMERAS):
+        # Un seul YOLO pour les caméras du processus, images regroupées par lots.
+        from core.batch_detector import BatchDetector
+
+        batch = BatchDetector(load_yolo(config.YOLO_BATCH_MODEL).predict,
+                              FaceBodyTracker._parse_result, conf=detection_conf(),
+                              iou=config.YOLO_NMS_IOU, max_batch=config.YOLO_BATCH_SIZE,
+                              wait_s=config.YOLO_BATCH_WAIT_MS / 1000)
+        logger.info("Détection par lots (%s) pour %d caméras", config.YOLO_BATCH_MODEL,
+                    len(cameras))
+    worker = Worker(cameras, results,
+                    lambda: FaceBodyTracker(recognizer, detector=batch.detect if batch else None),
                     build_pose_estimator(), recognizer.reload_cache)
     threads = worker.start()
     logger.info("Processus de caméras %d : %s", os.getpid(), ", ".join(c.id for c in cameras))
@@ -236,6 +249,8 @@ def main(argv: list[str]) -> int:
             worker.stop()
     for thread in threads:
         thread.join(timeout=10)
+    if batch is not None:
+        batch.close()
     results.close()
     commands.close()
     return 0

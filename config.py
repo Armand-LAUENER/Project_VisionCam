@@ -259,6 +259,22 @@ YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8s-pose.pt")
 
 # Seuil de confiance minimum pour qu'un corps YOLO soit passé au tracker.
 YOLO_CONF_THRESHOLD = 0.5
+# Détection par lots dans un processus de plusieurs caméras
+# (core/batch_detector.py) : moteur à taille de lot variable, construit avec
+#   uv run yolo export model=<copie de yolov8s-pose.pt> format=engine half=True \
+#       device=0 imgsz=384,640 dynamic=True batch=4
+# Utilisé dans un processus d'au moins YOLO_BATCH_MIN_CAMERAS caméras : à 4
+# caméras par processus, +38 % d'images traitées ; à 2, les images ne
+# coïncident presque jamais (1,06 par lot). Désactivé par défaut : le moteur
+# dynamique change les détections, et sur CHIRLA les mauvais noms montent
+# (0,7 → 1,4 %, non enrôlés nommés 0 → 21 % sur seq_026 ; docs/performance.md).
+# Vide : une détection par caméra. YOLO_BATCH_SIZE ne doit pas dépasser le
+# lot maximal du moteur ; YOLO_BATCH_WAIT_MS : attente maximale après la
+# première image pour en regrouper d'autres.
+YOLO_BATCH_MODEL = os.getenv("YOLO_BATCH_MODEL", "")
+YOLO_BATCH_MIN_CAMERAS = int(os.getenv("YOLO_BATCH_MIN_CAMERAS", "3"))
+YOLO_BATCH_SIZE = int(os.getenv("YOLO_BATCH_SIZE", "4"))
+YOLO_BATCH_WAIT_MS = float(os.getenv("YOLO_BATCH_WAIT_MS", "2"))
 # ByteTrack / BoT-SORT (TRACKER_BACKEND=bytetrack|botsort|botsort-reid) : les
 # détections entre BYTETRACK_LOW_THRESH et YOLO_CONF_THRESHOLD ne créent pas de
 # piste mais prolongent les existantes (second passage) ; YOLO descend alors
