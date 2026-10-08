@@ -261,7 +261,8 @@ Tous les paramètres sont dans `config.py` (surchargeable via `.env`) :
 | `RECOGNITION_MIN_FACE_PX` | `40` | Taille min d'un visage pour décider d'un nom ; en dessous, la piste garde le sien |
 | `RECOGNITION_UNKNOWN_STREAK` | `3` | Visages nets reconnus « Inconnu » d'affilée avant qu'une piste perde son nom |
 | `FRONTAL_NOSE_MARGIN` | `0.25` | Seuls les visages de face comptent dans cette série : une personne enrôlée qui se retourne garde son nom |
-| `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames |
+| `FACE_RECOGNITION_SKIP` | `5` | InsightFace toutes les N frames ; 10 : +11 % de débit pour −0,7 point de bons noms, 2 : moins de mauvais noms (docs/performance.md) |
+| `FACES_PER_PASS` | `2` | Visages soumis à InsightFace par passe, au plus |
 | `MJPEG_ANNOTATE` | `false` | Boîtes dessinées dans le flux MJPEG lui-même (l'interface dessine les siennes) |
 | `FACE_FRESHNESS_FRAMES` | `30` | Frames avant passage en mode orange [BODY] |
 | `POSE_NOSE_CONF_THRESHOLD` | `0.5` | Confiance minimale d'un keypoint facial |

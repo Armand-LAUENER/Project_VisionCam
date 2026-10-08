@@ -246,12 +246,12 @@ class FaceBodyTracker:
                 if name == 'Inconnu' or (frame_count - last_face_frame > config.FACE_FRESHNESS_FRAMES):
                     tracks_to_recognize.append(track)
 
-            # Max 2 InsightFace/frame pour garantir les FPS. La tentative la plus
+            # Max FACES_PER_PASS InsightFace/frame pour garantir les FPS. La tentative la plus
             # ancienne passe en premier (jamais tenté = -1) : sinon deux tracks
             # qui restent « Inconnu » monopolisent les deux places.
             tracks_to_recognize.sort(
                 key=lambda t: self._last_attempt_frame.get(t.track_id, -1))
-            tracks_to_recognize = tracks_to_recognize[:2]
+            tracks_to_recognize = tracks_to_recognize[:config.FACES_PER_PASS]
             for track in tracks_to_recognize:
                 self._last_attempt_frame[track.track_id] = frame_count
 

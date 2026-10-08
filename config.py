@@ -320,7 +320,10 @@ POSE_CROP_BODY_RATIO = 0.55
 
 # Lancer InsightFace toutes les N frames seulement.
 # 5 = bon compromis (15ms × 1/5 = 3ms amortis/frame) ; baisser si réseau lent.
-FACE_RECOGNITION_SKIP = 5
+FACE_RECOGNITION_SKIP = int(os.getenv("FACE_RECOGNITION_SKIP", "5"))
+# Visages soumis à InsightFace par passe de reconnaissance, au plus : les
+# pistes dont la dernière tentative est la plus ancienne passent d'abord.
+FACES_PER_PASS = int(os.getenv("FACES_PER_PASS", "2"))
 
 # Nombre d'échecs consécutifs de cap.read() avant de tenter une reconnexion.
 # 10 frames ≈ 0.5s à 20 FPS — distingue un drop réseau bref d'une vraie déconnexion.

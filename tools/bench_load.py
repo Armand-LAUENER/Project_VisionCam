@@ -90,7 +90,8 @@ def median(rows: list[dict], column: str) -> float:
     return statistics.median(values) if values else float("nan")
 
 
-def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir) -> dict:
+def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir,
+              extra_env=None) -> dict:
     """Un palier : lance l'application, mesure, l'arrête ; une ligne de résultats."""
     label = f"n{streams}_f{target_fps:g}"
     endurance = os.path.join(out_dir, f"endurance_{label}.csv")
@@ -100,7 +101,8 @@ def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir
            "VIDEO_MODE": "realtime", "VIDEO_LOOP": "true", "FLASK_PORT": str(PORT),
            "ADMIN_PASSWORD_HASH": "", "ADMIN_PASSWORD": "",
            "PRESENCE_DB_PATH": os.path.join(out_dir, f"presence_{label}.db"),
-           "ENDURANCE_LOG_PATH": endurance, "ENDURANCE_INTERVAL_S": "15"}
+           "ENDURANCE_LOG_PATH": endurance, "ENDURANCE_INTERVAL_S": "15",
+           **(extra_env or {})}
     with open(os.path.join(out_dir, f"app_{label}.log"), "w") as log:
         app = subprocess.Popen([sys.executable, "app.py"], env=env, stdout=log,
                                stderr=subprocess.STDOUT)
@@ -185,6 +187,8 @@ def main():
     parser.add_argument("--warmup", type=float, default=60)
     parser.add_argument("--duration", type=float, default=120)
     parser.add_argument("--out", required=True, help="dossier des journaux et du CSV")
+    parser.add_argument("--env", nargs="*", default=[], metavar="CLÉ=VALEUR",
+                        help="réglages passés à l'application (ex. YOLO_MODEL=yolov8n-pose.engine)")
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -197,7 +201,8 @@ def main():
             per_worker = args.per_worker or default_per_worker(streams)
             for target_fps in args.fps:
                 row = run_level(videos, streams, target_fps, per_worker, args.warmup,
-                                args.duration, args.out)
+                                args.duration, args.out,
+                                dict(item.split("=", 1) for item in args.env))
                 writer.writerow(row)
                 f.flush()
                 print(f"{streams:>3} flux × {target_fps:>4g} i/s : {row['fps_mean']:5.1f} i/s "
