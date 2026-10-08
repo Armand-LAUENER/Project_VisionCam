@@ -75,6 +75,15 @@ def suppress_nested_boxes(detections: list, min_iou: float | None = None,
     return [detections[i] for i in sorted(kept)]
 
 
+def _iou(a, b) -> float:
+    """IoU de deux boîtes (x1, y1, x2, y2)."""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
 def match_tracks_to_detections(track_boxes: list, detection_boxes: list,
                                min_iou: float = TRACK_DETECTION_MIN_IOU) -> dict[int, int]:
     """Appariement un-pour-un piste → détection, par IoU décroissante.
@@ -201,6 +210,10 @@ class FaceBodyTracker:
         # { track_id: n } — visages nets reconnus « Inconnu » d'affilée sur une
         # piste nommée. Au-delà de RECOGNITION_UNKNOWN_STREAK, le nom tombe.
         self._unknown_streak: dict[int, int] = {}
+        # Croisements récents : { track_id: (image, piste recouverte) }, et les
+        # pistes visibles à l'image précédente (cf. _suspend_after_crossings).
+        self._crossings: dict = {}
+        self._previously_visible: set = set()
 
         # { track_id: frame_count } — dernière soumission à InsightFace.
         # Fait tourner les tracks quand ils sont plus nombreux que les places.
@@ -253,6 +266,7 @@ class FaceBodyTracker:
         # montrerait l'obstacle. Mesuré sur MOT17 (validation, cf. docs/tracking.md) :
         # MOTA 21,5 → 44,2 %, IDF1 48,3 → 54,4 %.
         visible_tracks = [t for t in active_tracks if t.track_id in visible_ids]
+        self._suspend_after_crossings(visible_tracks, frame_count)
 
         # Étapes 3 & 4 : Reconnaissance faciale intelligente (cadencée)
         if frame_count % self.recognition_skip == 0 and visible_tracks:
@@ -616,6 +630,42 @@ class FaceBodyTracker:
                 'last_face_frame': frame_count,
             }
 
+    def _suspend_after_crossings(self, visible_tracks: list, frame_count: int) -> None:
+        """Retire son nom à une piste dont la partenaire de croisement a disparu.
+
+        Quand deux personnes se croisent, l'une est souvent masquée : sa piste
+        disparaît, et l'autre piste peut sauter sur elle en emportant son nom.
+        Vue de dos, rien ne le révèle ensuite. Le nom retombe donc dès qu'une
+        piste qui recouvrait celle-ci (IoU ≥ CROSSING_IOU) cesse d'être visible
+        dans les CROSSING_WINDOW_FRAMES images ; il revient avec le prochain
+        visage reconnu.
+        """
+        if config.CROSSING_IOU <= 0:
+            return
+        boxes = {t.track_id: t.to_ltrb() for t in visible_tracks}
+        ids = list(boxes)
+        for i, a in enumerate(ids):
+            for b in ids[i + 1:]:
+                if _iou(boxes[a], boxes[b]) >= config.CROSSING_IOU:
+                    self._crossings[a] = (frame_count, b)
+                    self._crossings[b] = (frame_count, a)
+        vanished = self._previously_visible - boxes.keys()
+        for tid in ids:
+            seen, partner = self._crossings.get(tid, (None, None))
+            if (partner in vanished and frame_count - seen <= config.CROSSING_WINDOW_FRAMES):
+                name = self._identity_map.get(tid, {}).get('name', 'Inconnu')
+                if name != 'Inconnu':
+                    logger.warning("Piste #%s : sa voisine #%s a disparu pendant un croisement, "
+                                   "'%s' suspendu", tid, partner, name)
+                    self._identity_map[tid] = {'name': 'Inconnu', 'confidence': 0.0,
+                                               'last_face_frame': -1}
+                    self._vote_buffer.pop(tid, None)
+                    self._unknown_streak.pop(tid, None)
+                self._crossings.pop(tid, None)
+        self._crossings = {tid: v for tid, v in self._crossings.items()
+                           if frame_count - v[0] <= config.CROSSING_WINDOW_FRAMES}
+        self._previously_visible = set(boxes)
+
     def _count_unknown_face(self, track_id: int) -> None:
         """Compte un visage net reconnu « Inconnu » ; retire le nom après K d'affilée.
 
@@ -710,6 +760,7 @@ class FaceBodyTracker:
             'nose_map': len(self._nose_map),
             'face_kps_map': len(self._face_kps_map),
             'pose_kps_map': len(self._pose_kps_map),
+            'crossings': len(self._crossings),
         }
 
     def release(self) -> None:

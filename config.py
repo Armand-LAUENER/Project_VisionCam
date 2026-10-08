@@ -181,6 +181,17 @@ RECOGNITION_UNKNOWN_STREAK = int(os.getenv("RECOGNITION_UNKNOWN_STREAK", "3"))
 # fraction de cet écart. 0 : nez simplement entre les yeux. 0,25 : plus petite
 # marge au palier sur CHIRLA (10 → 2 noms retirés, docs/performance.md).
 FRONTAL_NOSE_MARGIN = float(os.getenv("FRONTAL_NOSE_MARGIN", "0.25"))
+# Croisement douteux : deux pistes visibles se recouvrent (IoU ≥ CROSSING_IOU)
+# et l'une disparaît dans les CROSSING_WINDOW_FRAMES images suivantes. La
+# survivante a pu sauter sur l'autre personne : son nom retombe à « Inconnu »
+# jusqu'à ce qu'un visage le reconfirme. Rattrape l'échange de pistes vers une
+# personne non enrôlée vue de dos, que la série d'« Inconnu » de face ne voit
+# pas (seq_026 : un non enrôlé portait id_2 pendant 17,6 s). Coût mesuré :
+# −2,7 points de bons noms sur seq_026 (suspensions inutiles) ; 10 images
+# plutôt que 30 en évitent quelques-unes sans perdre le cas réel, où la piste
+# voisine disparaît 3 images après le recouvrement. CROSSING_IOU 0 : désactivé.
+CROSSING_IOU = float(os.getenv("CROSSING_IOU", "0.2"))
+CROSSING_WINDOW_FRAMES = int(os.getenv("CROSSING_WINDOW_FRAMES", "10"))
 
 # Hystérésis de l'anti-clonage (roadmap 1.8) : une piste visible dont le visage
 # a été reconnu sous son nom depuis moins de IDENTITY_PROTECT_FRAMES le garde
