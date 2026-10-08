@@ -38,3 +38,35 @@ class TestParseCameras:
     def test_invalid_specs_are_refused(self, spec):
         with pytest.raises(ValueError):
             parse_cameras(spec, "cam0")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Caméras par processus (worker_groups)
+# ─────────────────────────────────────────────────────────────────────────────
+
+from core.cameras import worker_groups  # noqa: E402
+
+
+def test_auto_uses_as_many_processes_as_ram_allows():
+    # 10,4 Go disponibles, 2 Go par processus, 1,5 Go de réserve : 4 processus.
+    assert worker_groups(16, "auto", 10_400, 2000, 1500) == [4, 4, 4, 4]
+
+
+def test_auto_spreads_cameras_within_one():
+    assert worker_groups(10, "auto", 10_400, 2000, 1500) == [3, 3, 2, 2]
+
+
+def test_auto_never_starts_more_processes_than_cameras():
+    assert worker_groups(2, "auto", 30_000, 2000, 1500) == [1, 1]
+
+
+def test_auto_keeps_one_process_when_ram_is_short():
+    assert worker_groups(4, "auto", 1_000, 2000, 1500) == [4]
+
+
+def test_a_number_sets_the_group_size():
+    assert worker_groups(5, "2", 30_000, 2000, 1500) == [2, 2, 1]
+
+
+def test_no_camera_no_process():
+    assert worker_groups(0, "auto", 30_000, 2000, 1500) == []

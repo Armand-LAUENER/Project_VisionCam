@@ -103,7 +103,7 @@ def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir
     endurance = os.path.join(out_dir, f"endurance_{label}.csv")
     env = {**os.environ,
            "CAMERAS": cameras_spec(videos, streams), "CAMERA_WORKERS": "process",
-           "CAMERAS_PER_WORKER": str(per_worker),
+           **({"CAMERAS_PER_WORKER": str(per_worker)} if per_worker else {}),
            "VIDEO_MODE": "realtime", "VIDEO_LOOP": "true", "FLASK_PORT": str(PORT),
            "ADMIN_PASSWORD_HASH": "", "ADMIN_PASSWORD": "",
            "PRESENCE_DB_PATH": os.path.join(out_dir, f"presence_{label}.db"),
@@ -181,15 +181,6 @@ def run_level(videos, streams, target_fps, per_worker, warmup, duration, out_dir
     }
 
 
-def default_per_worker(streams: int) -> int:
-    """Caméras par processus : chaque processus pèse ~2,6 Go de RAM, WSL en a 15.
-
-    2 jusqu'à 4 flux, 4 pour 8, 8 au-delà ; un processus tient ~72 i/s au total
-    (GIL, docs/performance.md), assez pour 8 caméras à 5 ou 10 i/s.
-    """
-    return 2 if streams <= 4 else 4 if streams <= 8 else 8
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--videos", required=True, help="dossier des vidéos à rejouer")
@@ -199,7 +190,7 @@ def main():
     parser.add_argument("--adaptive", action="store_true",
                         help="cadence laissée à l'adaptation au nombre de caméras (--fps ignoré)")
     parser.add_argument("--per-worker", type=int, default=0,
-                        help="caméras par processus ; 0 : selon le nombre de flux (RAM)")
+                        help="caméras par processus ; 0 : laissé à l'application (selon la RAM)")
     parser.add_argument("--warmup", type=float, default=60)
     parser.add_argument("--duration", type=float, default=120)
     parser.add_argument("--out", required=True, help="dossier des journaux et du CSV")
@@ -214,7 +205,7 @@ def main():
         writer = csv.DictWriter(f, fieldnames=FIELDS)
         writer.writeheader()
         for streams in args.streams:
-            per_worker = args.per_worker or default_per_worker(streams)
+            per_worker = args.per_worker
             for target_fps in ([None] if args.adaptive else args.fps):
                 row = run_level(videos, streams, target_fps, per_worker, args.warmup,
                                 args.duration, args.out,

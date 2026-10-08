@@ -32,6 +32,26 @@ class CameraSpec:
     is_file: bool
 
 
+def worker_groups(count: int, per_worker: str, available_mb: float, worker_mb: int,
+                  reserve_mb: int) -> list[int]:
+    """Nombre de caméras de chaque processus de caméras.
+
+    `per_worker` numérique : des groupes de cette taille (le dernier peut être
+    plus petit). "auto" : autant de processus que la RAM disponible le permet
+    (`worker_mb` chacun, `reserve_mb` gardés libres), au moins un, au plus un
+    par caméra, et les caméras réparties à un près.
+    """
+    if count <= 0:
+        return []
+    if per_worker != "auto":
+        size = max(1, int(per_worker))
+        return [min(size, count - i) for i in range(0, count, size)]
+    processes = int((available_mb - reserve_mb) // worker_mb)
+    processes = max(1, min(count, processes))
+    base, extra = divmod(count, processes)
+    return [base + (i < extra) for i in range(processes)]
+
+
 def parse_cameras(spec: str, default_id: str) -> list[CameraSpec]:
     if not spec.strip():
         return [CameraSpec(default_id, None, False)]

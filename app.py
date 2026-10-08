@@ -43,7 +43,7 @@ import config
 from core import camera_worker as worker_module
 from core import capture
 from core.adaptive import AdaptiveController, Tuning, update_in_place
-from core.cameras import parse_cameras
+from core.cameras import parse_cameras, worker_groups
 from core.db_writer import DbWriter
 from core.endurance import EnduranceLog
 from core.event_log import EventLog, ForwardClock, TrackEvents
@@ -557,9 +557,17 @@ def _apply_tuning(camera, tuning) -> None:
 
 
 def start_worker_processes() -> list[WorkerProcess]:
-    """Un processus par groupe de CAMERAS_PER_WORKER caméras, lancés l'un après l'autre."""
-    size = max(1, config.CAMERAS_PER_WORKER)
-    workers = [WorkerProcess(cameras[i:i + size]) for i in range(0, len(cameras), size)]
+    """Processus de caméras (CAMERAS_PER_WORKER, par défaut selon la RAM), lancés
+    l'un après l'autre."""
+    import psutil
+
+    available_mb = psutil.virtual_memory().available / 2**20
+    sizes = worker_groups(len(cameras), config.CAMERAS_PER_WORKER, available_mb,
+                          config.WORKER_RAM_MB, config.WORKER_RAM_RESERVE_MB)
+    logger.info("%d caméra(s) en %d processus (%s) ; RAM disponible : %.1f Go",
+                len(cameras), len(sizes), "+".join(map(str, sizes)), available_mb / 1024)
+    starts = [sum(sizes[:i]) for i in range(len(sizes))]
+    workers = [WorkerProcess(cameras[start:start + size]) for start, size in zip(starts, sizes)]
     for worker in workers:
         worker.start()
         for camera in worker.cameras:

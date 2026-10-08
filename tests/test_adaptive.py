@@ -131,3 +131,62 @@ def test_a_camera_that_never_sent_anything_is_inactive():
     controller.step()
 
     assert applied == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Boucle de retour : cadence visée non tenue
+# ─────────────────────────────────────────────────────────────────────────────
+
+def running_cameras(clock, count, fps):
+    cams = [camera(f"c{i}", clock.now) for i in range(count)]
+    for c in cams:
+        c.state = SimpleNamespace(fps=fps)
+    return cams
+
+
+def keep_sending(cams, clock):
+    for c in cams:
+        c.last_result = clock.now
+
+
+def test_rates_not_held_lower_the_capacity_after_the_grace_period(monkeypatch):
+    monkeypatch.setattr(adaptive.config, "ADAPTIVE_PROCESS_FPS", PROCESS_FPS)
+    monkeypatch.setattr(adaptive.config, "ADAPTIVE_GPU_FPS", GPU_FPS)
+    clock = Clock()
+    cams = running_cameras(clock, 4, fps=0)
+    controller, applied = make_controller([cams], clock)
+    controller.step()                                  # 4 caméras : 17 i/s visés
+    for c in cams:
+        c.state.fps = 14.0                             # 82 % de la cible
+
+    clock.now += 10
+    keep_sending(cams, clock)
+    applied.clear()
+    assert not controller.step()                       # chauffe : pas d'évaluation
+
+    clock.now += AdaptiveController.GRACE_S
+    for _ in range(AdaptiveController.SHORTFALL_STEPS - 1):
+        keep_sending(cams, clock)
+        assert not controller.step()
+        clock.now += 2
+    keep_sending(cams, clock)
+    assert controller.step()
+
+    assert controller.scale == pytest.approx(14 / 17, abs=0.01)
+    assert {t[1] for t in applied} == {14}             # floor(17 × 0,82 …)
+
+
+def test_held_rates_change_nothing():
+    clock = Clock()
+    cams = running_cameras(clock, 4, fps=0)
+    controller, applied = make_controller([cams], clock)
+    controller.step()
+    for c in cams:
+        c.state.fps = c.tuning.max_fps or 30
+
+    for _ in range(10):
+        clock.now += AdaptiveController.GRACE_S
+        keep_sending(cams, clock)
+        controller.step()
+
+    assert controller.scale == 1.0

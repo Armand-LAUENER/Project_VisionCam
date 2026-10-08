@@ -46,12 +46,19 @@ CAMERA_ID = os.getenv("CAMERA_ID", "cam0")
 # MOT17. Vide : une seule caméra, CAMERA_ID, avec VIDEO_FILE ou CAMERA_SOURCE.
 CAMERAS = os.getenv("CAMERAS", "")
 # Où tourne le traitement des caméras : "thread" (un thread par caméra, dans
-# l'application) ou "process" (des processus de caméras, CAMERAS_PER_WORKER
-# caméras chacun). Les threads d'un processus partagent un GIL, qui plafonne
-# vers 72 i/s au total ; deux processus de deux caméras en tiennent 120
-# (docs/performance.md). Chaque processus coûte ~2,4 Go de RAM et ~230 Mo de VRAM.
+# l'application) ou "process" (des processus de caméras). Les threads d'un
+# processus se disputent un GIL : à caméras égales, plus de processus tiennent
+# plus (8 caméras : 20,5 i/s chacune en 2 processus, 27,0 en 4 ;
+# docs/performance.md). Chaque processus coûte ~2 Go de RAM et ~230 Mo de VRAM.
 CAMERA_WORKERS = os.getenv("CAMERA_WORKERS", "thread").strip().lower()
-CAMERAS_PER_WORKER = int(os.getenv("CAMERAS_PER_WORKER", "2"))
+# Caméras par processus. "auto" : autant de processus que la RAM disponible au
+# lancement le permet (WORKER_RAM_MB chacun, WORKER_RAM_RESERVE_MB gardés
+# libres), sans dépasser le nombre de caméras ; caméras réparties également.
+CAMERAS_PER_WORKER = os.getenv("CAMERAS_PER_WORKER", "auto").strip().lower()
+# Baisse de la RAM disponible par processus de caméras, mesurée (4 processus :
+# 12,4 → 2,2 Go disponibles, application comprise), et marge gardée libre.
+WORKER_RAM_MB = int(os.getenv("WORKER_RAM_MB", "2000"))
+WORKER_RAM_RESERVE_MB = int(os.getenv("WORKER_RAM_RESERVE_MB", "1500"))
 # Cadence maximale traitée par caméra (i/s) ; 0 : toutes les images reçues.
 # Une caméra n'a souvent pas besoin de 30 i/s : à 5 ou 10, une même machine
 # suit plus de flux (tools/bench_load.py). Sans effet en VIDEO_MODE=every_frame.
@@ -60,11 +67,12 @@ CAMERA_MAX_FPS = float(os.getenv("CAMERA_MAX_FPS", "0"))
 # cadence par caméra et cadence de reconnaissance. Un réglage fixé dans
 # l'environnement (CAMERA_MAX_FPS, FACE_RECOGNITION_SKIP) n'est pas adapté.
 # Capacités mesurées sur RTX 4060 / WSL2 (docs/performance.md) : images par
-# seconde que tient un processus (GIL) et que tient le GPU, à remesurer
+# seconde que tient un processus (GIL) et que tient le GPU (216 à 91 % de
+# NVML, 8 caméras en 4 processus), à remesurer
 # (tools/bench_load.py) sur une autre machine.
 ADAPTIVE_TUNING = os.getenv("ADAPTIVE_TUNING", "true").lower() == "true"
 ADAPTIVE_PROCESS_FPS = float(os.getenv("ADAPTIVE_PROCESS_FPS", "72"))
-ADAPTIVE_GPU_FPS = float(os.getenv("ADAPTIVE_GPU_FPS", "150"))
+ADAPTIVE_GPU_FPS = float(os.getenv("ADAPTIVE_GPU_FPS", "220"))
 CAMERA_MAX_FPS_FIXED = "CAMERA_MAX_FPS" in os.environ
 # Au plus un événement « visage reconnu » par piste et par intervalle (s), en
 # plus du dernier avant expiration de PRESENCE_FACE_MAX_AGE_S : ~60 lignes par

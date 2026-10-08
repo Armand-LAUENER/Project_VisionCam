@@ -105,41 +105,81 @@ def update_in_place(target: Tuning, tuning: Tuning) -> None:
 
 
 class AdaptiveController:
-    """Recalcule les réglages quand l'ensemble des caméras actives change.
+    """Recalcule les réglages quand les caméras actives changent, ou quand ils
+    ne sont pas tenus.
 
     `groups` : les caméras de chaque processus (un seul groupe en mode thread).
     Une caméra est active si elle a produit une image depuis moins de
     ACTIVE_S secondes (`camera.last_result`, horloge monotone). `apply(camera,
     tuning)` applique un réglage à la caméra (et met à jour `camera.tuning`) ;
     il n'est appelé que s'il change.
+
+    Boucle de retour : la capacité réelle varie d'une machine et d'un moment à
+    l'autre (16 caméras : 12,6 puis 11,4 i/s tenus pour 13 visés). Si un groupe
+    reste sous HELD_RATIO de sa cadence visée (`measured_fps(camera)`) pendant
+    SHORTFALL_STEPS tours, les capacités sont réduites d'après l'écart observé.
+    Pas d'évaluation pendant GRACE_S après un changement (chauffe des
+    processus, mesure des i/s sur une seconde) ; pas de remontée en marche,
+    pour ne pas osciller.
     """
 
     ACTIVE_S = 5.0
     PERIOD_S = 2.0
+    GRACE_S = 45.0
+    HELD_RATIO = 0.93
+    SHORTFALL_STEPS = 3
+    MIN_SCALE = 0.5
 
-    def __init__(self, groups, apply, clock=time.monotonic):
+    def __init__(self, groups, apply, clock=time.monotonic, measured_fps=None):
         self.groups = groups
         self._apply = apply
         self._clock = clock
+        self._measured_fps = measured_fps or (lambda camera: camera.state.fps)
         self._active: tuple | None = None
+        self._changed_at = None
+        self._shortfall = 0
+        self.scale = 1.0
+
+    def _active_ids(self, now) -> tuple:
+        return tuple(tuple(c.id for c in group
+                           if c.last_result is not None and now - c.last_result <= self.ACTIVE_S)
+                     for group in self.groups)
+
+    def _held_ratio(self, active) -> float:
+        """Plus faible rapport (i/s tenus / visés) parmi les groupes actifs."""
+        ratios = []
+        for group, ids in zip(self.groups, active):
+            cams = [c for c in group if c.id in ids]
+            if cams:
+                target = sum(c.tuning.max_fps or SOURCE_FPS for c in cams)
+                ratios.append(sum(self._measured_fps(c) for c in cams) / target)
+        return min(ratios, default=1.0)
 
     def step(self) -> bool:
         """Un tour : True si les réglages ont été recalculés."""
         now = self._clock()
-        active = tuple(tuple(c.id for c in group
-                             if c.last_result is not None and now - c.last_result <= self.ACTIVE_S)
-                       for group in self.groups)
-        if active == self._active:
+        active = self._active_ids(now)
+        reason = None
+        if active != self._active:
+            reason = "caméras actives"
+        elif now - self._changed_at >= self.GRACE_S:
+            ratio = self._held_ratio(active)
+            self._shortfall = self._shortfall + 1 if ratio < self.HELD_RATIO else 0
+            if self._shortfall >= self.SHORTFALL_STEPS and self.scale > self.MIN_SCALE:
+                self.scale = max(self.MIN_SCALE, self.scale * ratio)
+                reason = f"cadence non tenue ({ratio:.0%}), capacité × {self.scale:.2f}"
+        if reason is None:
             return False
-        self._active = active
+        self._active, self._changed_at, self._shortfall = active, now, 0
         tunings = [with_overrides(t) for t in
-                   plan([len(ids) for ids in active], config.ADAPTIVE_PROCESS_FPS,
-                        config.ADAPTIVE_GPU_FPS)]
+                   plan([len(ids) for ids in active], config.ADAPTIVE_PROCESS_FPS * self.scale,
+                        config.ADAPTIVE_GPU_FPS * self.scale)]
         for group, ids, tuning in zip(self.groups, active, tunings):
             for camera in group:
                 if camera.id in ids and camera.tuning != tuning:
                     self._apply(camera, tuning)
-        logger.info("Réglages adaptés : %d caméra(s) active(s) — %s", sum(map(len, active)),
+        logger.info("Réglages adaptés (%s) : %d caméra(s) active(s) — %s", reason,
+                    sum(map(len, active)),
                     "; ".join(f"{len(ids)} caméra(s) : "
                               f"{f'{t.max_fps:g} i/s' if t.max_fps else 'toutes les images'}, "
                               f"reconnaissance toutes les {t.recognition_skip}"
