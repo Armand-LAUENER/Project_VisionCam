@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import logging
 import time
+import unicodedata
 from dataclasses import dataclass
 
 import cv2
@@ -57,45 +58,99 @@ def estimate_pose_safe(pose_estimator, frame, person):
         return None
 
 
-def draw_person(display_frame, person, pose, frame_count):
-    """
-    Dessine bbox + label + pose pour une TrackedPerson.
+# Style « Person of Interest » (la Machine) : crochets aux coins, bords en
+# pointillés, onglet d'état et panneau d'informations en majuscules. Codes de la
+# série : blanc pour une personne quelconque, jaune pour ceux que la Machine
+# connaît, noir à coins jaunes pour l'« interface analogique ».
+POI_YELLOW = (0, 215, 255)
+POI_WHITE = (235, 235, 235)
+POI_BLACK = (20, 20, 20)
+POI_FONT = cv2.FONT_HERSHEY_SIMPLEX
+POI_DASH = 6
 
-    Modes d'affichage selon l'état d'identification :
-      - Vert  (0, 245, 160) : visage reconnu récemment (< FACE_FRESHNESS_FRAMES)
-      - Orange(0, 165, 255) : identité connue mais visage perdu — tracking par corps
-      - Bleu  (100, 100, 255): personne inconnue
+
+def _ascii_upper(text: str) -> str:
+    """Majuscules sans accents : les polices Hershey d'OpenCV n'ont que l'ASCII."""
+    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode().upper()
+
+
+def _dashed_line(img, p1, p2, color) -> None:
+    length = int(max(abs(p2[0] - p1[0]), abs(p2[1] - p1[1])))
+    for start in range(0, length, 2 * POI_DASH):
+        a, b = start / length, min(start + POI_DASH, length) / length
+        cv2.line(img, (int(p1[0] + a * (p2[0] - p1[0])), int(p1[1] + a * (p2[1] - p1[1]))),
+                 (int(p1[0] + b * (p2[0] - p1[0])), int(p1[1] + b * (p2[1] - p1[1]))),
+                 color, 1, cv2.LINE_AA)
+
+
+def _poi_frame(img, box, corner_color, edge_color) -> None:
+    """Bords fins en pointillés et crochets épais aux quatre coins, comme la Machine."""
+    x1, y1, x2, y2 = box
+    corner = max(8, int(0.2 * min(x2 - x1, y2 - y1)))
+    for p1, p2 in (((x1, y1), (x2, y1)), ((x2, y1), (x2, y2)),
+                   ((x2, y2), (x1, y2)), ((x1, y2), (x1, y1))):
+        _dashed_line(img, p1, p2, edge_color)
+    for (cx, cy), (dx, dy) in (((x1, y1), (1, 1)), ((x2, y1), (-1, 1)),
+                               ((x2, y2), (-1, -1)), ((x1, y2), (1, -1))):
+        cv2.line(img, (cx, cy), (cx + dx * corner, cy), corner_color, 3, cv2.LINE_AA)
+        cv2.line(img, (cx, cy), (cx, cy + dy * corner), corner_color, 3, cv2.LINE_AA)
+
+
+def _poi_panel(img, x, y, tab: str, lines: list[str], color) -> None:
+    """Onglet plein (texte noir) puis lignes sur fond sombre translucide."""
+    scale, pad, line_h = 0.45, 5, 16
+    widths = [cv2.getTextSize(t, POI_FONT, scale, 1)[0][0] for t in [tab, *lines]]
+    width = max(widths) + 2 * pad
+    height = line_h + pad + len(lines) * line_h + pad
+    h, w = img.shape[:2]
+    x = int(min(max(0, x), max(0, w - width)))
+    y = int(min(max(0, y), max(0, h - height)))
+    roi = img[y + line_h + pad:y + height, x:x + width]
+    if roi.size:
+        roi[:] = (roi * 0.35).astype(roi.dtype)
+    cv2.rectangle(img, (x, y), (x + widths[0] + 2 * pad, y + line_h + pad - 1), color, -1)
+    cv2.putText(img, tab, (x + pad, y + line_h - 2), POI_FONT, scale, (0, 0, 0), 1, cv2.LINE_AA)
+    for i, text in enumerate(lines):
+        cv2.putText(img, text, (x + pad, y + line_h + pad + (i + 1) * line_h - 4),
+                    POI_FONT, scale, color, 1, cv2.LINE_AA)
+
+
+def draw_person(display_frame, person, pose, frame_count, fps: float = 0.0):
+    """
+    Dessine une TrackedPerson dans le style « Person of Interest ».
+
+    États d'identification :
+      - jaune : visage reconnu récemment (< FACE_FRESHNESS_FRAMES) ;
+      - noir à coins jaunes : nom connu, visage perdu — suivi par le corps
+        (avec le temps écoulé depuis le dernier visage) ;
+      - blanc : personne inconnue.
     """
     x1, y1, x2, y2 = person.body_bbox
-
     frames_since_face = frame_count - person.last_face_frame
 
     if person.name == 'Inconnu':
-        color = (100, 100, 255)
-        mode_tag = None
+        color, edge, tab = POI_WHITE, POI_WHITE, "UNKNOWN"
+        status = f"#{person.track_id}"
+        name = "UNIDENTIFIED"
     elif frames_since_face <= config.FACE_FRESHNESS_FRAMES:
-        color = (0, 245, 160)
-        mode_tag = None
+        color, edge, tab = POI_YELLOW, POI_YELLOW, "IDENTIFIED"
+        status = f"#{person.track_id}  FACE {person.confidence * 100:.0f}%"
+        name = _ascii_upper(person.name)
     else:
-        color = (0, 165, 255)
-        mode_tag = "BODY"
+        color, edge, tab = POI_YELLOW, POI_BLACK, "TRACKING"
+        since = f"{frames_since_face / fps:.0f}S" if fps > 0 else f"{frames_since_face}F"
+        status = f"#{person.track_id}  BODY  LAST FACE {since}"
+        name = _ascii_upper(person.name)
 
-    cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-
-    label = f"{person.name} #{person.track_id}"
-    if person.confidence > 0:
-        label += f" ({person.confidence * 100:.0f}%)"
-    if mode_tag:
-        label += f" [{mode_tag}]"
-
-    label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-    cv2.rectangle(display_frame, (x1, y1 - 30), (x1 + label_size[0] + 10, y1), color, -1)
-    cv2.putText(display_frame, label, (x1 + 5, y1 - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-
+    _poi_frame(display_frame, (x1, y1, x2, y2), color, edge)
+    lines = [name, status]
     if pose:
-        cv2.putText(display_frame, f"Pose: {pose}",
-                    (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        lines.append(f"POSE: {_ascii_upper(str(pose))}")
+    # À droite de la boîte, aligné sur le haut ; à gauche si l'image s'arrête.
+    panel_x = x2 + 6
+    if panel_x + 170 > display_frame.shape[1]:
+        panel_x = x1 - 176
+    _poi_panel(display_frame, panel_x, y1, tab, lines, color)
 
 
 def log_tracks(writer, frame_count, persons) -> None:
@@ -210,7 +265,7 @@ class FramePipeline:
         for person in self.persons:
             pose = self._pose_cache.get(person.track_id)
             if config.MJPEG_ANNOTATE:
-                draw_person(display_frame, person, pose, self.frame_count)
+                draw_person(display_frame, person, pose, self.frame_count, self.fps)
             entry = {
                 'name': person.name,
                 'track_id': person.track_id,

@@ -284,7 +284,25 @@ class TestStatus:
 
         assert data['frame_size'] == [1280, 720]
         assert data['tracks'] == [{'track_id': '3', 'name': 'Armand',
-                                   'bbox': [10, 20, 110, 320], 'pose': 'Face'}]
+                                   'bbox': [10, 20, 110, 320], 'pose': 'Face',
+                                   'confidence': 0.0, 'mode': None, 'face_age_s': None}]
+
+    def test_origine_du_nom_visage_ou_corps(self, client):
+        """La page Live distingue un nom tenu par le visage ou par le corps."""
+        face = _person('1', [0, 0, 10, 10], name='Armand')
+        face.confidence, face.face_age = 0.913, 2
+        body = _person('2', [20, 0, 30, 10], name='Alice')
+        body.face_age = visioncam.config.FACE_FRESHNESS_FRAMES + 60
+        with visioncam.state.lock:
+            visioncam.state.bench_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            visioncam.state.bench_persons = [face, body]
+            visioncam.state.fps = 30.0
+
+        tracks = client.get('/status').get_json()['tracks']
+
+        assert tracks[0]['mode'] == 'face' and tracks[0]['confidence'] == 0.91
+        assert tracks[1]['mode'] == 'body'
+        assert tracks[1]['face_age_s'] == round((visioncam.config.FACE_FRESHNESS_FRAMES + 60) / 30, 1)
 
     def test_reflete_les_personnes_presentes(self, client):
         with visioncam.state.lock:

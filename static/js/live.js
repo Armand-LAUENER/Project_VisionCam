@@ -7,7 +7,10 @@ const ctx = canvas.getContext('2d');
 
 let status = { tracks: [], frame_size: null, currently_present: [] };
 let target = null;          // piste choisie pour la capture : { track_id, name }
-const COLORS = { known: '#34d399', unknown: '#60a5fa', selected: '#ffffff' };
+// Style « Person of Interest » (la Machine) : blanc pour une personne quelconque,
+// jaune pour une personne connue, noir à coins jaunes quand le nom est tenu par le
+// corps (visage perdu). Bords en pointillés, crochets pleins aux coins.
+const POI = { yellow: '#ffd200', white: '#ebebeb', black: '#141414', selected: '#ff4d4d' };
 
 // ── Superposition des boîtes sur le flux ──────────────────────────────────
 
@@ -30,22 +33,71 @@ function draw() {
     ctx.clearRect(0, 0, box.width, box.height);
     if (!status.frame_size) return;
 
-    ctx.font = '600 13px system-ui, sans-serif';
     for (const track of status.tracks) {
         const [x1, y1, x2, y2] = track.bbox;
-        const selected = target && target.track_id === track.track_id;
-        const color = selected ? COLORS.selected : track.name === 'Inconnu' ? COLORS.unknown : COLORS.known;
-        const rx = x + x1 * scale, ry = y + y1 * scale, rw = (x2 - x1) * scale, rh = (y2 - y1) * scale;
-        ctx.lineWidth = selected ? 3 : 2;
-        ctx.strokeStyle = color;
-        ctx.strokeRect(rx, ry, rw, rh);
-        const label = track.pose ? `${track.name} · ${track.pose}` : track.name;
-        const width = ctx.measureText(label).width + 10;
-        ctx.fillStyle = color;
-        ctx.fillRect(rx, Math.max(0, ry - 20), width, 20);
-        ctx.fillStyle = '#04111c';
-        ctx.fillText(label, rx + 5, Math.max(14, ry - 6));
+        const rect = { x: x + x1 * scale, y: y + y1 * scale, w: (x2 - x1) * scale, h: (y2 - y1) * scale };
+        drawTrack(track, rect, target && target.track_id === track.track_id, box);
     }
+}
+
+/** Apparence d'une piste selon l'origine de son nom (cf. /status : mode). */
+function trackStyle(track) {
+    if (track.mode === 'face') {
+        return { corner: POI.yellow, edge: POI.yellow, tab: 'IDENTIFIED',
+                 status: `#${track.track_id}  FACE ${Math.round(track.confidence * 100)}%` };
+    }
+    if (track.mode === 'body') {
+        const since = track.face_age_s == null ? '' : `  LAST FACE ${Math.round(track.face_age_s)}S`;
+        return { corner: POI.yellow, edge: POI.black, tab: 'TRACKING',
+                 status: `#${track.track_id}  BODY${since}` };
+    }
+    return { corner: POI.white, edge: POI.white, tab: 'UNKNOWN', status: `#${track.track_id}` };
+}
+
+function drawTrack(track, r, selected, box) {
+    const style = trackStyle(track);
+    const corner = selected ? POI.selected : style.corner;
+
+    // Bords fins en pointillés, crochets épais aux quatre coins.
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = style.edge;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.setLineDash([]);
+    ctx.lineWidth = selected ? 4 : 3;
+    ctx.strokeStyle = corner;
+    const c = Math.max(8, 0.2 * Math.min(r.w, r.h));
+    ctx.beginPath();
+    for (const [cx, cy, dx, dy] of [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1],
+                                     [r.x + r.w, r.y + r.h, -1, -1], [r.x, r.y + r.h, 1, -1]]) {
+        ctx.moveTo(cx + dx * c, cy);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(cx, cy + dy * c);
+    }
+    ctx.stroke();
+
+    // Panneau : onglet plein, puis nom et état sur fond sombre translucide.
+    const name = track.name === 'Inconnu' ? 'UNIDENTIFIED' : track.name.toUpperCase();
+    const lines = [name, style.status];
+    if (track.pose) lines.push(`POSE: ${String(track.pose).toUpperCase()}`);
+    ctx.font = '600 11px ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace';
+    const pad = 5, lineH = 15;
+    const tabW = ctx.measureText(style.tab).width + 2 * pad;
+    const width = Math.max(tabW, ...lines.map((t) => ctx.measureText(t).width + 2 * pad));
+    const height = lineH + lines.length * lineH + pad;
+    let px = r.x + r.w + 6;
+    if (px + width > box.width) px = r.x - width - 6;
+    px = Math.max(0, px);
+    const py = Math.min(Math.max(0, r.y), Math.max(0, box.height - height));
+
+    ctx.fillStyle = corner;
+    ctx.fillRect(px, py, tabW, lineH);
+    ctx.fillStyle = '#000000';
+    ctx.fillText(style.tab, px + pad, py + lineH - 4);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(px, py + lineH, width, height - lineH);
+    ctx.fillStyle = corner;
+    lines.forEach((text, i) => ctx.fillText(text, px + pad, py + lineH * (i + 2) - 4));
 }
 
 function trackAt(clientX, clientY) {

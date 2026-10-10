@@ -1136,13 +1136,16 @@ def status():
     État courant d'une caméra (`?camera=id`, la première par défaut).
 
     Réponse : { currently_present[], fps, total_known,
-                tracks: [{ track_id, name, bbox: [x1, y1, x2, y2], pose }],
+                tracks: [{ track_id, name, bbox: [x1, y1, x2, y2], pose,
+                           confidence, mode, face_age_s }],
                 frame_size: [largeur, hauteur] | null, camera, cameras[] }
 
     `tracks` ne contient que les personnes visibles sur la dernière image de
     cette caméra, en pixels de cette image : la page les superpose au flux
-    pour cliquer dessus. `currently_present` couvre toutes les caméras, chaque
-    entrée avec sa caméra.
+    pour cliquer dessus. `mode` : 'face' (visage reconnu depuis moins de
+    FACE_FRESHNESS_FRAMES), 'body' (nom tenu par le corps, visage vu il y a
+    `face_age_s` s) ou null (inconnu). `currently_present` couvre toutes les
+    caméras, chaque entrée avec sa caméra.
     """
     camera = _requested_camera()
     if camera is None:
@@ -1166,6 +1169,17 @@ def _frame_size(camera_state):
     return list(camera_state.frame_size) if camera_state.frame_size else None
 
 
+def _identity_mode(person, fps: float) -> dict:
+    """Confiance et origine du nom affiché : visage récent, corps, ou inconnu."""
+    age = getattr(person, 'face_age', None)
+    if person.name == 'Inconnu' or age is None:
+        mode = None
+    else:
+        mode = 'face' if age <= config.FACE_FRESHNESS_FRAMES else 'body'
+    return {'confidence': round(float(getattr(person, 'confidence', 0.0)), 2), 'mode': mode,
+            'face_age_s': round(age / fps, 1) if age is not None and fps > 0 else None}
+
+
 def _status_payload(camera=None):
     camera = camera or cameras[0]
     present = []
@@ -1176,7 +1190,8 @@ def _status_payload(camera=None):
     with camera_state.lock:
         poses = {p['track_id']: p['pose'] for p in camera_state.currently_present}
         tracks = [{'track_id': str(p.track_id), 'name': p.name,
-                   'bbox': [int(v) for v in p.body_bbox], 'pose': poses.get(p.track_id)}
+                   'bbox': [int(v) for v in p.body_bbox], 'pose': poses.get(p.track_id),
+                   **_identity_mode(p, camera_state.fps)}
                   for p in camera_state.bench_persons]
         frame_size = _frame_size(camera_state)
         return {

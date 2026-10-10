@@ -126,11 +126,12 @@ class TrackedPerson:
     Contient les infos de position (corps) et d'identité (visage).
     """
     __slots__ = ('track_id', 'body_bbox', 'name', 'confidence', 'last_face_frame',
-                 'pose_kps')
+                 'pose_kps', 'face_age')
 
     def __init__(self, track_id: int, body_bbox: list[int],
                  name: str = "Inconnu", confidence: float = 0.0,
-                 last_face_frame: int = -1, pose_kps: list | None = None) -> None:
+                 last_face_frame: int = -1, pose_kps: list | None = None,
+                 face_age: int | None = None) -> None:
         self.track_id = track_id
         self.body_bbox = body_bbox
         self.name = name
@@ -138,6 +139,9 @@ class TrackedPerson:
         self.last_face_frame = last_face_frame
         # Keypoints COCO 0-6 du dernier match YOLO, pour POSE_SOURCE="yolo".
         self.pose_kps = pose_kps
+        # Images depuis le dernier visage reconnu sous ce nom (None : jamais) :
+        # la page Live distingue ainsi un nom tenu par le visage ou par le corps.
+        self.face_age = face_age
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -895,6 +899,8 @@ class FaceBodyTracker:
                 confidence=identity.get('confidence', 0.0),
                 last_face_frame=identity.get('last_face_frame', -1),
                 pose_kps=self._pose_kps_map.get(tid),
+                face_age=(self._frame_count - identity['last_face_frame']
+                          if identity.get('last_face_frame', -1) >= 0 else None),
             ))
 
         return results
