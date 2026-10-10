@@ -25,6 +25,7 @@ import numpy as np
 from ultralytics import YOLO
 
 import config
+from core import clothing
 from core.face_recognition import FaceRecognizer
 from core.tracker_backends import ULTRALYTICS_BACKENDS, build_body_tracker
 
@@ -222,6 +223,15 @@ class FaceBodyTracker:
         self._previously_visible: set = set()
         self._previous_boxes: dict = {}
 
+        # Continuité par le corps (BODY_KEEP_SIMILARITY) : descripteur couleur
+        # lissé de chaque piste visible, et référence des pistes nommées, prise
+        # quand la piste est sûre (visage reconnu sous son nom, ou isolée depuis).
+        self._body_current: dict = {}
+        self._body_reference: dict = {}
+        # Pistes restées visibles et sans voisine depuis leur dernier visage
+        # reconnu : sans voisine, aucun échange de pistes n'a pu avoir lieu.
+        self._isolated: set = set()
+
         # { track_id: frame_count } — dernière soumission à InsightFace.
         # Fait tourner les tracks quand ils sont plus nombreux que les places.
         self._last_attempt_frame: dict[int, int] = {}
@@ -275,6 +285,9 @@ class FaceBodyTracker:
         # MOTA 21,5 → 44,2 %, IDF1 48,3 → 54,4 %.
         visible_tracks = [t for t in active_tracks if t.track_id in visible_ids]
         self._suspend_after_crossings(visible_tracks, frame_count)
+        start = time.perf_counter()
+        self._update_body_continuity(frame, active_tracks, visible_tracks, frame_count)
+        timings['body'] = time.perf_counter() - start
 
         # Étapes 3 & 4 : Reconnaissance faciale intelligente (cadencée)
         if frame_count % self.recognition_skip == 0 and visible_tracks:
@@ -321,6 +334,11 @@ class FaceBodyTracker:
                                if tid in active_ids}
         self._last_attempt_frame = {tid: v for tid, v in self._last_attempt_frame.items()
                                     if tid in active_ids}
+        self._body_current = {tid: v for tid, v in self._body_current.items()
+                              if tid in active_ids}
+        self._body_reference = {tid: v for tid, v in self._body_reference.items()
+                                if tid in active_ids}
+        self._isolated &= active_ids
         # _nose_map et _face_kps_map sont déjà purgés dans _update_nose_map
 
         return results
@@ -656,11 +674,13 @@ class FaceBodyTracker:
                         new_name, old_tid, best_track_id,
                     )
 
+            renamed = self._identity_map.get(best_track_id, {}).get('name') != new_name
             self._identity_map[best_track_id] = {
                 'name': new_name,
                 'confidence': avg_confidence,
                 'last_face_frame': frame_count,
             }
+            self._confirm_body(best_track_id, renamed)
 
     def _remember_dropped(self, track_id) -> None:
         """Retient le nom qu'une piste va perdre, et quand (RENAME_MEMORY_FRAMES)."""
@@ -730,6 +750,16 @@ class FaceBodyTracker:
         name = self._identity_map.get(track_id, {}).get('name', 'Inconnu')
         if name == 'Inconnu':
             return
+        history = self._name_history.get(track_id, ())
+        if (history.count(name) >= config.RENAME_MIN_VOTES
+                and track_id in self._isolated and self._body_unchanged(track_id)):
+            # Seule et dans le même corps depuis son dernier visage reconnu :
+            # c'est la même personne, visage caché (masque, cagoule). Seulement
+            # pour un nom établi : la série d'« Inconnu » corrige aussi un nom
+            # donné à tort par 2 votes (seq_026 : id 7 nommé id_2, gardé sinon).
+            logger.debug("Piste #%s : visage « Inconnu » ignoré, même corps que '%s'",
+                         track_id, name)
+            return
         streak = self._unknown_streak.get(track_id, 0) + 1
         if streak < config.RECOGNITION_UNKNOWN_STREAK:
             self._unknown_streak[track_id] = streak
@@ -741,6 +771,74 @@ class FaceBodyTracker:
                                         'last_face_frame': -1}
         self._vote_buffer.pop(track_id, None)
         self._unknown_streak.pop(track_id, None)
+
+    def _update_body_continuity(self, frame, active_tracks: list, visible_tracks: list,
+                                frame_count: int) -> None:
+        """Isolement des pistes et descripteurs couleur (cf. BODY_KEEP_SIMILARITY).
+
+        Une piste perd son isolement dès qu'elle passe en roue libre ou qu'une
+        autre piste visible s'approche (centres à moins de BODY_NEIGHBOUR_WIDTHS
+        largeurs) : un échange devient possible. Il revient avec le prochain
+        visage reconnu. Les descripteurs ne sont calculés qu'aux images de
+        reconnaissance ; la référence suit le corps tant que la piste reste
+        isolée et que le corps ne change pas brusquement.
+        """
+        if config.BODY_KEEP_SIMILARITY <= 0:
+            return
+        boxes = {t.track_id: t.to_ltrb() for t in visible_tracks}
+        for track in active_tracks:
+            tid = track.track_id
+            if tid in self._isolated and (tid not in boxes or self._has_neighbour(tid, boxes)):
+                self._isolated.discard(tid)
+        if frame_count % self.recognition_skip:
+            return
+        alpha = config.BODY_REFERENCE_ALPHA
+        for tid, box in boxes.items():
+            desc = clothing.descriptor(frame, box, self._pose_kps_map.get(tid))
+            if desc is None:
+                continue
+            current = self._body_current.get(tid)
+            self._body_current[tid] = desc if current is None else (1 - alpha) * current + alpha * desc
+            if tid in self._isolated and self._body_unchanged(tid):
+                # Lentement : la référence absorbe la lumière ou la posture, pas
+                # un changement brusque de corps, que le lissage étale sur
+                # quelques passes et qu'elle suivrait sinon pas à pas.
+                follow = config.BODY_REFERENCE_FOLLOW
+                self._body_reference[tid] = ((1 - follow) * self._body_reference[tid]
+                                             + follow * self._body_current[tid])
+
+    @staticmethod
+    def _has_neighbour(tid, boxes: dict) -> bool:
+        """Autre piste visible : n'importe où (BODY_NEIGHBOUR_WIDTHS 0), ou centre
+        à moins de BODY_NEIGHBOUR_WIDTHS largeurs."""
+        if config.BODY_NEIGHBOUR_WIDTHS <= 0:
+            return len(boxes) > 1
+        x1, _, x2, _ = boxes[tid]
+        cx, width = (x1 + x2) / 2, max(1.0, x2 - x1)
+        return any(other != tid
+                   and abs((ox1 + ox2) / 2 - cx) <= config.BODY_NEIGHBOUR_WIDTHS * width
+                   for other, (ox1, _, ox2, _) in boxes.items())
+
+    def _body_unchanged(self, tid) -> bool:
+        """Corps lissé encore proche de la référence de la piste."""
+        reference, current = self._body_reference.get(tid), self._body_current.get(tid)
+        return (config.BODY_KEEP_SIMILARITY > 0 and reference is not None
+                and current is not None
+                and clothing.similarity(reference, current) >= config.BODY_KEEP_SIMILARITY)
+
+    def _confirm_body(self, tid, renamed: bool) -> None:
+        """Visage reconnu sous le nom de la piste : son corps redevient la référence."""
+        if config.BODY_KEEP_SIMILARITY <= 0:
+            return
+        self._isolated.add(tid)
+        current = self._body_current.get(tid)
+        if current is None:
+            self._body_reference.pop(tid, None)
+        elif renamed or tid not in self._body_reference:
+            self._body_reference[tid] = current.copy()
+        else:
+            alpha = config.BODY_REFERENCE_ALPHA
+            self._body_reference[tid] = (1 - alpha) * self._body_reference[tid] + alpha * current
 
     def _find_containing_track(
             self,

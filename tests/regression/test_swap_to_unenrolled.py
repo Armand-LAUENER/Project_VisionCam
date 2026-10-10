@@ -12,6 +12,10 @@ Fix : après RECOGNITION_UNKNOWN_STREAK visages nets successifs reconnus
 Second bug, introduit par ce fix : une personne enrôlée qui se retourne sort
 « Inconnu » de profil et perdait son nom. Seuls les visages de face comptent.
 
+Un échange de pistes change aussi le corps suivi : ces tests changent la
+couleur des vêtements au moment de l'échange. Même corps et visage
+« Inconnu », c'est un visage caché (tests/regression/test_masked_face_keeps_name.py).
+
 Le détecteur, le tracker et InsightFace sont remplacés par des doubles.
 """
 
@@ -41,8 +45,18 @@ def no_body_tracker(monkeypatch):
     monkeypatch.setattr("core.face_body_tracker.build_body_tracker", MagicMock)
 
 
-FRAME = np.zeros((720, 1280, 3), dtype=np.uint8)
 FPS = 30.0
+
+
+def body_frame(bgr):
+    """Image unie : les vêtements de la personne suivie ont cette couleur."""
+    frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    frame[:] = bgr
+    return frame
+
+
+ALICE_BODY = body_frame((0, 0, 200))       # rouge
+STRANGER_BODY = body_frame((200, 0, 0))    # bleu
 
 
 def make_track(track_id):
@@ -62,6 +76,7 @@ def make_tracker(track):
     tracker.body_tracker.update.return_value = [track]
     tracker.face_name = 'Alice'
     tracker.face_frontal = True
+    tracker.frame = ALICE_BODY
 
     def fake_recognize(frame, tracks_to_recognize):
         name = tracker.face_name
@@ -80,7 +95,7 @@ def run(tracker, start, frames, watcher=None):
     """Fait tourner `frames` images ; retourne (nom final, alertes émises)."""
     alerts = []
     for frame_count in range(start, start + frames):
-        persons = tracker.update(FRAME, frame_count)
+        persons = tracker.update(tracker.frame, frame_count)
         if watcher is not None:
             alerts += watcher.update([(p.track_id, p.name) for p in persons],
                                      frame_count / FPS)
@@ -97,6 +112,7 @@ class TestSwapToUnenrolled:
 
         # Échange de pistes : le corps suivi est désormais celui d'un inconnu.
         tracker.face_name = 'Inconnu'
+        tracker.frame = STRANGER_BODY
         name, alerts = run(tracker, 60, 300, watcher)
 
         assert name == 'Inconnu'
@@ -108,6 +124,7 @@ class TestSwapToUnenrolled:
         run(tracker, 0, 60)
 
         tracker.face_name = 'Inconnu'
+        tracker.frame = STRANGER_BODY
         bound = (config.FACE_FRESHNESS_FRAMES
                  + (config.RECOGNITION_UNKNOWN_STREAK + 1) * config.FACE_RECOGNITION_SKIP)
         name, _ = run(tracker, 60, bound)

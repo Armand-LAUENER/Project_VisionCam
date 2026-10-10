@@ -303,3 +303,66 @@ candidates simultanées) : le cas le plus dur pour la topologie, dont l'AUC
 tombe ici à 0,826 (0,961 sur l'ensemble des caméras). Limites : boîtes
 annotées (pas les détections), bandes par proportions fixes (le squelette
 complet n'est pas dans les annotations), un seul bureau, deux séquences.
+
+## Nom gardé sous un masque (continuité par le corps, une caméra)
+
+Constat (webcam, 2026-10-10) : une personne reconnue qui met un masque ou une
+cagoule sans quitter le champ perd son nom. Sa piste ne change pas, mais SCRFD
+trouve encore un visage de face qu'ArcFace juge « Inconnu » : au bout de
+`RECOGNITION_UNKNOWN_STREAK` (3), la règle contre l'échange de pistes vers un
+non-enrôlé retire le nom. Le visage seul ne distingue pas les deux cas ; le
+corps, si : avec un masque, c'est toujours le même.
+
+Règle (`FaceBodyTracker._count_unknown_face`) : un « Inconnu » de face est
+ignoré si le nom est établi (`RENAME_MIN_VOTES` voix sur `RENAME_WINDOW`), si
+la piste est restée visible et seule dans l'image depuis son dernier visage
+reconnu (`BODY_NEIGHBOUR_WIDTHS=0` : pas de voisine, pas d'échange possible),
+et si ses vêtements n'ont pas changé brusquement (`core/clothing.py`, corps
+lissé à au moins `BODY_KEEP_SIMILARITY=0.8` de sa référence). La boîte passe
+alors en « suivi par le corps » (`TRACKING`, temps depuis le dernier visage).
+
+**La couleur seule ne suffit pas** (`tools/eval_body_keep.py`, boîtes
+annotées, référence figée N s avant, autre personne proche = échange simulé).
+Réglage juin-juillet, validation décembre ; corps actuel lissé (`--smooth`) :
+
+| Délai depuis le visage | AUC (réglage / validation) | Seuil 0,8 : nom gardé, même personne / échange (validation) |
+|:--|---:|---:|
+| 2 s | 0,969 / 0,989 | 98,4 % / 15,8 % |
+| 10 s | 0,866 / 0,882 | 77,4 % / 15,9 % |
+| 60 s | 0,771 / 0,797 | 62,3 % / 15,6 % |
+
+Image par image (sans lissage), l'AUC tombe à 0,73-0,90. À aucun seuil la
+couleur ne garde la même personne sans laisser passer une part des échanges :
+elle sert à repérer un changement brusque de corps, l'isolement fait le reste.
+
+**Mesure de bout en bout** (`tools/eval_identity.py`, protocole de
+docs/performance.md, `seq_026_camera_3`). Faute de jeu public de personnes
+masquées, `tools/mask_faces.py` dessine un masque chirurgical (de sous les
+yeux au menton) sur chaque visage SCRFD des personnes enrôlées, 20 s sur
+chaque cycle de 30 s (5 713 visages masqués) ; « images masquées » restreint
+l'évaluation à ces 20 s. Cadence de reconnaissance fixée
+(`FACE_RECOGNITION_SKIP=2`), le 2026-10-10 :
+
+| | Bon nom | Mauvais nom | « Inconnu » | Non enrôlés nommés à tort |
+|:--|---:|---:|---:|---:|
+| Séquence d'origine, avant / après | 37,7 / 37,7 % | 0,7 / 0,7 % | 36,1 / 36,1 % | 19,7 / 19,7 % |
+| Masquée, images masquées | 19,8 → **20,7 %** | 2,4 → 2,4 % | 48,4 → 47,6 % | — |
+| dont id 6 (assise face caméra) | 52,1 → **54,4 %** | 6,2 → 6,2 % | 36,1 → 33,8 % | — |
+| Masquée, séquence entière | 25,5 → 26,1 % | 1,7 → 1,7 % | 45,1 → 44,5 % | 0,0 → 0,0 % |
+
+Sur la séquence d'origine, les pistes sont identiques à l'image près : la
+règle ne se déclenche pas sans visage caché. Le gain sous masque est faible
+sur CHIRLA, un bureau où une autre personne est presque toujours visible :
+la règle exige d'être seul. C'est le cas visé (webcam, une personne), vérifié
+en direct : le nom tient sous masque et sous cagoule.
+
+Deux leçons de mesure :
+
+- **Comparer à cadence fixe.** Rejouées avec la cadence adaptative
+  (`core/adaptive.py`), deux exécutions qui ne diffèrent que par le temps de
+  calcul d'une étape ne reconnaissent pas les mêmes images : la première
+  mesure attribuait à cette règle un non-enrôlé nommé à tort 27,5 % du temps,
+  qui existe aussi sans elle dès que la reconnaissance tourne une image sur
+  deux (tableau ci-dessus, 19,7 % des non-enrôlés).
+- **Le « 1,5 largeur sans voisine » est trop faible** dans un bureau : une
+  voisine mal détectée suffit ; « seule dans l'image » est le défaut.

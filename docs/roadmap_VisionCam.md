@@ -228,8 +228,13 @@ SQLite suffit à cette échelle : pas de Kafka, Postgres ni Airflow.
   boîte sans squelette ; topologie × couleur : association entre caméras juste
   à 50,3 % contre 29,9 % (topologie seule) et 22,8 % (délai seul) sur CHIRLA
   décembre (docs/tracking.md).
-- [ ] Usage : ré-identification des inconnus entre caméras, et après une sortie
-  plus longue que `max_age`.
+- [x] Usage sur une caméra, piste continue : le nom d'une personne au visage
+  caché (masque, cagoule) tient si elle est seule et que ses vêtements ne
+  changent pas (`BODY_KEEP_SIMILARITY`). Images masquées de CHIRLA : bons noms
+  19,8 → 20,7 %, mauvais noms inchangés (docs/tracking.md).
+- [ ] Usage sur une caméra, piste perdue : rendre son nom à une piste nouvelle
+  après une sortie plus longue que `max_age` (mémoire des pistes perdues).
+- [ ] Usage entre caméras : ré-identification des inconnus.
 
 **Terminé quand** : réduction mesurée des changements d'ID / des erreurs
 d'association inter-caméras, sur le protocole réglage/validation existant.

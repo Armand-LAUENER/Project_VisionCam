@@ -181,6 +181,24 @@ RECOGNITION_UNKNOWN_STREAK = int(os.getenv("RECOGNITION_UNKNOWN_STREAK", "3"))
 # fraction de cet écart. 0 : nez simplement entre les yeux. 0,25 : plus petite
 # marge au palier sur CHIRLA (10 → 2 noms retirés, docs/performance.md).
 FRONTAL_NOSE_MARGIN = float(os.getenv("FRONTAL_NOSE_MARGIN", "0.25"))
+# Un visage de face « Inconnu » ne compte dans cette série que si la piste a pu
+# changer de personne : un masque ou une cagoule cache le visage, pas le corps.
+# L'« Inconnu » est ignoré si le nom est établi
+# (RENAME_MIN_VOTES voix sur RENAME_WINDOW), si depuis le dernier visage
+# reconnu la piste est restée visible et seule (BODY_NEIGHBOUR_WIDTHS 0 : aucune
+# autre personne dans l'image ; > 0 : aucune à moins de tant de largeurs), et si
+# son corps n'a pas changé brusquement : descripteur couleur haut / bas lissé
+# (core/clothing.py, moyenne glissante de poids BODY_REFERENCE_ALPHA) à au
+# moins BODY_KEEP_SIMILARITY (Bhattacharyya) de sa référence. Mesuré sur CHIRLA
+# (docs/tracking.md) : images masquées, bons noms 19,8 → 20,7 %, mauvais noms
+# inchangés ; séquence d'origine identique. 0 : désactivé.
+BODY_KEEP_SIMILARITY = float(os.getenv("BODY_KEEP_SIMILARITY", "0.8"))
+BODY_REFERENCE_ALPHA = float(os.getenv("BODY_REFERENCE_ALPHA", "0.3"))
+# Sans visage, la référence d'une piste isolée suit le corps de
+# BODY_REFERENCE_FOLLOW par passe de reconnaissance (~8 s à 6 passes/s) : assez
+# pour la lumière ou la posture, trop peu pour suivre un autre corps.
+BODY_REFERENCE_FOLLOW = float(os.getenv("BODY_REFERENCE_FOLLOW", "0.02"))
+BODY_NEIGHBOUR_WIDTHS = float(os.getenv("BODY_NEIGHBOUR_WIDTHS", "0"))
 # Croisement douteux : deux pistes visibles se recouvrent (IoU ≥ CROSSING_IOU)
 # et l'une disparaît dans les CROSSING_WINDOW_FRAMES images suivantes. La
 # survivante a pu sauter sur l'autre personne : son nom retombe à « Inconnu »

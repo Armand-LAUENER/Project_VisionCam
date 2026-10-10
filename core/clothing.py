@@ -35,19 +35,29 @@ def _band_histogram(hsv: np.ndarray) -> np.ndarray | None:
 def bands(box, keypoints=None) -> tuple[tuple[int, int], tuple[int, int]]:
     """Lignes (y) des bandes haute et basse d'une boîte (x1, y1, x2, y2).
     `keypoints` : COCO (17, 3) facultatifs ; épaules et hanches visibles les
-    remplacent par celles du squelette."""
+    remplacent par celles du squelette. Épaules seules (COCO 0-6, buste devant
+    une webcam) : les deux bandes partent des épaules, pour que le visage
+    (masque, cagoule) n'entre pas dans la bande haute."""
     x1, y1, x2, y2 = box
     h = y2 - y1
     upper = (y1 + UPPER[0] * h, y1 + UPPER[1] * h)
     lower = (y1 + LOWER[0] * h, y1 + LOWER[1] * h)
-    if keypoints is not None and len(keypoints) >= 13:
+    if keypoints is not None and len(keypoints) >= 7:
         shoulders = [k[1] for k in (keypoints[5], keypoints[6]) if k[2] > 0.5]
-        hips = [k[1] for k in (keypoints[11], keypoints[12]) if k[2] > 0.5]
+        hips = []
+        if len(keypoints) >= 13:
+            hips = [k[1] for k in (keypoints[11], keypoints[12]) if k[2] > 0.5]
         if shoulders and hips:
             s, hp = float(np.mean(shoulders)), float(np.mean(hips))
             if hp > s:
                 upper = (s + 0.1 * (hp - s), hp)
                 lower = (hp + 0.1 * (y2 - hp), hp + 0.8 * (y2 - hp))
+        elif shoulders:
+            s = float(np.mean(shoulders))
+            if y2 > s:
+                middle = s + 0.5 * (y2 - s)
+                upper = (s + 0.05 * (y2 - s), middle)
+                lower = (middle, s + 0.9 * (y2 - s))
     return ((int(upper[0]), int(upper[1])), (int(lower[0]), int(lower[1])))
 
 

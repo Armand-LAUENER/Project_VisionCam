@@ -14,6 +14,21 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
 
 ## 1. Bugs
 
+- [ ] **Votes périmés après l'anti-clonage** — `core/face_body_tracker.py`,
+  `_associate_faces_to_tracks`. L'anti-clonage retire le nom d'une piste sans
+  vider son tampon de votes : un visage reconnu plus tard (même sous un autre
+  nom) complète une majorité avec les anciennes voix et renomme la piste.
+  `seq_026_camera_3`, reconnaissance une image sur deux : la piste #132 reprend
+  `id_2` sur un non-enrôlé (image 5052, 27,5 % de ses images). Vider le tampon
+  comme `_suspend` et `_count_unknown_face`, et mesurer.
+- [ ] **Chiffres d'identité sensibles à la cadence** — rejeux du 2026-10-10,
+  non-enrôlés nommés à tort : 19,7 % sur `seq_026_camera_3`
+  (`FACE_RECOGNITION_SKIP=2` fixé) et 8,2 % sur `seq_025_camera_2` (cadence
+  adaptative), contre 1,9 et 0,0 % publiés dans docs/performance.md. La cadence
+  adaptative dépend du temps de calcul : deux rejeux ne reconnaissent pas les
+  mêmes images. Republier à cadence fixe, ou documenter la cadence de chaque
+  mesure.
+
 - [x] **Personnes jamais reconnues** — `core/face_body_tracker.py:137`
   `tracks_to_recognize[:2]` prend toujours les deux premiers tracks. S'ils
   restent « Inconnu » (deux inconnus, deux personnes de dos), les tracks

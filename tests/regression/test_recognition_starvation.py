@@ -101,10 +101,10 @@ class TestRecognitionStarvation:
         tracker = make_tracker([make_track(1)], known={})
 
         tracker.update(FRAME, 1)
-        assert set(tracker.last_timings) == {'detection', 'tracking'}
+        assert set(tracker.last_timings) == {'detection', 'tracking', 'body'}
 
         tracker.update(FRAME, config.FACE_RECOGNITION_SKIP)
-        assert set(tracker.last_timings) == {'detection', 'tracking', 'recognition'}
+        assert set(tracker.last_timings) == {'detection', 'tracking', 'body', 'recognition'}
         assert all(v >= 0 for v in tracker.last_timings.values())
 
     def test_new_track_goes_before_tracks_already_tried(self):
