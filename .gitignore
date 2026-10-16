@@ -7,7 +7,7 @@
 
 # --- Outils et config locale (repo privé séparé) ---
 .claude-workspace/
-.claude/
+.claude/settings.local.json
 CLAUDE.md
 SETUP.md
 .claudeignore
