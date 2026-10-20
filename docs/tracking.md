@@ -335,6 +335,26 @@ Image par image (sans lissage), l'AUC tombe à 0,73-0,90. À aucun seuil la
 couleur ne garde la même personne sans laisser passer une part des échanges :
 elle sert à repérer un changement brusque de corps, l'isolement fait le reste.
 
+**Un test relatif sépare bien mieux** (`tools/eval_swap_check.py`, mêmes boîtes
+annotées, même split). Plutôt qu'une référence figée N s avant, chaque contact
+réel (IoU ≥ 0,2) entre deux personnes A et B fournit leurs galeries « avant » ;
+après le contact, on compare le corps suivi à A-avant **et** à B-avant (marge =
+sim(·, sa personne) − sim(·, l'autre)). Réglage juin-juillet (32 contacts),
+validation décembre (27) :
+
+| Signal | AUC (réglage / validation) | Seuil ≤ 1 % d'échanges : même personne / échange (validation) |
+|:--|---:|---:|
+| couleur | 0,834 / 0,979 | 44,4 % / 0,0 % |
+| MobileNet (DeepSORT) | 0,774 / 0,860 | 5,6 % / 0,0 % |
+| combiné (marges réduites) | 0,826 / 0,969 | 31,5 % / 0,0 % |
+
+La couleur domine ; l'embedding MobileNet de DeepSORT sépare moins bien ici et
+n'ajoute rien une fois combiné. Posé en relatif, le seuil qui laisse passer
+≤ 1 % des échanges sur le réglage n'en laisse passer aucun sur la validation
+(0/54) tout en gardant 44 % des cas « même personne » — là où la référence
+figée ci-dessus n'y parvenait à aucun seuil. L'écart tient au cadrage : un
+contact réel fournit les deux corps à départager, pas une voisine simulée.
+
 **Mesure de bout en bout** (`tools/eval_identity.py`, protocole de
 docs/performance.md, `seq_026_camera_3`). Faute de jeu public de personnes
 masquées, `tools/mask_faces.py` dessine un masque chirurgical (de sous les
