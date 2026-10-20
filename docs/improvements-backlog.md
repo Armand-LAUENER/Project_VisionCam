@@ -28,15 +28,21 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   **19,7 % → 0,0 %** (id 9 : 27,5 % → 0,0 %) ; enrôlés bon nom 37,8 → 37,6 %,
   mauvais nom 0,7 % inchangé ; MOTA/IDF1/changements d'ID identiques (le fix ne
   touche que les noms, pas le suivi).
-- [ ] **Chiffres d'identité sensibles à la cadence** — rejeux du 2026-10-10,
+- [x] **Chiffres d'identité sensibles à la cadence** — rejeux du 2026-10-10,
   non-enrôlés nommés à tort : 19,7 % sur `seq_026_camera_3`
   (`FACE_RECOGNITION_SKIP=2` fixé) et 8,2 % sur `seq_025_camera_2` (cadence
   adaptative), contre 1,9 et 0,0 % publiés dans docs/performance.md. La cadence
   adaptative dépend du temps de calcul : deux rejeux ne reconnaissent pas les
   mêmes images. Republier à cadence fixe, ou documenter la cadence de chaque
-  mesure. (Le 19,7 % de `seq_026_camera_3` à cadence fixe venait du bug « votes
-  périmés » ci-dessus : corrigé, il retombe à 0,0 %. Reste à republier
-  docs/performance.md à cadence fixe et à traiter `seq_025_camera_2`.)
+  mesure.
+  → Fait : la table « Identité de bout en bout » de docs/performance.md est
+  republiée à cadence fixe (`FACE_RECOGNITION_SKIP=2`, code courant). Sur
+  `seq_026_camera_3`, le 19,7 % venait du bug « votes périmés » ci-dessus
+  (corrigé → 0,0 %). Sur `seq_025_camera_2`, le 8,2 % **persiste** à cadence
+  fixe après le correctif : les 0,0 % publiés auparavant tenaient à une cadence
+  plus lente. Reste ouvert, comme question distincte : pourquoi id 14
+  (non-enrôlé) reçoit un nom enrôlé 12,6 % du temps à cette cadence (voisine
+  enrôlée reconnue par moments ? boîte emboîtée ? — cf. causes 1-3 § 2.2).
 
 - [x] **Personnes jamais reconnues** — `core/face_body_tracker.py:137`
   `tracks_to_recognize[:2]` prend toujours les deux premiers tracks. S'ils

@@ -153,29 +153,44 @@ chaque personne annotée, à chaque image, reçoit une issue selon la piste
 affichée qui la recouvre (IoU ≥ 0,5) : bon nom, mauvais nom, « Inconnu »,
 ou pas de piste.
 
-Protocole CHIRLA, configuration déployée : identités enrôlées avec
-`tools/enroll_from_sequence.py` sur `seq_004_camera_2` et `seq_020_camera_4`
-(10 crops de tête par personne, visages ≥ 40 px seulement : 13 identités),
-rejeu de `seq_026_camera_3` et `seq_025_camera_2`, prises des mois plus tard.
-Les personnes 9 et 14, sans visage exploitable à l'enrôlement, sont les
-non-enrôlées.
+Protocole CHIRLA : identités enrôlées avec `tools/enroll_from_sequence.py` sur
+`seq_004_camera_2` et `seq_020_camera_4` (10 crops de tête par personne,
+visages ≥ 40 px seulement : 13 identités), rejeu de `seq_026_camera_3` et
+`seq_025_camera_2`, prises des mois plus tard. Les personnes 9 et 14, sans
+visage exploitable à l'enrôlement, sont les non-enrôlées. **Cadence de
+reconnaissance fixée** (`FACE_RECOGNITION_SKIP=2`) : à cadence adaptative, deux
+rejeux ne reconnaissent pas les mêmes images et les taux d'identité ne sont pas
+reproductibles. Chiffres du code courant (correctif « votes périmés après
+l'anti-clonage » inclus).
 
 | Séquence | Personnes enrôlées : bon nom / mauvais nom / « Inconnu » / sans piste | Non enrôlées : « Inconnu » / nommées à tort |
 |:---------|:----------------------------------------------------------------------|:---------------------------------------------|
-| `seq_026_camera_3` (7 754 images) | **35,5 %** / **1,1 %** / 38,1 % / 25,3 % | 85,9 % / 1,9 % |
-| `seq_025_camera_2` (8 089 images) | 2,6 % / 0,0 % / 83,6 % / 13,8 % | 89,5 % / 0,0 % |
+| `seq_026_camera_3` (7 754 images) | **37,6 %** / **0,7 %** / 36,2 % / 25,4 % | 87,8 % / **0,0 %** |
+| `seq_025_camera_2` (8 089 images) | 3,1 % / 0,0 % / 83,1 % / 13,8 % | 81,4 % / **8,2 %** |
 
 En % des images-personnes annotées. Sur `seq_026_camera_3`, la personne
-assise face caméra pendant toute la séquence (id 6) a le bon nom 87 % du
-temps ; celles qui ne font que passer ne sont presque jamais nommées (44
-apparitions sur 49). Sur `seq_025_camera_2`, filmée de plus loin, 90 % des
-crops de tête n'ont pas de visage d'au moins 40 px (`RECOGNITION_MIN_FACE_PX`) :
-l'application ne décide presque jamais d'un nom, et ne se trompe pas.
+assise face caméra pendant toute la séquence (id 6) a le bon nom 92 % du
+temps ; celles qui ne font que passer ne sont presque jamais nommées (43 des
+49 passages jamais nommés). Aucun non-enrôlé n'y est nommé à tort : le
+correctif « votes périmés après l'anti-clonage » (docs/improvements-backlog.md)
+fait tomber ce taux de 19,7 % à 0,0 % à cette cadence.
 
-Ce que ça dit : les mauvais noms restent rares (1 à 2 %) ; la limite est
-le nombre de visages exploitables, pas le seuil. Le « 80 % de bons noms par
-visage » du tableau précédent ne vaut que pour les visages assez grands et de
-face, qui sont l'exception dans une scène de bureau vue de loin.
+Sur `seq_025_camera_2`, filmée de plus loin, 90 % des crops de tête n'ont pas
+de visage d'au moins 40 px (`RECOGNITION_MIN_FACE_PX`) : l'application décide
+rarement d'un nom. Elle se trompe quand même sur un non-enrôlé — id 14 reçoit
+un nom enrôlé 12,6 % du temps (8,2 % sur l'ensemble des non-enrôlés). Ce faux
+nom subsiste **après** le correctif ci-dessus (ce n'est donc pas le bug des
+votes périmés) et ne ressort qu'à cette cadence : les 0,0 % publiés auparavant
+tenaient à une cadence plus lente, d'où la cadence fixée ici. Cause à élucider
+(cf. 2ᵉ point de `docs/improvements-backlog.md`).
+
+Ce que ça dit : sur les enrôlés, les mauvais noms restent rares (≤ 1 %) ; la
+limite est le nombre de visages exploitables, pas le seuil. Les faux noms se
+concentrent sur les non-enrôlés qui passent près d'un enrôlé reconnu, et
+dépendent fortement de la cadence — d'où une cadence fixée pour comparer. Le
+« 80 % de bons noms par visage » du tableau précédent ne vaut que pour les
+visages assez grands et de face, l'exception dans une scène de bureau vue de
+loin.
 
 ### Nom gardé quand la personne se retourne (`FRONTAL_NOSE_MARGIN`)
 
