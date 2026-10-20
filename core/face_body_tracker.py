@@ -673,6 +673,11 @@ class FaceBodyTracker:
                     self._identity_map[old_tid] = {
                         'name': 'Inconnu', 'confidence': 0.0, 'last_face_frame': -1
                     }
+                    # Vider ses votes comme _suspend : sinon d'anciennes voix
+                    # (même sous un autre nom) complètent plus tard une majorité
+                    # et renomment la piste, désormais sur une autre personne.
+                    self._vote_buffer.pop(old_tid, None)
+                    self._unknown_streak.pop(old_tid, None)
                     logger.warning(
                         "Correction usurpation : '%s' passe du corps #%s au corps #%s",
                         new_name, old_tid, best_track_id,
