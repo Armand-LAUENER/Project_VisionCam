@@ -14,20 +14,29 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
 
 ## 1. Bugs
 
-- [ ] **Votes périmés après l'anti-clonage** — `core/face_body_tracker.py`,
+- [x] **Votes périmés après l'anti-clonage** — `core/face_body_tracker.py`,
   `_associate_faces_to_tracks`. L'anti-clonage retire le nom d'une piste sans
   vider son tampon de votes : un visage reconnu plus tard (même sous un autre
   nom) complète une majorité avec les anciennes voix et renomme la piste.
   `seq_026_camera_3`, reconnaissance une image sur deux : la piste #132 reprend
   `id_2` sur un non-enrôlé (image 5052, 27,5 % de ses images). Vider le tampon
   comme `_suspend` et `_count_unknown_face`, et mesurer.
+  → Fait : purge de `_vote_buffer` et `_unknown_streak` dans l'anti-clonage,
+  régression `tests/regression/test_stale_votes_after_anticlone.py`. Mesuré
+  avant/après sur `seq_026_camera_3` à cadence fixe (`FACE_RECOGNITION_SKIP=2`,
+  `every_frame`, galerie des 13 identités de perf) : non-enrôlés nommés à tort
+  **19,7 % → 0,0 %** (id 9 : 27,5 % → 0,0 %) ; enrôlés bon nom 37,8 → 37,6 %,
+  mauvais nom 0,7 % inchangé ; MOTA/IDF1/changements d'ID identiques (le fix ne
+  touche que les noms, pas le suivi).
 - [ ] **Chiffres d'identité sensibles à la cadence** — rejeux du 2026-10-10,
   non-enrôlés nommés à tort : 19,7 % sur `seq_026_camera_3`
   (`FACE_RECOGNITION_SKIP=2` fixé) et 8,2 % sur `seq_025_camera_2` (cadence
   adaptative), contre 1,9 et 0,0 % publiés dans docs/performance.md. La cadence
   adaptative dépend du temps de calcul : deux rejeux ne reconnaissent pas les
   mêmes images. Republier à cadence fixe, ou documenter la cadence de chaque
-  mesure.
+  mesure. (Le 19,7 % de `seq_026_camera_3` à cadence fixe venait du bug « votes
+  périmés » ci-dessus : corrigé, il retombe à 0,0 %. Reste à republier
+  docs/performance.md à cadence fixe et à traiter `seq_025_camera_2`.)
 
 - [x] **Personnes jamais reconnues** — `core/face_body_tracker.py:137`
   `tracks_to_recognize[:2]` prend toujours les deux premiers tracks. S'ils
