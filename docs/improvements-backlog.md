@@ -40,9 +40,13 @@ InsightFace (la config est restée à 640) et le traitement groupé des visages 
   `seq_026_camera_3`, le 19,7 % venait du bug « votes périmés » ci-dessus
   (corrigé → 0,0 %). Sur `seq_025_camera_2`, le 8,2 % **persiste** à cadence
   fixe après le correctif : les 0,0 % publiés auparavant tenaient à une cadence
-  plus lente. Reste ouvert, comme question distincte : pourquoi id 14
-  (non-enrôlé) reçoit un nom enrôlé 12,6 % du temps à cette cadence (voisine
-  enrôlée reconnue par moments ? boîte emboîtée ? — cf. causes 1-3 § 2.2).
+  plus lente. Cause élucidée (analyse du journal) : **faux positif de
+  reconnaissance**, pas le suivi. La piste 8 suit la personne 14 tout du long
+  (GT=14) et est nommée `id_5` sur les images 596-780 (~6 s), alors que la
+  personne 5 est absente de toute la séquence — ni échange de piste ni boîte
+  emboîtée. Le visage lointain de 14 n'étant jamais net, aucune règle
+  anti-échange ne s'applique. Limite connue de la reconnaissance à distance
+  (même nature que le 1,2 % ChokePoint) ; on ne baisse pas le seuil pour ça.
 
 - [x] **Personnes jamais reconnues** — `core/face_body_tracker.py:137`
   `tracks_to_recognize[:2]` prend toujours les deux premiers tracks. S'ils

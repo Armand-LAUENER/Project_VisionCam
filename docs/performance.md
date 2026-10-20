@@ -178,11 +178,15 @@ fait tomber ce taux de 19,7 % à 0,0 % à cette cadence.
 Sur `seq_025_camera_2`, filmée de plus loin, 90 % des crops de tête n'ont pas
 de visage d'au moins 40 px (`RECOGNITION_MIN_FACE_PX`) : l'application décide
 rarement d'un nom. Elle se trompe quand même sur un non-enrôlé — id 14 reçoit
-un nom enrôlé 12,6 % du temps (8,2 % sur l'ensemble des non-enrôlés). Ce faux
-nom subsiste **après** le correctif ci-dessus (ce n'est donc pas le bug des
-votes périmés) et ne ressort qu'à cette cadence : les 0,0 % publiés auparavant
-tenaient à une cadence plus lente, d'où la cadence fixée ici. Cause à élucider
-(cf. 2ᵉ point de `docs/improvements-backlog.md`).
+un nom enrôlé 12,6 % du temps (8,2 % sur l'ensemble des non-enrôlés). Ces 0,0 %
+publiés auparavant tenaient à une cadence plus lente, d'où la cadence fixée
+ici. En cause, un **faux positif de reconnaissance**, pas le suivi : sur ~6 s
+(images 596 à 780), la piste de id 14 — qui suit bien id 14 tout du long — voit
+son visage pris pour l'enrôlé `id_5`, pourtant absent de toute la séquence (ni
+échange de piste ni boîte emboîtée). Le visage de 14 n'étant jamais net, aucune
+règle anti-échange ne s'applique. C'est la limite connue de la reconnaissance à
+distance (cf. le cas ChokePoint, un non-enrôlé pris pour un enrôlé 1,2 %), pas
+un réglage à gonfler.
 
 Ce que ça dit : sur les enrôlés, les mauvais noms restent rares (≤ 1 %) ; la
 limite est le nombre de visages exploitables, pas le seuil. Les faux noms se
