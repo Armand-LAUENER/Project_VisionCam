@@ -147,11 +147,11 @@ bas : au-delà de 0,55, elle est presque toujours rejetée.
 
 Le seuil ci-dessus juge chaque visage seul. Ce que voit l'utilisateur dépend
 aussi du tracking, du vote par piste, de la taille des visages et du temps
-passé face caméra. `tools/eval_identity.py` le mesure : l'application rejoue
-une séquence annotée en `every_frame` (`VIDEO_FILE`, `TRACKS_LOG_PATH`), puis
-chaque personne annotée, à chaque image, reçoit une issue selon la piste
-affichée qui la recouvre (IoU ≥ 0,5) : bon nom, mauvais nom, « Inconnu »,
-ou pas de piste.
+passé face caméra. `tools/eval_identity.py` le mesure : `tools/replay_sequence.py`
+rejoue une séquence annotée dans le pipeline en `every_frame` (journal
+`TRACKS_LOG_PATH`, cadence fixe), puis chaque personne annotée, à chaque image,
+reçoit une issue selon la piste affichée qui la recouvre (IoU ≥ 0,5) : bon nom,
+mauvais nom, « Inconnu », ou pas de piste.
 
 Protocole CHIRLA : identités enrôlées avec `tools/enroll_from_sequence.py` sur
 `seq_004_camera_2` et `seq_020_camera_4` (10 crops de tête par personne,
